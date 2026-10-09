@@ -59,9 +59,13 @@ Estado: `[x]` hecho · `[~]` en curso · `[ ]` pendiente
    - [ ] `make test`: arranca QEMU sin pantalla y corre proctest, fase1test y nettest (capturas o
          puerto serie); falla si algo falla
    - [ ] Tuberías con nombre (`mkfifo`): FIFO en ext2 que el servidor trata como tubería
-   - [ ] runit como supervisor (BSD): `/sbin/init` mínimo -> etapa 1 (fsck si no se apagó bien,
-         hora, red), etapa 2 `runsvdir /etc/service` (9pd, login + zsh; después dhcp, sshd, sway),
-         etapa 3 apagado en orden. `sv status|restart`
+         (las usa s6 para controlar los servicios)
+   - [ ] s6 + s6-rc como supervisor (skarnet, ISC; mantenido, en C; se eligió sobre runit, que
+         no se mantiene desde 2014 y no tiene dependencias): skalibs + s6 + s6-rc (+ execline).
+         `s6-svscan` como PID 1 o lanzado por `/sbin/init`; servicios: 9pd, login + zsh; después
+         dhcp, sshd, sway. s6-rc: dependencias ("sshd después de la red") y tareas de una vez
+         (fsck, hora, red). `s6-svc`/`s6-rc` para ver, parar y reiniciar. skalibs sin signalfd
+         hasta la Fase 1b (usa su método alternativo)
    - [ ] `poweroff`/`reboot` reales: parar servicios, `sync`, apagar la VM, apagar la máquina (ACPI)
    - [ ] fsck de ext2 al arrancar si el disco quedó sucio (bandera de estado de ext2)
 7. [~] **Escritorio gráfico: sway + Wayland**
@@ -119,8 +123,6 @@ Lo que más pesa para usarlo a diario, además de lo de arriba:
 
 - [ ] Señales asíncronas a procesos que no hacen syscalls (bucles puros); `Ctrl-Z` / parar procesos
 - [ ] `Ctrl-C` a mitad del prompt de dash se procesa con la línea siguiente
-- [ ] Supervisor de servicios minimalista (estilo runit/s6) en userland: evolucionar /sbin/init + /etc/rc
-      a un directorio por servicio, reinicio automático y `sv status` (útil al llegar la red)
 - [ ] Triple propio (`x86_64-sel4-musl`) en vez de `x86_64-linux-musl` (hoy los programas ven `__linux__`)
 - [ ] `mmap` compartido de archivos para escribir (hoy: copia privada, o compartido solo lectura)
 - [ ] Dueño del proceso (uid/gid) al crear archivos (hoy siempre root); enlaces duros en fs_ext2
