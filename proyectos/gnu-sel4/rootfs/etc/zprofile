@@ -1,0 +1,2 @@
+# /etc/zprofile: zsh de sesión. Carga /etc/profile (PATH, TERM, bienvenida) en modo sh
+emulate sh -c 'source /etc/profile'

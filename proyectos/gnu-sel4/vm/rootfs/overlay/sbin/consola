@@ -1,0 +1,5 @@
+#!/bin/sh
+# Consola de la VM: no muestra nada hasta que alguien pulse Enter en ella
+# (así no ensucia la pantalla de GNU/seL4, que comparte el puerto serie)
+read -r _
+exec /bin/login -f root

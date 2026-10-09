@@ -1,0 +1,5 @@
+#!/bin/sh
+killall dockerd containerd 2>/dev/null
+sleep 3
+sync
+umount /var/lib/docker 2>/dev/null

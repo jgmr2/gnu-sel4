@@ -1,0 +1,11 @@
+# Dependencias que se descargan (versiones exactas en DEPENDENCIAS.md)
+/sdk/
+/libvmm/
+/third_party/
+
+# Lo que se genera al compilar
+/proyectos/gnu-sel4/build/
+/proyectos/gnu-sel4/vm/rootfs/out/
+
+# Discos (8+ GB; tienen datos: respaldar aparte)
+*.img

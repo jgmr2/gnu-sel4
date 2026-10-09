@@ -1,0 +1,9 @@
+# /etc/profile: lo lee la shell de sesión (dash -l) al arrancar
+export PATH=/bin:/sbin:/usr/bin
+export HOME=/root
+export TERM=xterm-256color
+PS1='root@gnu-sel4:$PWD# '
+cd "$HOME"
+# tamaño real de la ventana (por el puerto serie no llega solo; `resize` lo vuelve a medir)
+[ -t 0 ] && resize -s
+cat /etc/motd

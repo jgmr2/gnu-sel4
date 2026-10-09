@@ -1,0 +1,4 @@
+
+  GNU/seL4 — zsh, GNU coreutils y vim sobre el microkernel seL4, con una VM Linux al lado
+  Linux transparente: docker ...  |  linux comando ...  |  la VM ve este sistema en /mnt/sel4
+
