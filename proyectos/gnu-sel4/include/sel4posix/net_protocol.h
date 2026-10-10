@@ -40,12 +40,22 @@ enum {
     NET_OP_POLL,           /* s, eventos (POLLIN...)                   -> revents */
     NET_OP_FIONREAD,       /* s                                        -> bytes por leer */
     NET_OP_INFO,           /*                                          -> struct net_info en net_buf */
+    NET_OP_CONFIG,         /* struct net_cfg en net_buf                (DHCP o dirección fija) */
+};
+
+/* Configuración de la interfaz (NET_OP_CONFIG; los programas la piden con el ioctl
+ * SIOCDEVPRIVATE sobre un socket AF_INET, ver apps/red). Direcciones en orden de red. */
+#define NET_SIOC_CONFIG 0x89F0          /* SIOCDEVPRIVATE de Linux */
+enum { NET_CFG_DHCP, NET_CFG_FIJA };
+struct net_cfg {
+    uint32_t mode;                      /* NET_CFG_* */
+    uint32_t ip, mask, gw, dns[2];
 };
 
 /* Estado de la interfaz (NET_OP_INFO). Direcciones en orden de red. netstack avisa a
  * posix_server por su canal de concesión cada vez que obtiene o renueva una. */
 enum { NET_DHCP_OFF, NET_DHCP_INIT_REBOOT, NET_DHCP_SELECTING, NET_DHCP_REQUESTING,
-       NET_DHCP_BOUND, NET_DHCP_RENEWING };
+       NET_DHCP_BOUND, NET_DHCP_RENEWING, NET_DHCP_STATIC };
 struct net_info {
     uint32_t state;              /* NET_DHCP_* (= DHCP_* de net/dhcp.h) */
     uint32_t ip, mask, gw, dns[2], server;

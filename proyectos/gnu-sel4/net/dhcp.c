@@ -122,6 +122,7 @@ static void parse_options(const uint8_t *o, const uint8_t *end, int *type, uint3
 /* Mira si la trama es una respuesta DHCP para nosotros; si lo es, la consume */
 bool dhcp_input(const uint8_t *f, size_t len)
 {
+    if (dhcp.state == DHCP_OFF || dhcp.state == DHCP_STATIC) return false;
     if (len < 14 + 20 + 8 + 240 || f[12] != 0x08 || f[13] != 0x00) return false;
     const uint8_t *ip = f + 14;
     size_t ihl = (ip[0] & 15) * 4;
@@ -208,6 +209,12 @@ void dhcp_tick(void)
         next_send = now + (tries < 5 ? RETRY_NS : 30 * SEC);
         break;
     }
+}
+
+void dhcp_stop(void)
+{
+    next_send = 0;
+    dhcp.state = DHCP_OFF;
 }
 
 void dhcp_start(const uint8_t m[6], uint32_t preferred_ip)

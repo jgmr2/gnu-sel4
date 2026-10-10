@@ -4,7 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-enum { DHCP_OFF, DHCP_INIT_REBOOT, DHCP_SELECTING, DHCP_REQUESTING, DHCP_BOUND, DHCP_RENEWING };
+enum { DHCP_OFF, DHCP_INIT_REBOOT, DHCP_SELECTING, DHCP_REQUESTING, DHCP_BOUND, DHCP_RENEWING,
+       DHCP_STATIC };                                           /* = NET_DHCP_* */
 
 /* Direcciones en orden de red; tiempos en segundos */
 extern struct dhcp_state {
@@ -15,6 +16,7 @@ extern struct dhcp_state {
 } dhcp;
 
 void dhcp_start(const uint8_t mac[6], uint32_t preferred_ip);   /* 0 = sin preferencia */
+void dhcp_stop(void);                                           /* dirección fija: no más DHCP */
 bool dhcp_input(const uint8_t *frame, size_t len);              /* true: era para el cliente DHCP */
 void dhcp_tick(void);
 

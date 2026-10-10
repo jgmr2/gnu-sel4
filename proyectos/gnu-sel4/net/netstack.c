@@ -39,6 +39,7 @@
 /* De la parte de FreeBSD (exportadas en lib/ff_api.symlist) */
 extern int ff_freebsd_init(void);
 extern void ff_hardclock(void);
+extern void ff_swi_net_excute(void);   /* cola diferida de la pila (loopback, 127.0.0.1) */
 
 __attribute__((__section__(".timer_client_config"))) timer_client_config_t timer_config;
 __attribute__((__section__(".net_client_config"))) net_client_config_t net_config;
@@ -162,39 +163,111 @@ void dhcp_send_frame(const void *frame, size_t len)
     notify_tx = true;
 }
 
-static int prefix_len(uint32_t mask) { return __builtin_popcount(mask); }
 
-void dhcp_bound(bool first)
+/* ---------------- configuración de la interfaz ---------------- */
+
+/* Estructuras de FreeBSD para sus ioctl (sockaddr_in con sin_len) */
+struct bsd_sin { uint8_t len, family; uint16_t port; uint32_t addr; uint8_t zero[8]; };
+struct bsd_ifreq { char name[16]; struct bsd_sin addr; };
+struct bsd_aliasreq { char name[16]; struct bsd_sin addr, broad, mask; int vhid; };
+#define BSD_SIOCAIFADDR 0x8044692bUL           /* _IOW('i', 43, struct in_aliasreq) */
+#define BSD_SIOCDIFADDR 0x80206919UL           /* _IOW('i', 25, struct ifreq) */
+#define BSIN(a) { sizeof(struct bsd_sin), AF_INET, 0, (a), { 0 } }
+
+static uint32_t cur_ip, cur_mask, cur_gw;
+static int cfg_sock = -1;
+
+static void set_default_route(uint32_t gw)
 {
-    char ip[16], mask[16], bcast[16], gw[16], dns[16];
-    uint32_t b = dhcp.ip | ~dhcp.mask;
-    inet_ntop(AF_INET, &dhcp.ip, ip, sizeof ip);
-    inet_ntop(AF_INET, &dhcp.mask, mask, sizeof mask);
-    inet_ntop(AF_INET, &b, bcast, sizeof bcast);
-    inet_ntop(AF_INET, dhcp.gw ? &dhcp.gw : &dhcp.server, gw, sizeof gw);
-    inet_ntop(AF_INET, &dhcp.dns[0], dns, sizeof dns);
-    if (first) {
+    struct sockaddr_in dst = { .sin_family = AF_INET }, nm = { .sin_family = AF_INET },
+                       g = { .sin_family = AF_INET, .sin_addr.s_addr = gw };
+    ff_route_ctl(FF_ROUTE_DEL, FF_RTF_GATEWAY, (struct linux_sockaddr *)&dst, NULL, (struct linux_sockaddr *)&nm);
+    if (gw) ff_route_ctl(FF_ROUTE_ADD, FF_RTF_GATEWAY, (struct linux_sockaddr *)&dst, (struct linux_sockaddr *)&g,
+                         (struct linux_sockaddr *)&nm);
+}
+
+/* Pone la dirección de eth0: la primera vez crea la interfaz; después la cambia en caliente */
+static bool set_addr(uint32_t ip, uint32_t mask, uint32_t gw)
+{
+    char a[16], m[16], g[16];
+    inet_ntop(AF_INET, &ip, a, sizeof a);
+    inet_ntop(AF_INET, &mask, m, sizeof m);
+    inet_ntop(AF_INET, &gw, g, sizeof g);
+    if (!attached) {
         static char ifname[] = "eth0";
-        static char a[16], m[16], bc[16], g[16];
-        memcpy(a, ip, sizeof a); memcpy(m, mask, sizeof m);
-        memcpy(bc, bcast, sizeof bc); memcpy(g, gw, sizeof g);
+        static char sa[16], sm[16], sb[16], sg[16];
+        uint32_t b = ip | ~mask;
+        memcpy(sa, a, sizeof sa);
+        memcpy(sm, m, sizeof sm);
+        inet_ntop(AF_INET, &b, sb, sizeof sb);
+        memcpy(sg, g, sizeof sg);
         port_cfg.name = port_cfg.ifname = ifname;
-        port_cfg.addr = a;
-        port_cfg.netmask = m;
-        port_cfg.broadcast = bc;
-        port_cfg.gateway = g;
+        port_cfg.addr = sa;
+        port_cfg.netmask = sm;
+        port_cfg.broadcast = sb;
+        port_cfg.gateway = sg;
         memcpy(port_cfg.mac, &net_config.mac_addr, 6);
         if (!ff_veth_attach(&port_cfg)) {
             netstack_log("netstack: ff_veth_attach falló\n");
-            return;
+            return false;
         }
         attached = true;
-        netstack_log("netstack: DHCP: eth0 %s/%d, puerta %s, DNS %s (concesión de %u s)\n",
-                     ip, prefix_len(dhcp.mask), gw, dns, dhcp.lease);
-    } else if (strcmp(ip, port_cfg.addr)) {
-        netstack_log("netstack: DHCP: el servidor dio otra dirección (%s); se sigue con %s\n", ip, port_cfg.addr);
+        if (!gw) set_default_route(0);
+    } else {
+        if (cfg_sock < 0) cfg_sock = ff_socket(AF_INET, SOCK_DGRAM, 0);
+        bool moved = ip != cur_ip || mask != cur_mask;
+        if (moved) {
+            struct bsd_ifreq dr = { "eth0", BSIN(cur_ip) };
+            ff_ioctl_freebsd(cfg_sock, BSD_SIOCDIFADDR, &dr);
+            struct bsd_aliasreq ar = { "eth0", BSIN(ip), BSIN(ip | ~mask), BSIN(mask), 0 };
+            if (ff_ioctl_freebsd(cfg_sock, BSD_SIOCAIFADDR, &ar) < 0) {
+                netstack_log("netstack: no se pudo poner la dirección %s\n", a);
+                return false;
+            }
+        }
+        /* quitar la dirección se lleva las rutas que pasaban por ella: la de omisión se repone */
+        if (moved || gw != cur_gw) set_default_route(gw);
+    }
+    cur_ip = ip;
+    cur_mask = mask;
+    cur_gw = gw;
+    netstack_log("netstack: eth0 %s/%d, puerta %s\n", a, __builtin_popcount(mask), gw ? g : "ninguna");
+    return true;
+}
+
+void dhcp_bound(bool first)
+{
+    char dns[16];
+    inet_ntop(AF_INET, &dhcp.dns[0], dns, sizeof dns);
+    if (first || dhcp.ip != cur_ip || dhcp.mask != cur_mask || dhcp.gw != cur_gw) {
+        netstack_log("netstack: DHCP: concesión de %u s, DNS %s\n", dhcp.lease, dns);
+        set_addr(dhcp.ip, dhcp.mask, dhcp.gw ? dhcp.gw : dhcp.server);
     }
     microkit_notify(LEASE_CH);                 /* posix_server actualiza /etc/resolv.conf */
+}
+
+/* Dirección fija o vuelta a DHCP (NET_OP_CONFIG) */
+static long configure(const struct net_cfg *c)
+{
+    if (c->mode == NET_CFG_FIJA) {
+        if (!c->ip || !c->mask) return -EINVAL;
+        dhcp_stop();
+        dhcp.state = DHCP_STATIC;
+        dhcp.ip = c->ip;
+        dhcp.mask = c->mask;
+        dhcp.gw = c->gw;
+        dhcp.dns[0] = c->dns[0];
+        dhcp.dns[1] = c->dns[1];
+        dhcp.server = dhcp.lease = 0;
+        dhcp.bound_ns = 0;
+        return set_addr(c->ip, c->mask, c->gw) ? 0 : -EIO;
+    }
+    if (c->mode == NET_CFG_DHCP) {
+        if (dhcp.state != DHCP_STATIC && dhcp.state != DHCP_OFF) return 0;   /* ya en DHCP */
+        dhcp_start((const uint8_t *)&net_config.mac_addr, cur_ip);           /* pide la que tiene */
+        return 0;
+    }
+    return -EINVAL;
 }
 
 /* ---------------- llamadas de posix_server ---------------- */
@@ -290,9 +363,9 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
         struct net_info *ni = (struct net_info *)net_buf;
         memset(ni, 0, sizeof *ni);
         ni->state = dhcp.state;
-        ni->ip = attached ? dhcp.ip : 0;
-        ni->mask = dhcp.mask;
-        ni->gw = dhcp.gw;
+        ni->ip = attached ? cur_ip : 0;
+        ni->mask = cur_mask;
+        ni->gw = cur_gw;
         ni->dns[0] = dhcp.dns[0];
         ni->dns[1] = dhcp.dns[1];
         ni->server = dhcp.server;
@@ -303,6 +376,9 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
         r = 0;
         break;
     }
+    case NET_OP_CONFIG:
+        r = configure((const struct net_cfg *)net_buf);
+        break;
     case NET_OP_FIONREAD: {
         int n = 0;
         r = ff_ioctl(a1, FIONREAD, &n);
@@ -313,6 +389,8 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
         r = -ENOSYS;
     }
     microkit_mr_set(0, r);
+    ff_swi_net_excute();                        /* paquetes por lo0 (127.0.0.1, la propia IP) */
+    check_activity();
     flush_notifications();                      /* lo enviado sale ya hacia el driver */
     return microkit_msginfo_new(0, 2);
 }
@@ -361,6 +439,7 @@ void notified(microkit_channel ch)
 {
     if (ch == net_config.rx.id) process_rx();
     else if (ch == timer_config.driver_id) tick();
+    ff_swi_net_excute();
     check_activity();
     flush_notifications();
 }

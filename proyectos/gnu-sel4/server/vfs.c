@@ -667,7 +667,7 @@ void net_lease_changed(void)
     struct net_info ni;
     if (!net_info(&ni) || !ni.dns[0]) return;
     char buf[192], a[16], b[16];
-    int n = sddf_snprintf(buf, sizeof buf, "# Lo escribe posix_server con la concesión DHCP de netstack\n"
+    int n = sddf_snprintf(buf, sizeof buf, "# Lo escribe posix_server con la configuración de red (red, DHCP)\n"
                           "nameserver %s\n", ip4(ni.dns[0], a));
     if (ni.dns[1]) n += sddf_snprintf(buf + n, sizeof buf - n, "nameserver %s\n", ip4(ni.dns[1], b));
     write_file("/etc/resolv.conf", buf, n);
@@ -677,7 +677,8 @@ void net_lease_changed(void)
 long net_info_text(char *out, size_t max)
 {
     static const char *const states[] = { "apagado", "pidiendo la dirección anterior", "buscando servidor",
-                                          "pidiendo la dirección ofrecida", "concedida", "renovando" };
+                                          "pidiendo la dirección ofrecida", "concedida", "renovando",
+                                          "fija (sin DHCP)" };
     struct net_info ni;
     if (!net_info(&ni)) return sddf_snprintf(out, max, "netstack no responde\n");
     char ip[16], gw[16], d0[16], d1[16], sv[16];
@@ -685,7 +686,7 @@ long net_info_text(char *out, size_t max)
     return sddf_snprintf(out, max,
         "estado:    %s\ninterfaz:  eth0 %02x:%02x:%02x:%02x:%02x:%02x\ndirección: %s/%d\npuerta:    %s\n"
         "dns:       %s %s\nservidor:  %s\nconcesión: %u s (quedan %u s)\n",
-        ni.state < 6 ? states[ni.state] : "?", ni.mac[0], ni.mac[1], ni.mac[2], ni.mac[3], ni.mac[4], ni.mac[5],
+        ni.state < 7 ? states[ni.state] : "?", ni.mac[0], ni.mac[1], ni.mac[2], ni.mac[3], ni.mac[4], ni.mac[5],
         ip4(ni.ip, ip), pl, ip4(ni.gw, gw), ip4(ni.dns[0], d0), ni.dns[1] ? ip4(ni.dns[1], d1) : "",
         ip4(ni.server, sv), ni.lease, ni.remaining);
 }
@@ -1732,6 +1733,12 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
         if (a2 == FIONBIO) {                               /* arg: el entero, por valor */
             f->flags = a3 ? f->flags | O_NONBLOCK : f->flags & ~O_NONBLOCK;
             return 0;
+        }
+        if (f->type == OF_SOCKET && a2 == NET_SIOC_CONFIG) {    /* configurar la red (apps/red) */
+            memcpy((void *)net_buf, (void *)client_buf, sizeof(struct net_cfg));
+            long r = net_call(NET_OP_CONFIG, 0, 0, 0, 0);
+            if (r == 0) net_lease_changed();                    /* DNS de la dirección fija */
+            return r;
         }
         if (f->type == OF_SOCKET && a2 == FIONREAD) {
             long n = net_call(NET_OP_FIONREAD, f->ino, 0, 0, 0);

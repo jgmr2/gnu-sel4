@@ -282,6 +282,9 @@ static long sys_ioctl(long fd, long req, void *arg)
     case TIOCSPGRP:
     case FIONBIO:
         return server_call(SYS_ioctl, fd, req, *(int *)arg, 0, 0, 0);
+    case NET_SIOC_CONFIG:                         /* configurar la red: struct net_cfg */
+        memcpy((void *)PROC_BUF_BASE, arg, sizeof(struct net_cfg));
+        return server_call(SYS_ioctl, fd, req, 0, 0, 0, 0);
     case FIONREAD:
         r = server_call(SYS_ioctl, fd, req, 0, 0, 0, 0);
         if (r >= 0) *(int *)arg = server_result(1);

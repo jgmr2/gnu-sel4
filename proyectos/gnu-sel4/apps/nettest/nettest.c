@@ -1,6 +1,7 @@
 /*
  * nettest: pruebas de la red nativa (pila TCP/IP de FreeBSD en netstack).
- *   nettest [host]      DNS (UDP) + petición HTTP (TCP) a host (por omisión example.com)
+ *   nettest [host]      loopback + DNS (UDP) + petición HTTP (TCP) a host (por omisión example.com)
+ *   nettest local       solo lo que no necesita internet (loopback)
  *   nettest servir [p]  servidor TCP en el puerto p (8080): responde y termina
  */
 #include <errno.h>
@@ -13,6 +14,7 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 
 static int fallos;
 
@@ -65,6 +67,35 @@ int main(int argc, char **argv)
     int s = socket(AF_INET, SOCK_STREAM, 0);
     check(s >= 0, "socket(AF_INET, SOCK_STREAM)");
     close(s);
+
+    /* Loopback: servidor en 127.0.0.1 en un hijo, cliente aquí */
+    {
+        int ls = socket(AF_INET, SOCK_STREAM, 0), on = 1;
+        setsockopt(ls, SOL_SOCKET, SO_REUSEADDR, &on, sizeof on);
+        struct sockaddr_in la = { .sin_family = AF_INET, .sin_port = htons(9099),
+                                  .sin_addr.s_addr = htonl(INADDR_LOOPBACK) };
+        int ok = bind(ls, (struct sockaddr *)&la, sizeof la) == 0 && listen(ls, 2) == 0;
+        pid_t pid = ok ? fork() : -1;
+        if (pid == 0) {
+            int c = accept(ls, NULL, NULL);
+            char b[16];
+            ssize_t n = read(c, b, sizeof b);
+            if (n > 0) write(c, b, n);
+            _exit(0);
+        }
+        close(ls);
+        int c = socket(AF_INET, SOCK_STREAM, 0);
+        char b[16] = { 0 };
+        ok = ok && connect(c, (struct sockaddr *)&la, sizeof la) == 0 && write(c, "eco", 3) == 3 &&
+             read(c, b, sizeof b) == 3 && !memcmp(b, "eco", 3);
+        check(ok, "TCP por loopback (127.0.0.1): eco");
+        close(c);
+        if (pid > 0) waitpid(pid, NULL, 0);
+    }
+    if (argc > 1 && !strcmp(argv[1], "local")) {
+        printf(fallos ? "== %d fallos ==\n" : "== todo bien ==\n", fallos);
+        return fallos != 0;
+    }
 
     struct addrinfo hints = { .ai_family = AF_INET, .ai_socktype = SOCK_STREAM }, *ai = NULL;
     int e = getaddrinfo(host, "80", &hints, &ai);

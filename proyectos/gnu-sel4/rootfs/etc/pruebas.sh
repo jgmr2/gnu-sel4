@@ -26,8 +26,10 @@ prueba vim        vim -es -c 'qa!'
 prueba procps     sh -c 'ps -e | wc -l | test "$(cat)" -ge 3 && free >/dev/null && uptime >/dev/null'
 prueba dhcp       sh -c 'case "$(cat /proc/net/dhcp)" in *concedida*10.0.2.16/24*) ;; *) cat /proc/net/dhcp; exit 1;; esac'
 prueba resolv     sh -c 'case "$(cat /etc/resolv.conf)" in *"nameserver 10.0.2.3"*) ;; *) cat /etc/resolv.conf; exit 1;; esac'
+prueba red-fija   sh -c 'red fija 10.0.2.40/24 puerta 10.0.2.2 dns 10.0.2.3 && case "$(red)" in *fija*10.0.2.40/24*) ;; *) red; exit 1;; esac && nettest >/dev/null'
+prueba red-dhcp   sh -c 'red dhcp && sleep 1 && case "$(red)" in *concedida*) ;; *) red; exit 1;; esac'
 if [ "$(cat /etc/prueba)" = sin-red ]; then
-    echo "PRUEBA nettest: omitida (sin red)"
+    prueba nettest-local nettest local
 else
     prueba nettest nettest
 fi
