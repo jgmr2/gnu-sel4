@@ -17,6 +17,7 @@
 #include <string.h>
 #include <sel4posix/fs_protocol.h>
 #include <sel4posix/net_protocol.h>
+#include <sddf/util/printf.h>
 #include "server.h"
 #include "syscall_nr.h"
 
@@ -627,6 +628,66 @@ void net_notified(void)
 {
     proc_wake_mask(net_waiters);
     net_waiters = 0;
+}
+
+/* ---------------- configuración de red (DHCP de netstack) ---------------- */
+
+static const char *ip4(uint32_t a, char *out)       /* orden de red -> "a.b.c.d" */
+{
+    const uint8_t *b = (const uint8_t *)&a;
+    sddf_snprintf(out, 16, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
+    return out;
+}
+
+static bool net_info(struct net_info *ni)
+{
+    if (net_call(NET_OP_INFO, 0, 0, 0, 0) < 0) return false;
+    memcpy(ni, (void *)net_buf, sizeof *ni);
+    return true;
+}
+
+/* Reemplaza un archivo entero desde el servidor */
+static long write_file(const char *abs, const char *data, size_t len)
+{
+    long ino = fs_lookup(abs, true, NULL, NULL);
+    if (ino == -ENOENT) {
+        fs_set_path(0, abs);
+        ino = fs_call(FS_OP_CREATE, S_IFREG | 0644, 0, 0);
+    }
+    if (ino < 0) return ino;
+    long r = fs_call(FS_OP_TRUNCATE, ino, 0, 0);
+    if (r < 0) return r;
+    memcpy((void *)fs_buf, data, len);
+    return fs_call(FS_OP_WRITE, ino, 0, len);
+}
+
+/* Concesión nueva o renovada: los DNS que dio el servidor DHCP van a /etc/resolv.conf */
+void net_lease_changed(void)
+{
+    struct net_info ni;
+    if (!net_info(&ni) || !ni.dns[0]) return;
+    char buf[192], a[16], b[16];
+    int n = sddf_snprintf(buf, sizeof buf, "# Lo escribe posix_server con la concesión DHCP de netstack\n"
+                          "nameserver %s\n", ip4(ni.dns[0], a));
+    if (ni.dns[1]) n += sddf_snprintf(buf + n, sizeof buf - n, "nameserver %s\n", ip4(ni.dns[1], b));
+    write_file("/etc/resolv.conf", buf, n);
+}
+
+/* /proc/net/dhcp */
+long net_info_text(char *out, size_t max)
+{
+    static const char *const states[] = { "apagado", "pidiendo la dirección anterior", "buscando servidor",
+                                          "pidiendo la dirección ofrecida", "concedida", "renovando" };
+    struct net_info ni;
+    if (!net_info(&ni)) return sddf_snprintf(out, max, "netstack no responde\n");
+    char ip[16], gw[16], d0[16], d1[16], sv[16];
+    int pl = __builtin_popcount(ni.mask);
+    return sddf_snprintf(out, max,
+        "estado:    %s\ninterfaz:  eth0 %02x:%02x:%02x:%02x:%02x:%02x\ndirección: %s/%d\npuerta:    %s\n"
+        "dns:       %s %s\nservidor:  %s\nconcesión: %u s (quedan %u s)\n",
+        ni.state < 6 ? states[ni.state] : "?", ni.mac[0], ni.mac[1], ni.mac[2], ni.mac[3], ni.mac[4], ni.mac[5],
+        ip4(ni.ip, ip), pl, ip4(ni.gw, gw), ip4(ni.dns[0], d0), ni.dns[1] ? ip4(ni.dns[1], d1) : "",
+        ip4(ni.server, sv), ni.lease, ni.remaining);
 }
 
 static long sock_wait(struct ofile *f, long r, long flags)

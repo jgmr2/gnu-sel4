@@ -121,6 +121,7 @@ void notified(microkit_channel ch)
 {
     if (ch == BRIDGE_CH) bridge_notified();
     else if (ch == NET_CH) net_notified();
+    else if (ch == NET_LEASE_CH) net_lease_changed();
     else if (!timer_notified(ch)) tty_notified(ch);
 }
 

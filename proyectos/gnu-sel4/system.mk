@@ -115,12 +115,18 @@ fstack/fstack.o: $(POSIX)/ports/fstack/build-fstack.sh
 NET_CFLAGS := --target=x86_64-none-elf -O2 -g -Wall -fno-pic -fno-stack-protector -mfsgsbase -mrdrnd \
 	      -nostdinc -isystem $(SYSROOT)/include -I$(BOARD_DIR)/include -I$(SDDF)/include \
 	      -I$(SDDF)/include/microkit -I$(FSTACK)/lib -I$(POSIX)/include -I$(POSIX)/net/compat -D_GNU_SOURCE -D__thread= -include fstack_host.h -DINET -DINET6
-net_%.o: $(POSIX)/net/%.c $(POSIX)/net/netstack.h $(LIBC)
+# Dirección que netstack pide primero por DHCP (QEMU: la de las redirecciones de puertos de
+# `make run`); vacío = la que dé el servidor
+NETSTACK_IP_PREFERIDA ?= 10.0.2.16
+NET_CFLAGS += $(if $(NETSTACK_IP_PREFERIDA),-DNETSTACK_IP_PREFERIDA='"$(NETSTACK_IP_PREFERIDA)"')
+netstack-ip.$(NETSTACK_IP_PREFERIDA):              # cambiarla recompila netstack
+	rm -f netstack-ip.* && touch '$@'
+net_%.o: $(POSIX)/net/%.c $(POSIX)/net/netstack.h $(POSIX)/net/dhcp.h $(LIBC) netstack-ip.$(NETSTACK_IP_PREFERIDA)
 	clang $(NET_CFLAGS) -c $< -o $@
 net_tsc.o: $(SDDF)/util/arch_timestamp_counter.c $(LIBC)
 	clang $(NET_CFLAGS) -c $< -o $@
-netstack.elf: net_netstack.o net_host.o net_tsc.o fstack/fstack.o $(LIBC)
-	$(LD) $(LDFLAGS) net_netstack.o net_host.o net_tsc.o fstack/fstack.o \
+netstack.elf: net_netstack.o net_host.o net_dhcp.o net_tsc.o fstack/fstack.o $(LIBC)
+	$(LD) $(LDFLAGS) net_netstack.o net_host.o net_dhcp.o net_tsc.o fstack/fstack.o \
 		--start-group -lmicrokit -Tmicrokit.ld $(LIBC) --end-group -o $@
 # segundo copiador de red de sDDF (cada uno lleva su configuración dentro del ELF)
 netstack_copy.elf: network_copy.elf

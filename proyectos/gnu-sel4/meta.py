@@ -34,6 +34,8 @@ SERVER_FS_CHANNEL_ID = 21             # FS_CH
 SERVER_BRIDGE_CHANNEL_ID = 22         # BRIDGE_CH en server/server.h
 SERVER_NET_CHANNEL_ID = 23            # NET_CH en server/server.h
 NETSTACK_SERVER_CHANNEL_ID = 50       # SERVER_CH en net/netstack.c
+SERVER_LEASE_CHANNEL_ID = 24          # NET_LEASE_CH en server/server.h (aviso de concesión DHCP)
+NETSTACK_LEASE_CHANNEL_ID = 51        # LEASE_CH en net/netstack.c
 NET_BUF_SIZE = 0x1_0000               # NET_BUF_SIZE en include/sel4posix/net_protocol.h
 VMM_BRIDGE_CHANNEL_ID = 50            # BRIDGE_CH en vm/guest_arch_init.h
 BRIDGE_DATA_SIZE = 0x1_0000           # BR_DATA_SIZE / BRIDGE_DATA_SIZE
@@ -178,6 +180,7 @@ def generate(sdf, sdf_file, output_dir):
 
     sdf.add_channel(Channel(server, fs, a_id=SERVER_FS_CHANNEL_ID, pp_a=True))
     sdf.add_channel(Channel(server, netstack, a_id=SERVER_NET_CHANNEL_ID, b_id=NETSTACK_SERVER_CHANNEL_ID, pp_a=True))
+    sdf.add_channel(Channel(server, netstack, a_id=SERVER_LEASE_CHANNEL_ID, b_id=NETSTACK_LEASE_CHANNEL_ID))
 
     # ------------------------------------------------------------ puente GNU/seL4 <-> VM
     # Dos colas de bytes (formato sDDF serial) que la VM ve como /dev/hvc1:
@@ -205,8 +208,10 @@ def generate(sdf, sdf_file, output_dir):
     blk.add_client(vmm, partition=1, data_size=VM_DISK_DATA_SIZE)     # partición 2: /var/lib/docker de la VM
 
     net = Sddf.Net(sdf, None, eth_driver, net_virt_tx, net_virt_rx)
-    net.add_client_with_copier(vmm, vm_net_copier)
-    net.add_client_with_copier(netstack, netstack_copier)
+    # MAC fijas (si no, sdfgen inventa una en cada compilación y el DHCP da otra concesión);
+    # 02:... = administradas localmente
+    net.add_client_with_copier(vmm, vm_net_copier, mac_addr="02:5e:14:00:00:0a")
+    net.add_client_with_copier(netstack, netstack_copier, mac_addr="02:5e:14:00:00:10")
 
     for system in (serial, blk, net, timer_system, vmm_system):
         assert system.connect()

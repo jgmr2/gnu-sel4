@@ -48,7 +48,7 @@ enum {
     F_NONE,
     /* globales */
     F_ROOT, F_SELF, F_MEMINFO, F_STAT, F_UPTIME, F_LOADAVG, F_VERSION, F_MOUNTS,
-    F_SYS, F_SYS_KERNEL, F_OSRELEASE, F_PIDMAX, F_HOSTNAME,
+    F_SYS, F_SYS_KERNEL, F_OSRELEASE, F_PIDMAX, F_HOSTNAME, F_NET, F_NET_DHCP,
     /* de un proceso */
     F_PID, F_P_STAT, F_P_STATM, F_P_STATUS, F_P_CMDLINE, F_P_ENVIRON, F_P_COMM, F_P_EXE, F_P_CWD,
 };
@@ -62,6 +62,9 @@ static const struct { const char *name; int id, kind, dt; } root_ents[] = {
     { "version", F_VERSION, PROCFS_FILE, DT_REG },
     { "mounts", F_MOUNTS, PROCFS_FILE, DT_REG },
     { "sys", F_SYS, PROCFS_DIR, DT_DIR },
+    { "net", F_NET, PROCFS_DIR, DT_DIR },
+}, net_ents[] = {
+    { "dhcp", F_NET_DHCP, PROCFS_FILE, DT_REG },
 }, kernel_ents[] = {
     { "osrelease", F_OSRELEASE, PROCFS_FILE, DT_REG },
     { "pid_max", F_PIDMAX, PROCFS_FILE, DT_REG },
@@ -119,6 +122,13 @@ static int lookup(const char *abs, struct proc **pp, int *kind)
         if (*p && p[1]) return F_NONE;
         for (unsigned i = 0; i < N(pid_ents); i++)
             if (!strcmp(c, pid_ents[i].name)) { *kind = pid_ents[i].kind; return pid_ents[i].id; }
+        return F_NONE;
+    }
+    if (!strcmp(c, "net")) {
+        p = next(p, c, sizeof c);
+        if (!*c) { *kind = PROCFS_DIR; return F_NET; }
+        for (unsigned i = 0; i < N(net_ents); i++)
+            if (!strcmp(c, net_ents[i].name)) { *kind = net_ents[i].kind; return net_ents[i].id; }
         return F_NONE;
     }
     if (!strcmp(c, "sys")) {
@@ -212,6 +222,7 @@ static size_t generate(int id, struct proc *p)
     case F_OSRELEASE: OUT(OSRELEASE "\n"); break;
     case F_PIDMAX:    OUT("32768\n"); break;
     case F_HOSTNAME:  OUT("gnu-sel4\n"); break;
+    case F_NET_DHCP:  n = net_info_text(gen, max); break;
 
     case F_P_STAT: {
         procfs_account(p);
@@ -349,6 +360,9 @@ long procfs_getdents(const char *abs, uint64_t *pos, char *dst, size_t len)
         } else if (id == F_PID && i - 2 < N(pid_ents)) {
             nm = pid_ents[i - 2].name;
             type = pid_ents[i - 2].dt;
+        } else if (id == F_NET && i - 2 < N(net_ents)) {
+            nm = net_ents[i - 2].name;
+            type = net_ents[i - 2].dt;
         } else if (id == F_SYS && i == 2) {
             nm = "kernel";
             type = DT_DIR;

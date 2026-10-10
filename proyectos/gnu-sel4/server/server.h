@@ -111,6 +111,7 @@ extern uintptr_t client_buf;        /* su búfer compartido (en la ventana de su
 #define FS_CH        21             /* SERVER_FS_CHANNEL_ID en meta.py */
 #define BRIDGE_CH    22             /* SERVER_BRIDGE_CHANNEL_ID en meta.py (hacia CLIENT_VMM) */
 #define NET_CH       23             /* SERVER_NET_CHANNEL_ID en meta.py (hacia netstack) */
+#define NET_LEASE_CH 24             /* SERVER_LEASE_CHANNEL_ID: netstack obtuvo/renovó la concesión DHCP */
 #define PROC_INDEX(p) ((int)((p) - procs))
 
 /* proc.c */
@@ -195,6 +196,8 @@ int  tty_get_fg(void);
 /* vfs.c */
 void vfs_init(void);
 void net_notified(void);                   /* actividad en los sockets (netstack) */
+void net_lease_changed(void);              /* concesión DHCP nueva: reescribe /etc/resolv.conf */
+long net_info_text(char *out, size_t max); /* /proc/net/dhcp */
 uint64_t vfs_timerfd_next(void);           /* plazo más cercano de los timerfd (0 = ninguno) */
 void vfs_timerfd_fire(uint64_t now);
 void vfs_set_fs_clock(void);

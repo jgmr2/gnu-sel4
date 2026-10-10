@@ -12,7 +12,8 @@
  * protected() atiende sus llamadas y un kqueue de FreeBSD dice cuándo avisarle de
  * actividad en los sockets.
  *
- * Dirección fija por ahora (red de usuario de QEMU): 10.0.2.16/24, puerta 10.0.2.2.
+ * Dirección: por DHCP (dhcp.c, antes de la pila); la interfaz de FreeBSD se crea con
+ * la primera concesión. NETSTACK_IP_PREFERIDA (QEMU: 10.0.2.16) se pide primero.
  */
 #include <errno.h>
 #include <poll.h>
@@ -32,6 +33,8 @@
 #include "ff_host_interface.h"
 #include <sel4posix/net_protocol.h>
 #include "netstack.h"
+#include "dhcp.h"
+#include <arpa/inet.h>
 
 /* De la parte de FreeBSD (exportadas en lib/ff_api.symlist) */
 extern int ff_freebsd_init(void);
@@ -41,6 +44,8 @@ __attribute__((__section__(".timer_client_config"))) timer_client_config_t timer
 __attribute__((__section__(".net_client_config"))) net_client_config_t net_config;
 
 #define SERVER_CH 50                  /* canal con posix_server (= meta.py) */
+#define LEASE_CH  51                  /* aviso de concesión DHCP a posix_server (= meta.py) */
+static bool attached;                 /* la interfaz de FreeBSD existe (hay concesión) */
 uintptr_t net_buf;                    /* compartido con posix_server (setvar en meta.py) */
 
 #define HZ 100
@@ -111,6 +116,10 @@ static void process_rx(void)
             net_enqueue_free(&rx_q, b);
             notify_rx = true;
             if (!copy) continue;
+            if (dhcp_input(copy, len) || !attached) {   /* respuestas DHCP; sin interfaz aún: nada más */
+                free(copy);
+                continue;
+            }
             void *m = ff_mbuf_gethdr(copy, len, copy, len, 0);
             if (!m) {
                 free(copy);
@@ -139,6 +148,53 @@ static void flush_notifications(void)
         microkit_notify(net_config.tx.id);
     }
     notify_tx = false;
+}
+
+/* ---------------- DHCP ---------------- */
+
+void dhcp_send_frame(const void *frame, size_t len)
+{
+    net_buff_desc_t b;
+    if (len > NET_BUFFER_SIZE || net_dequeue_free(&tx_q, &b)) return;   /* se reintenta */
+    memcpy((void *)(net_config.tx_data.vaddr + b.io_or_offset), frame, len);
+    b.len = len;
+    net_enqueue_active(&tx_q, b);
+    notify_tx = true;
+}
+
+static int prefix_len(uint32_t mask) { return __builtin_popcount(mask); }
+
+void dhcp_bound(bool first)
+{
+    char ip[16], mask[16], bcast[16], gw[16], dns[16];
+    uint32_t b = dhcp.ip | ~dhcp.mask;
+    inet_ntop(AF_INET, &dhcp.ip, ip, sizeof ip);
+    inet_ntop(AF_INET, &dhcp.mask, mask, sizeof mask);
+    inet_ntop(AF_INET, &b, bcast, sizeof bcast);
+    inet_ntop(AF_INET, dhcp.gw ? &dhcp.gw : &dhcp.server, gw, sizeof gw);
+    inet_ntop(AF_INET, &dhcp.dns[0], dns, sizeof dns);
+    if (first) {
+        static char ifname[] = "eth0";
+        static char a[16], m[16], bc[16], g[16];
+        memcpy(a, ip, sizeof a); memcpy(m, mask, sizeof m);
+        memcpy(bc, bcast, sizeof bc); memcpy(g, gw, sizeof g);
+        port_cfg.name = port_cfg.ifname = ifname;
+        port_cfg.addr = a;
+        port_cfg.netmask = m;
+        port_cfg.broadcast = bc;
+        port_cfg.gateway = g;
+        memcpy(port_cfg.mac, &net_config.mac_addr, 6);
+        if (!ff_veth_attach(&port_cfg)) {
+            netstack_log("netstack: ff_veth_attach falló\n");
+            return;
+        }
+        attached = true;
+        netstack_log("netstack: DHCP: eth0 %s/%d, puerta %s, DNS %s (concesión de %u s)\n",
+                     ip, prefix_len(dhcp.mask), gw, dns, dhcp.lease);
+    } else if (strcmp(ip, port_cfg.addr)) {
+        netstack_log("netstack: DHCP: el servidor dio otra dirección (%s); se sigue con %s\n", ip, port_cfg.addr);
+    }
+    microkit_notify(LEASE_CH);                 /* posix_server actualiza /etc/resolv.conf */
 }
 
 /* ---------------- llamadas de posix_server ---------------- */
@@ -230,6 +286,23 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
         r = r < 0 ? -(long)errno : p.revents;
         break;
     }
+    case NET_OP_INFO: {
+        struct net_info *ni = (struct net_info *)net_buf;
+        memset(ni, 0, sizeof *ni);
+        ni->state = dhcp.state;
+        ni->ip = attached ? dhcp.ip : 0;
+        ni->mask = dhcp.mask;
+        ni->gw = dhcp.gw;
+        ni->dns[0] = dhcp.dns[0];
+        ni->dns[1] = dhcp.dns[1];
+        ni->server = dhcp.server;
+        ni->lease = dhcp.lease;
+        uint64_t end = dhcp.bound_ns + (uint64_t)dhcp.lease * 1000000000ULL, now = netstack_now_ns();
+        ni->remaining = dhcp.bound_ns && end > now ? (end - now) / 1000000000ULL : 0;
+        memcpy(ni->mac, &net_config.mac_addr, 6);
+        r = 0;
+        break;
+    }
     case NET_OP_FIONREAD: {
         int n = 0;
         r = ff_ioctl(a1, FIONREAD, &n);
@@ -248,6 +321,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
 
 static void tick(void)
 {
+    dhcp_tick();
     ff_hardclock();
     ff_update_current_ts();
     sddf_timer_set_timeout(timer_config.driver_id, NS_PER_TICK);
@@ -272,22 +346,13 @@ void init(void)
         return;
     }
 
-    static char ifname[] = "eth0", addr[] = "10.0.2.16", mask[] = "255.255.255.0",
-                bcast[] = "10.0.2.255", gw[] = "10.0.2.2";
-    port_cfg.name = ifname;
-    port_cfg.ifname = ifname;
-    port_cfg.addr = addr;
-    port_cfg.netmask = mask;
-    port_cfg.broadcast = bcast;
-    port_cfg.gateway = gw;
-    memcpy(port_cfg.mac, &net_config.mac_addr, 6);
-    if (!ff_veth_attach(&port_cfg)) {
-        netstack_log("netstack: ff_veth_attach falló\n");
-        return;
-    }
-    netstack_log("netstack: pila TCP/IP de FreeBSD lista: eth0 %s/24, puerta %s\n", addr, gw);
-
     kq = ff_kqueue();
+    uint32_t pref = 0;
+#ifdef NETSTACK_IP_PREFERIDA
+    inet_pton(AF_INET, NETSTACK_IP_PREFERIDA, &pref);
+#endif
+    dhcp_start((const uint8_t *)&net_config.mac_addr, pref);
+    netstack_log("netstack: pila TCP/IP de FreeBSD lista; pidiendo dirección por DHCP\n");
     sddf_timer_set_timeout(timer_config.driver_id, NS_PER_TICK);
     flush_notifications();
 }

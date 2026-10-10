@@ -16,6 +16,7 @@
  *   [NET_ADDR_OFF, +128)       dirección (bind, connect, accept, sendto, recvfrom...)
  */
 #pragma once
+#include <stdint.h>
 
 #define NET_BUF_SIZE   0x10000
 #define NET_ADDR_OFF   (NET_BUF_SIZE - 128)
@@ -38,4 +39,16 @@ enum {
     NET_OP_GETPEERNAME,    /* s                                        -> dirección, MR1 */
     NET_OP_POLL,           /* s, eventos (POLLIN...)                   -> revents */
     NET_OP_FIONREAD,       /* s                                        -> bytes por leer */
+    NET_OP_INFO,           /*                                          -> struct net_info en net_buf */
+};
+
+/* Estado de la interfaz (NET_OP_INFO). Direcciones en orden de red. netstack avisa a
+ * posix_server por su canal de concesión cada vez que obtiene o renueva una. */
+enum { NET_DHCP_OFF, NET_DHCP_INIT_REBOOT, NET_DHCP_SELECTING, NET_DHCP_REQUESTING,
+       NET_DHCP_BOUND, NET_DHCP_RENEWING };
+struct net_info {
+    uint32_t state;              /* NET_DHCP_* (= DHCP_* de net/dhcp.h) */
+    uint32_t ip, mask, gw, dns[2], server;
+    uint32_t lease, remaining;   /* segundos */
+    uint8_t mac[6];
 };

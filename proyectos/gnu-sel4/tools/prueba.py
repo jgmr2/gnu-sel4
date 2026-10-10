@@ -72,6 +72,8 @@ def main():
                         resultados.append(t)
                 elif t.startswith("== PRUEBAS: FIN"):
                     fin = t
+                elif "netstack: DHCP" in t:
+                    print("  [serie] " + t)
                 elif "PANIC" in t or "faulting PD" in t:
                     print("  [serie] " + t)
     finally:

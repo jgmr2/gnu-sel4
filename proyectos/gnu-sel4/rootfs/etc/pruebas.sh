@@ -24,6 +24,8 @@ prueba archivos   archivos
 prueba coreutils  sh -c '[ "$(ls /bin | wc -l)" -gt 100 ] && [ "$(echo hola | tr a-z A-Z)" = HOLA ]'
 prueba vim        vim -es -c 'qa!'
 prueba procps     sh -c 'ps -e | wc -l | test "$(cat)" -ge 3 && free >/dev/null && uptime >/dev/null'
+prueba dhcp       sh -c 'case "$(cat /proc/net/dhcp)" in *concedida*10.0.2.16/24*) ;; *) cat /proc/net/dhcp; exit 1;; esac'
+prueba resolv     sh -c 'case "$(cat /etc/resolv.conf)" in *"nameserver 10.0.2.3"*) ;; *) cat /etc/resolv.conf; exit 1;; esac'
 if [ "$(cat /etc/prueba)" = sin-red ]; then
     echo "PRUEBA nettest: omitida (sin red)"
 else

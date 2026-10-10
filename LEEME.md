@@ -64,8 +64,8 @@ por `system.mk`. Cada pieza es un componente aislado; se comunican por IPC y col
   `include/sel4posix/bridge.h`.
 - **Red nativa.** `netstack` es la pila TCP/IP de FreeBSD (de F-Stack, `net/`) como componente
   propio sobre la red de sDDF: los programas usan sockets POSIX normales, que posix_server pasa
-  a netstack (`include/sel4posix/net_protocol.h`). IP fija 10.0.2.16 (red de QEMU), DNS en
-  `/etc/resolv.conf`. Prueba: `nettest`; `nettest servir` responde en el puerto 8090 del host.
+  a netstack (`include/sel4posix/net_protocol.h`). Dirección por DHCP (en QEMU pide 10.0.2.16,
+  la de las redirecciones de `make run`); los DNS van a `/etc/resolv.conf`. Estado: `cat /proc/net/dhcp`. Prueba: `nettest`; `nettest servir` responde en el puerto 8090 del host.
 - **Archivos compartidos.** La VM ve GNU/seL4 en `/mnt/sel4` (9P: `/sbin/9pd` ↔ `sel4-agent`).
 - **Arranque.** `/sbin/init` (pid 1) ejecuta `/etc/rc` (arranca 9pd) y mantiene la shell de sesión
   de root según `/etc/passwd` (zsh). `/bin/sh` es dash, para los guiones.

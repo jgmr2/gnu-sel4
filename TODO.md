@@ -49,8 +49,11 @@ Estado: `[x]` hecho · `[~]` en curso · `[ ]` pendiente
          socket, bind, connect, listen, accept(4), send/recv(from/msg), shutdown, sockopts,
          get{sock,peer}name, poll/select, FIONBIO/FIONREAD, O_NONBLOCK. DNS con /etc/resolv.conf
    - [x] `nettest` (DNS + HTTP a internet; `nettest servir` desde el host: puerto 8090)
-   - [ ] DHCP (hoy IP fija 10.0.2.16 para la red de usuario de QEMU) y configuración
-         (`ifconfig`/`route` o un archivo en /etc)
+   - [x] DHCP (`net/dhcp.c`): cliente a nivel de tramas, antes de la pila; la interfaz de FreeBSD
+         se crea con la concesión (INIT-REBOOT con la IP preferida, DISCOVER, renovación en T1).
+         posix_server reescribe /etc/resolv.conf con los DNS recibidos; `/proc/net/dhcp`.
+         MAC fijas (antes cambiaban en cada compilación). `make NETSTACK_IP_PREFERIDA=` = sin preferencia
+   - [ ] Configurar la red a mano (`ip`/`ifconfig`/`route`) y IP fija opcional en /etc
    - [ ] Loopback (127.0.0.1) y socketpair/AF_UNIX
    - [ ] Herramientas: curl/wget, ssh, nc; servicios (sshd)
    - [ ] Más de 64 KiB por llamada y menos copias (hoy: proceso -> servidor -> netstack)
