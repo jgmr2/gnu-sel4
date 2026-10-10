@@ -1,15 +1,15 @@
-# GNU/seL4: dash y procesos nativos + VM Linux con Docker, sobre el mismo seL4
+# GNU/seL4: sistema nativo (zsh, coreutils, red de FreeBSD...) + VM Linux con Docker, sobre seL4
 #
 #   make microkit-tool            (host)   herramienta de Microkit con nuestro parche (Rust en Docker)
 #   make vm-rootfs                (host)   kernel + initramfs de la VM (busybox + Docker), con Docker
-#   ../../dev.sh make             (Docker) todo: servidores, drivers, VMM, sysroot, programas, dash
+#   ../../dev.sh make             (Docker) todo: servidores, drivers, VMM, sysroot, programas, ports
 #                                          -> build/; instala /bin en la partición ext2 de disk.img
 #   make test                     (host)   pruebas automáticas en QEMU (sin pantalla, copia del disco)
 #   make run                      (host)   arranca en QEMU+KVM con consola gráfica (salir: Ctrl-a, x
 #                                          en esta terminal); CONSOLA=serie: por el puerto serie
 #   ../../dev.sh make disk-reset  borra disk.img: se recrea (vacío) en el próximo make
 #
-# Consola: Ctrl-\ 1 Enter -> VM (Docker); Ctrl-\ 0 Enter -> dash
+# Consola: Ctrl-\ 1 Enter -> VM (Docker); Ctrl-\ 0 Enter -> GNU/seL4
 
 export MICROKIT_SDK    ?= $(abspath ../../sdk/microkit-sdk-2.3.1)
 export MICROKIT_BOARD  := x86_64_generic_vtx
@@ -71,11 +71,7 @@ disk-reset:
 
 # Une los discos de los proyectos anteriores (posix: ext2; docker-vm: Docker) en el
 # formato de dos particiones, conservando su contenido. Se usa una vez.
-migrar-discos:
-	@test ! -f disk.img || { echo "ya existe disk.img"; exit 1; }
-	tools/migrar-discos.sh $(OLD_EXT2) $(OLD_DOCKER) disk.img
-
 clean:
 	rm -rf build
 
-.PHONY: all run test clean disk-reset vm-rootfs migrar-discos microkit-tool
+.PHONY: all run test clean disk-reset vm-rootfs microkit-tool

@@ -1,2 +1,0 @@
-Hola. Prueba crear, editar, mover y borrar archivos aquí:
-todo se guarda en disk.img y sigue ahí al reiniciar.

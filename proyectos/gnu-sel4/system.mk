@@ -218,8 +218,6 @@ DATA_TREES := zsh/inst/usr/share/zsh:/usr/share/zsh vim/runtime-min:/usr/share/v
 LINUX_CMDS := docker
 LINKS := sh:dash vi:vim $(foreach c,$(LINUX_CMDS),$(c):linux) \
 	 ssh:dropbearmulti dbclient:dropbearmulti scp:dropbearmulti dropbearkey:dropbearmulti
-# Restos de versiones anteriores que se quitan del disco
-OBSOLETE := /bin/utiles /bin/hola /bin/eco /bin/minish
 # terminfo: solo las terminales que se usan (la base completa tiene ~1900)
 TERMINFO := x/xterm x/xterm-256color x/xterm-color v/vt100 v/vt102 v/vt220 l/linux s/screen s/screen-256color d/dumb a/ansi
 
@@ -309,7 +307,6 @@ install.stamp: $(DISK) $(BINS) $(foreach b,$(EXTRA_BINS),$(firstword $(subst :, 
 	  done; \
 	  for l in $(LINKS); do echo "rm /bin/$${l%%:*}"; echo "symlink /bin/$${l%%:*} $${l##*:}"; done; \
 	  for p in $$(cat coreutils/programas.txt); do echo "rm /bin/$$p"; echo "symlink /bin/$$p coreutils"; done; \
-	  for o in $(OBSOLETE); do echo "rm $$o"; done; \
 	  for d in /usr /usr/share /usr/share/terminfo; do echo "mkdir $$d"; done; \
 	  for t in $(TERMINFO); do echo "mkdir /usr/share/terminfo/$${t%%/*}"; \
 	    echo "rm /usr/share/terminfo/$$t"; echo "write ncurses/inst/usr/share/terminfo/$$t /usr/share/terminfo/$$t"; done; \
