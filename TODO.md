@@ -116,12 +116,25 @@ Real hardware stays last on purpose: first the system has to be worth booting.
          and unmodified sway
    - [ ] Phase 4: foot as the native terminal; Linux VM windows through waypipe (like WSLg);
          per-origin border colours (native / VM), Qubes-style
-11. [ ] **Faster memory** (M): copy-on-write fork (today it copies every page); large pages
-        (2 MiB) for large regions; free unused page tables
+11. [ ] **Performance** (M): measure first, then optimise what the numbers point at
+   - [ ] Measurements: TSC counters for fork, exec, exit, page faults, PPCs and copies, visible
+         in /proc (numbers before any optimisation)
+   - [ ] Copy-on-write fork: today `mem_fork` copies every page, and fork + exec (every command
+         the shell starts) copies the whole shell only to throw it away at the exec
+   - [ ] Asynchronous I/O in fs_ext2: today it serves one disk request at a time and busy-waits
+         for the reply (`blk_io`), so nothing else touching files makes progress. A
+         submission/completion ring between posix_server and fs_ext2 (the sDDF model, the useful
+         part of the io_uring idea): several requests in flight, sleep until the disk notifies
+   - [ ] Zero copy where it pays off: shared `mmap` of files mapping the fs_ext2 cache pages
+         into the process (today: private copy, or shared read-only); large read/write
+         (>= 64 KiB) passing page capabilities instead of copying. Small transfers keep copying:
+         mapping + unmapping costs more than copying 4 KiB
+   - [ ] Large pages (2 MiB) for large regions; free unused page tables
 12. [ ] **Linux VM integration** (M–L; the VM runs Linux at native speed with VT-x; what is slow
         is the current bridge: serial-port-style queues with byte-by-byte copies)
    - [ ] vsock (AF_VSOCK): POSIX sockets between native and VM processes (virtio-vsock in
-         libvmm, AF_VSOCK in posix_server); `docker`/`linux` over vsock instead of the current bridge
+         libvmm, AF_VSOCK in posix_server); `docker`/`linux` over vsock instead of the current
+         bridge. virtio rings are zero copy: the biggest copy saving in the whole system
    - [ ] Direct networking between native and the VM (today it goes around via the host):
          sDDF vswitch or virtio-net between netstack and the VM
    - [ ] Fast shared files: 9P or virtio-fs over shared-memory queues
@@ -161,6 +174,8 @@ Real hardware stays last on purpose: first the system has to be worth booting.
 
 ## Long term
 
+- [ ] io_uring as an interface for programs: not planned (a Linux-only ABI that almost nothing
+      uses directly; seL4 PPCs are cheap). The ring model is used between servers instead (item 11)
 - [ ] **posix_server is a single point of failure**: if it goes down, all of native goes down;
       split it into servers (processes/memory, files, network, tty)
 - [ ] Our own triple (`x86_64-sel4-musl`) instead of `x86_64-linux-musl` (today programs see `__linux__`)
@@ -168,7 +183,6 @@ Real hardware stays last on purpose: first the system has to be worth booting.
 
 ## Known issues (small, unscheduled)
 
-- [ ] Shared writable `mmap` of files (today: private copy, or shared read-only)
 - [ ] /proc: real loadavg, /proc/<pid>/maps and fd, named tty (today "?")
 - [ ] Make `nice` change the real seL4 priority (today the value is only stored)
 - [ ] Hard links over 9P (`Tlink` in 9pd; fs_ext2 already supports them)
