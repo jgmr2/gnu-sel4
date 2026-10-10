@@ -1,5 +1,5 @@
 /*
- * phase1test: what Wayland needs from POSIX (TODO, item 7, Phase 1).
+ * phase1test: what Wayland needs from POSIX (TODO: graphical desktop, Phase 1).
  *   epoll, eventfd, timerfd; AF_UNIX sockets with descriptor passing (SCM_RIGHTS);
  *   shared memory (memfd_create + mmap MAP_SHARED) and file mmap
  */
