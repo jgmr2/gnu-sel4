@@ -186,11 +186,20 @@ procps/.compilado: $(NCURSES) $(SYSROOT_READY) $(POSIX)/ports/procps/build-procp
 	touch $@
 $(addprefix procps/bin/,$(PROCPS_PROGS)): procps/.compilado ;
 
-EXTRA_BINS := dash/src/dash:dash coreutils.bin:coreutils zsh/Src/zsh:zsh vim.bin:vim \
+# curl con HTTPS (mbedTLS en el sysroot) y los certificados raíz de Mozilla
+MBEDTLS_SRC := $(POSIX)/../../third_party/mbedtls-3.6.7
+CURL_SRC := $(POSIX)/../../third_party/curl-8.22.0
+CACERT := $(POSIX)/../../third_party/cacert/cacert.pem
+curl/curl/src/curl: $(SYSROOT_READY) $(POSIX)/ports/curl/build-curl.sh
+	$(POSIX)/ports/curl/build-curl.sh $(MBEDTLS_SRC) $(CURL_SRC) $(CACERT) curl $(SYSROOT)
+curl.bin: curl/curl/src/curl
+	llvm-strip -o $@ $<
+
+EXTRA_BINS := dash/src/dash:dash coreutils.bin:coreutils zsh/Src/zsh:zsh vim.bin:vim curl.bin:curl \
 	      $(foreach p,$(NC_PROGS),ncurses/inst/usr/bin/$(p):$(p)) \
 	      $(foreach p,$(PROCPS_PROGS),procps/bin/$(p):$(p))
 # Árboles de datos que se copian al disco: "origen:destino"
-DATA_TREES := zsh/inst/usr/share/zsh:/usr/share/zsh vim/runtime-min:/usr/share/vim/vim92
+DATA_TREES := zsh/inst/usr/share/zsh:/usr/share/zsh vim/runtime-min:/usr/share/vim/vim92 curl/ssl:/etc/ssl/certs
 # Enlaces: "nombre:destino". Los de coreutils salen de coreutils/programas.txt
 # Comandos de la VM Linux disponibles como nativos (puente, como el interop de WSL)
 LINUX_CMDS := docker

@@ -32,6 +32,7 @@ if [ "$(cat /etc/prueba)" = sin-red ]; then
     prueba nettest-local nettest local
 else
     prueba nettest nettest
+    prueba curl-https sh -c 'curl -sS -o /tmp/ej.html -w "%{http_code}" https://example.com | test "$(cat)" = 200 && test -s /tmp/ej.html'
 fi
 
 echo "== PRUEBAS: FIN ($fallos fallos) =="

@@ -13,6 +13,9 @@
 | `third_party/zsh-5.9.2` | https://www.zsh.org/pub/ | 5.9.2 |
 | `third_party/vim-9.2.1172` | https://github.com/vim/vim | v9.2.1172 |
 | `third_party/procps-ng-4.0.7` | https://sourceforge.net/projects/procps-ng/ | 4.0.7 |
+| `third_party/mbedtls-3.6.7` | https://github.com/Mbed-TLS/mbedtls/releases | 3.6.7 (LTS) |
+| `third_party/curl-8.22.0` | https://curl.se/download/ | 8.22.0 |
+| `third_party/cacert/cacert.pem` | https://curl.se/ca/cacert.pem | certificados de Mozilla del 2026-09-25 |
 | `third_party/spleen` | https://github.com/fcambus/spleen | 2.2.0 (`spleen-8x16.bdf`, LICENSE) |
 
 Pendiente: un script que las descargue todas (`obtener-dependencias.sh`).

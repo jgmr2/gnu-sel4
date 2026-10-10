@@ -17,9 +17,11 @@ for a in "$@"; do
 done
 
 if [ "$link" = 1 ]; then
+    # compiler-rt: lo que el compilador llama por su cuenta (división de 128 bits, etc.)
+    RT=$($CC --rtlib=compiler-rt -print-libgcc-file-name)
     exec $CC $FLAGS -static -nostdlib -fuse-ld=lld \
         -Wl,--image-base=0x10000000 -Wl,-z,max-page-size=4096 -L"$SYSROOT/lib" \
-        "$SYSROOT/lib/crt0.o" "$@" "$SYSROOT/lib/libsel4posix.a" "$SYSROOT/lib/libc.a"
+        "$SYSROOT/lib/crt0.o" "$@" "$SYSROOT/lib/libsel4posix.a" "$SYSROOT/lib/libc.a" "$RT"
 else
     exec $CC $FLAGS "$@"
 fi

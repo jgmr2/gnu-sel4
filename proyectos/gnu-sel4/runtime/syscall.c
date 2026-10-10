@@ -678,6 +678,33 @@ static long sys_timerfd_gettime(int fd, struct itimerspec *cur)
     return r;
 }
 
+/* getrandom(): del generador del procesador (RDRAND); si no hay, mezcla del TSC (no criptográfico) */
+static uint64_t rand64(void)
+{
+    unsigned long long v;
+    for (int i = 0; i < 10; i++) {
+        unsigned char ok;
+        __asm__ volatile("rdrand %0; setc %1" : "=r"(v), "=qm"(ok));
+        if (ok) return v;
+    }
+    static uint64_t x;
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    x ^= ((uint64_t)hi << 32 | lo) + 0x9e3779b97f4a7c15ULL;
+    x ^= x << 13; x ^= x >> 7; x ^= x << 17;
+    return x;
+}
+
+static long sys_getrandom(void *buf, size_t len)
+{
+    uint8_t *p = buf;
+    for (size_t i = 0; i < len; i += 8) {
+        uint64_t v = rand64();
+        memcpy(p + i, &v, len - i < 8 ? len - i : 8);
+    }
+    return len;
+}
+
 /* select() sobre poll() */
 static long sys_select(int n, fd_set *rd, fd_set *wr, fd_set *ex, int64_t timeout_ns)
 {
@@ -1163,6 +1190,7 @@ long __sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6
                           tv ? tv->tv_sec * 1000000000LL + tv->tv_usec * 1000LL : -1);
     }
     case SYS_pselect6:       return sys_select(a1, (fd_set *)a2, (fd_set *)a3, (fd_set *)a4, ts_ns((const struct timespec *)a5));
+    case SYS_getrandom:      return sys_getrandom((void *)a1, a2);
     /* epoll, eventfd, timerfd */
     case SYS_epoll_create:   return sys_epoll_create(0);
     case SYS_epoll_create1:  return sys_epoll_create(a1);

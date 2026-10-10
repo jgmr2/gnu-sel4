@@ -4,7 +4,7 @@
 FROM debian:trixie
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        clang-18 lld-18 llvm-18 make device-tree-compiler acpica-tools perl xz-utils cpio \
+        clang-18 lld-18 llvm-18 libclang-rt-18-dev make device-tree-compiler acpica-tools perl xz-utils cpio \
         gdb-multiarch python3 python3-pip git ca-certificates curl less vim-tiny \
         dosfstools gdisk fdisk e2fsprogs \
     && rm -rf /var/lib/apt/lists/*

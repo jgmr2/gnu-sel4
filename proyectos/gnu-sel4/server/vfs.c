@@ -75,7 +75,8 @@ enum { OF_FREE, OF_TTY, OF_NULL, OF_FILE, OF_DIR, OF_PIPE_R, OF_PIPE_W, OF_LINUX
        OF_EPOLL,                       /* marcador: el conjunto de interés vive en el runtime */
        OF_USOCK,                       /* socket local (AF_UNIX) */
        OF_SHM,                         /* memfd: memoria compartida (mem.c) */
-       OF_KMSG };                      /* /dev/kmsg: al puerto serie (registros, make test) */
+       OF_KMSG,                        /* /dev/kmsg: al puerto serie (registros, make test) */
+       OF_RANDOM };                    /* /dev/urandom, /dev/random (RDRAND) */
 
 /* ¿La ruta es de /proc? */
 static bool is_proc(const char *abs)
@@ -298,6 +299,7 @@ static int dev_type(const char *abs)
     if (!strcmp(abs, "/dev/null")) return OF_NULL;
     if (!strcmp(abs, "/dev/linux")) return OF_LINUX;   /* sesión con la VM Linux */
     if (!strcmp(abs, "/dev/kmsg")) return OF_KMSG;     /* mensajes al puerto serie */
+    if (!strcmp(abs, "/dev/urandom") || !strcmp(abs, "/dev/random")) return OF_RANDOM;
     return OF_FREE;
 }
 
@@ -818,6 +820,20 @@ static long do_read(long fd, size_t len, bool positional, uint64_t pos)
     case OF_SOCKET: return positional ? -ESPIPE : sock_recv(f, len, 0);
     case OF_USOCK:   return positional ? -ESPIPE : usock_recv(f, len, 0, 0);
     case OF_KMSG:    return 0;
+    case OF_RANDOM: {
+        if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
+        for (size_t i = 0; i < len; i += 8) {
+            unsigned long long v = 0;
+            for (int k = 0; k < 10; k++) {
+                unsigned char ok;
+                __asm__ volatile("rdrand %0; setc %1" : "=r"(v), "=qm"(ok));
+                if (ok) break;
+                v ^= clock_rdtsc() * 0x9e3779b97f4a7c15ULL;
+            }
+            memcpy((char *)client_buf + i, &v, len - i < 8 ? len - i : 8);
+        }
+        return len;
+    }
     case OF_SHM: {
         if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
         long r = mem_shm_rw(f->ino, positional ? pos : f->off, (void *)client_buf, len, false);
@@ -859,6 +875,7 @@ static long do_write(long fd, size_t len, bool positional, uint64_t pos)
     case OF_SOCKET: return positional ? -ESPIPE : sock_send(f, len, 0, 0);
     case OF_PROCDIR: case OF_PROCFILE: return -EBADF;
     case OF_USOCK:   return positional ? -ESPIPE : usock_send(f, len, 0, 0);
+    case OF_RANDOM:  return len;                       /* escribir "entropía": se acepta */
     case OF_KMSG: {                                    /* al puerto serie (depuración del kernel) */
         static char line[257];
         size_t n = len < 256 ? len : 256;
@@ -959,7 +976,7 @@ static long do_fstat(long fd)
         ((uint32_t *)client_buf)[6] = 0140777;                     /* S_IFSOCK */
         return 0;
     }
-    if (f->type == OF_TTY || f->type == OF_NULL || f->type == OF_LINUX || f->type == OF_KMSG) {
+    if (f->type == OF_TTY || f->type == OF_NULL || f->type == OF_LINUX || f->type == OF_KMSG || f->type == OF_RANDOM) {
         dev_stat(f->type == OF_TTY ? OF_TTY : OF_NULL);
         return 0;
     }
