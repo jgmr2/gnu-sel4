@@ -97,9 +97,21 @@ Estado: `[x]` hecho · `[~]` en curso · `[ ]` pendiente
          y sway sin cambios
    - [ ] Fase 4: foot como terminal nativo; ventanas de la VM Linux con waypipe (como WSLg);
          bordes de color por origen (nativo / VM), estilo Qubes
-8. [ ] **Journal en fs_ext2** (camino a ext3/ext4)
-9. [ ] **Licencias**: elegir licencia del código propio, encabezados SPDX, `THIRD_PARTY.md`
-10. [ ] **Arranque en hardware real (Dell Latitude 7390 2-in-1, UEFI)**
+8. [ ] **Integración con la VM Linux** (la VM corre Linux a velocidad nativa con VT-x; lo lento es
+       el puente actual: colas tipo puerto serie con copias byte por byte)
+   - [ ] vsock (AF_VSOCK): sockets POSIX entre procesos nativos y de la VM (virtio-vsock en libvmm,
+         AF_VSOCK en posix_server); `docker`/`linux` encima de vsock en vez del puente actual
+   - [ ] Archivos compartidos rápidos: 9P o virtio-fs sobre colas en memoria compartida
+   - [ ] Memoria dinámica para la VM: la VM ve mucha RAM pero cada página se crea en su primer uso
+         (fallo de EPT en libvmm -> página del pool) y vuelve al pool cuando Linux la libera
+         (virtio-balloon con "free page reporting"). Ventana de la RAM de la VM en el VMM también
+         a demanda. Tope por VM y reserva para lo nativo (que un contenedor no se coma el escritorio)
+   - [ ] Servidor de memoria: sacar mem.c de posix_server a un componente que reparta páginas a
+         posix_server y al VMM (un solo pool); Microkit: capacidad de la EPT de la VM
+   - [ ] El sistema de la VM en disco en vez de initramfs en RAM (hoy 252 MB fijos)
+9. [ ] **Journal en fs_ext2** (camino a ext3/ext4)
+10. [ ] **Licencias**: elegir licencia del código propio, encabezados SPDX, `THIRD_PARTY.md`
+11. [ ] **Arranque en hardware real (Dell Latitude 7390 2-in-1, UEFI)**
    - [ ] ISO live: GRUB (multiboot2) carga seL4 + sistema + disco ext2 en RAM
    - [ ] Framebuffer GOP (dirección y formato desde multiboot2) para la consola gráfica; disco en RAM
    - [ ] Disco persistente con el driver NVMe de sDDF
@@ -107,6 +119,8 @@ Estado: `[x]` hecho · `[~]` en curso · `[ ]` pendiente
    - [ ] Touchpad/touchscreen (I²C-HID)
    - [ ] Red nativa por la VM de drivers: virtio-net entre netstack y la VM (el puente actual,
          tipo puerto serie, no sirve para datos)
+   - [ ] Alternativa a la VM de drivers para Wi-Fi: el driver de Linux dentro de un componente
+         (LKL o estilo DDE de Genode), sin VM
    - [ ] Multinúcleo (hoy seL4 corre en un solo núcleo; la laptop tiene 4)
    - [ ] Compilación release (kernel y sistema sin depuración)
 
