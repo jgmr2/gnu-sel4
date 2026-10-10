@@ -22,6 +22,7 @@ make vm-rootfs                  # (host, una vez) kernel + initramfs de la VM
 ../../dev.sh make               # compila todo y lo instala en disk.img
 make run                        # QEMU + KVM con consola gráfica (ventana); salir: Ctrl-a x en la terminal
 make run CONSOLA=serie          # todo por el puerto serie (compilar también con CONSOLA=serie)
+make test                       # pruebas automáticas en QEMU sin pantalla (no toca disk.img)
 ```
 
 `make` no instala si `disk.img` está en uso (QEMU abierto). QEMU para el host:

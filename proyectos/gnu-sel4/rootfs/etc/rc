@@ -3,3 +3,6 @@
 
 # Compartir este sistema de archivos con la VM Linux en /mnt/sel4 (como /mnt/c en WSL)
 /sbin/9pd /mnt/sel4 </dev/null >/tmp/9pd.log 2>&1 &
+
+# make test: si existe /etc/prueba, correr las pruebas automáticas (resultados en /dev/kmsg)
+[ -f /etc/prueba ] && sh /etc/pruebas.sh

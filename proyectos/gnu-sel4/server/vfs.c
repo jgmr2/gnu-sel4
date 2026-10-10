@@ -73,7 +73,8 @@ enum { OF_FREE, OF_TTY, OF_NULL, OF_FILE, OF_DIR, OF_PIPE_R, OF_PIPE_W, OF_LINUX
        OF_EVENTFD, OF_TIMERFD,         /* contadores y temporizadores que se leen como archivos */
        OF_EPOLL,                       /* marcador: el conjunto de interés vive en el runtime */
        OF_USOCK,                       /* socket local (AF_UNIX) */
-       OF_SHM };                       /* memfd: memoria compartida (mem.c) */
+       OF_SHM,                         /* memfd: memoria compartida (mem.c) */
+       OF_KMSG };                      /* /dev/kmsg: al puerto serie (registros, make test) */
 
 /* ¿La ruta es de /proc? */
 static bool is_proc(const char *abs)
@@ -295,6 +296,7 @@ static int dev_type(const char *abs)
     if (!strcmp(abs, "/dev/tty") || !strcmp(abs, "/dev/console")) return OF_TTY;
     if (!strcmp(abs, "/dev/null")) return OF_NULL;
     if (!strcmp(abs, "/dev/linux")) return OF_LINUX;   /* sesión con la VM Linux */
+    if (!strcmp(abs, "/dev/kmsg")) return OF_KMSG;     /* mensajes al puerto serie */
     return OF_FREE;
 }
 
@@ -753,6 +755,7 @@ static long do_read(long fd, size_t len, bool positional, uint64_t pos)
     case OF_LINUX:  return bridge_read(f->ino, (uint8_t *)client_buf, len > POSIX_BUF_SIZE ? POSIX_BUF_SIZE : len);
     case OF_SOCKET: return positional ? -ESPIPE : sock_recv(f, len, 0);
     case OF_USOCK:   return positional ? -ESPIPE : usock_recv(f, len, 0, 0);
+    case OF_KMSG:    return 0;
     case OF_SHM: {
         if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
         long r = mem_shm_rw(f->ino, positional ? pos : f->off, (void *)client_buf, len, false);
@@ -794,6 +797,14 @@ static long do_write(long fd, size_t len, bool positional, uint64_t pos)
     case OF_SOCKET: return positional ? -ESPIPE : sock_send(f, len, 0, 0);
     case OF_PROCDIR: case OF_PROCFILE: return -EBADF;
     case OF_USOCK:   return positional ? -ESPIPE : usock_send(f, len, 0, 0);
+    case OF_KMSG: {                                    /* al puerto serie (depuración del kernel) */
+        static char line[257];
+        size_t n = len < 256 ? len : 256;
+        memcpy(line, (const void *)client_buf, n);
+        line[n] = 0;
+        microkit_dbg_puts(line);
+        return n;
+    }
     case OF_SHM: {                                     /* como un archivo: crece al escribir */
         if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
         uint64_t off = positional ? pos : f->off;
@@ -886,8 +897,8 @@ static long do_fstat(long fd)
         ((uint32_t *)client_buf)[6] = 0140777;                     /* S_IFSOCK */
         return 0;
     }
-    if (f->type == OF_TTY || f->type == OF_NULL || f->type == OF_LINUX) {
-        dev_stat(f->type == OF_LINUX ? OF_NULL : f->type);
+    if (f->type == OF_TTY || f->type == OF_NULL || f->type == OF_LINUX || f->type == OF_KMSG) {
+        dev_stat(f->type == OF_TTY ? OF_TTY : OF_NULL);
         return 0;
     }
     if (f->type == OF_PIPE_R || f->type == OF_PIPE_W) {

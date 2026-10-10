@@ -261,7 +261,7 @@ $(DISK):
 # --- instala los programas en /bin y los archivos de sistema (sin tocar el resto) ---
 # SYSFILES: archivos de rootfs/ que administra el sistema y se actualizan en cada build
 SYSFILES := etc/motd etc/profile etc/rc etc/mtab etc/zshrc etc/zprofile etc/shells etc/passwd \
-	    etc/resolv.conf etc/hosts usr/share/vim/vimrc
+	    etc/resolv.conf etc/hosts usr/share/vim/vimrc etc/pruebas.sh
 # EXTRA_BINS: programas portados (dash...), como "ruta/local:nombre"; LINKS: "nombre:destino"
 EXTRA_BINS ?=
 LINKS ?=

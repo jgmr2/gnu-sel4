@@ -4,6 +4,7 @@
 #   make vm-rootfs                (host)   kernel + initramfs de la VM (busybox + Docker), con Docker
 #   ../../dev.sh make             (Docker) todo: servidores, drivers, VMM, sysroot, programas, dash
 #                                          -> build/; instala /bin en la partición ext2 de disk.img
+#   make test                     (host)   pruebas automáticas en QEMU (sin pantalla, copia del disco)
 #   make run                      (host)   arranca en QEMU+KVM con consola gráfica (salir: Ctrl-a, x
 #                                          en esta terminal); CONSOLA=serie: por el puerto serie
 #   ../../dev.sh make disk-reset  borra disk.img: se recrea (vacío) en el próximo make
@@ -59,6 +60,12 @@ run:
 		-drive file=disk.img,format=raw,if=none,id=hd -device virtio-blk-pci,drive=hd,addr=0x3.0 \
 		-netdev user,id=net0,$(HOSTFWD) -device virtio-net-pci,netdev=net0,addr=0x4.0
 
+# Pruebas automáticas en QEMU sin pantalla, sobre una copia del disco (tools/prueba.py).
+# make test SIN_RED=1: sin las pruebas que necesitan internet
+test:
+	@test -f $(IMAGE) || { echo "Falta $(IMAGE): compila con ../../dev.sh make"; exit 1; }
+	tools/prueba.py $(if $(SIN_RED),--sin-red)
+
 disk-reset:
 	rm -f disk.img build/install.stamp
 
@@ -71,4 +78,4 @@ migrar-discos:
 clean:
 	rm -rf build
 
-.PHONY: all run clean disk-reset vm-rootfs migrar-discos microkit-tool
+.PHONY: all run test clean disk-reset vm-rootfs migrar-discos microkit-tool

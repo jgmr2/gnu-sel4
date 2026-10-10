@@ -1,0 +1,33 @@
+#!/bin/sh
+# /etc/pruebas.sh: pruebas automáticas (make test en el host). La ejecuta /etc/rc solo si
+# existe /etc/prueba (lo crea make test en una copia del disco). Todo va a /dev/kmsg, que
+# llega al puerto serie de QEMU; make test lee de ahí.
+#   /etc/prueba con "sin-red": se salta las pruebas que necesitan internet.
+exec >/dev/kmsg 2>&1
+echo "== PRUEBAS: INICIO =="
+fallos=0
+
+prueba() {          # prueba <nombre> <orden...>
+    nombre=$1; shift
+    if "$@" >/tmp/prueba.log 2>&1; then
+        echo "PRUEBA $nombre: ok"
+    else
+        echo "PRUEBA $nombre: FALLA ($?)"
+        while IFS= read -r l; do echo "    $l"; done </tmp/prueba.log
+        fallos=$((fallos + 1))
+    fi
+}
+
+prueba proctest   proctest
+prueba fase1test  fase1test
+prueba archivos   archivos
+prueba coreutils  sh -c '[ "$(ls /bin | wc -l)" -gt 100 ] && [ "$(echo hola | tr a-z A-Z)" = HOLA ]'
+prueba vim        vim -es -c 'qa!'
+prueba procps     sh -c 'ps -e | wc -l | test "$(cat)" -ge 3 && free >/dev/null && uptime >/dev/null'
+if [ "$(cat /etc/prueba)" = sin-red ]; then
+    echo "PRUEBA nettest: omitida (sin red)"
+else
+    prueba nettest nettest
+fi
+
+echo "== PRUEBAS: FIN ($fallos fallos) =="

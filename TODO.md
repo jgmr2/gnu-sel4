@@ -55,9 +55,12 @@ Estado: `[x]` hecho · `[~]` en curso · `[ ]` pendiente
    - [ ] Herramientas: curl/wget, ssh, nc; servicios (sshd)
    - [ ] Más de 64 KiB por llamada y menos copias (hoy: proceso -> servidor -> netstack)
 6. [ ] **Robustez** (siguiente: protege todo lo demás)
-   - [ ] Control de versiones: `git init` del proyecto + remoto privado (hoy no hay historial ni respaldo)
-   - [ ] `make test`: arranca QEMU sin pantalla y corre proctest, fase1test y nettest (capturas o
-         puerto serie); falla si algo falla
+   - [~] Control de versiones: repositorio git (`.gitignore`, `DEPENDENCIAS.md`); falta el push a
+         github.com:jgmr2/gnu-sel4 (registrar la llave SSH) y un script que baje las dependencias
+   - [x] `make test` (`tools/prueba.py`): copia la partición del sistema, crea /etc/prueba, arranca
+         QEMU sin pantalla; /etc/pruebas.sh corre proctest, fase1test, archivos, coreutils, vim,
+         procps y nettest y escribe en /dev/kmsg (nuevo: al puerto serie). 7 pruebas en ~11 s.
+         `make test SIN_RED=1` sin internet
    - [ ] Tuberías con nombre (`mkfifo`): FIFO en ext2 que el servidor trata como tubería
          (las usa s6 para controlar los servicios)
    - [ ] s6 + s6-rc como supervisor (skarnet, ISC; mantenido, en C; se eligió sobre runit, que
