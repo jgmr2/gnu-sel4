@@ -195,7 +195,20 @@ curl/curl/src/curl: $(SYSROOT_READY) $(POSIX)/ports/curl/build-curl.sh
 curl.bin: curl/curl/src/curl
 	llvm-strip -o $@ $<
 
+# socat (y /bin/nc, un guion encima) y el cliente ssh de dropbear (ssh, scp, dropbearkey)
+SOCAT_SRC := $(POSIX)/../../third_party/socat-1.8.1.3
+socat/socat: $(SYSROOT_READY) $(POSIX)/ports/socat/build-socat.sh
+	$(POSIX)/ports/socat/build-socat.sh $(SOCAT_SRC) socat $(SYSROOT)
+socat.bin: socat/socat
+	llvm-strip -o $@ $<
+DROPBEAR_SRC := $(POSIX)/../../third_party/dropbear-2026.94
+dropbear/dropbearmulti: $(SYSROOT_READY) $(POSIX)/ports/dropbear/build-dropbear.sh
+	$(POSIX)/ports/dropbear/build-dropbear.sh $(DROPBEAR_SRC) dropbear $(SYSROOT)
+dropbear.bin: dropbear/dropbearmulti
+	llvm-strip -o $@ $<
+
 EXTRA_BINS := dash/src/dash:dash coreutils.bin:coreutils zsh/Src/zsh:zsh vim.bin:vim curl.bin:curl \
+	      socat.bin:socat dropbear.bin:dropbearmulti \
 	      $(foreach p,$(NC_PROGS),ncurses/inst/usr/bin/$(p):$(p)) \
 	      $(foreach p,$(PROCPS_PROGS),procps/bin/$(p):$(p))
 # Árboles de datos que se copian al disco: "origen:destino"
@@ -203,7 +216,8 @@ DATA_TREES := zsh/inst/usr/share/zsh:/usr/share/zsh vim/runtime-min:/usr/share/v
 # Enlaces: "nombre:destino". Los de coreutils salen de coreutils/programas.txt
 # Comandos de la VM Linux disponibles como nativos (puente, como el interop de WSL)
 LINUX_CMDS := docker
-LINKS := sh:dash vi:vim $(foreach c,$(LINUX_CMDS),$(c):linux)
+LINKS := sh:dash vi:vim $(foreach c,$(LINUX_CMDS),$(c):linux) \
+	 ssh:dropbearmulti dbclient:dropbearmulti scp:dropbearmulti dropbearkey:dropbearmulti
 # Restos de versiones anteriores que se quitan del disco
 OBSOLETE := /bin/utiles /bin/hola /bin/eco /bin/minish
 # terminfo: solo las terminales que se usan (la base completa tiene ~1900)
@@ -276,7 +290,7 @@ $(DISK):
 # --- instala los programas en /bin y los archivos de sistema (sin tocar el resto) ---
 # SYSFILES: archivos de rootfs/ que administra el sistema y se actualizan en cada build
 SYSFILES := etc/motd etc/profile etc/rc etc/mtab etc/zshrc etc/zprofile etc/shells etc/passwd \
-	    etc/resolv.conf etc/hosts usr/share/vim/vimrc etc/pruebas.sh etc/red.conf
+	    etc/resolv.conf etc/hosts usr/share/vim/vimrc etc/pruebas.sh etc/red.conf bin/nc
 # EXTRA_BINS: programas portados (dash...), como "ruta/local:nombre"; LINKS: "nombre:destino"
 EXTRA_BINS ?=
 LINKS ?=

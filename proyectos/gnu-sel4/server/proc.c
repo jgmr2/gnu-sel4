@@ -564,12 +564,19 @@ bool proc_fault(int slot, long label)
     struct proc *p = proc_by_slot(slot);
     if (!p) return false;
     if (label == seL4_Fault_VMFault && mem_fault(slot, microkit_mr_get(seL4_VMFault_Addr))) return true;
-    int sig = label == seL4_Fault_VMFault ? SIGSEGV : SIGILL;
+    /* Excepción del procesador: como en Linux, protección general -> SIGSEGV, división -> SIGFPE */
+    int sig = SIGILL;
+    if (label == seL4_Fault_VMFault) sig = SIGSEGV;
+    else if (label == seL4_Fault_UserException) {
+        long vec = microkit_mr_get(seL4_UserException_Number);
+        sig = vec == 0 ? SIGFPE : vec == 6 ? SIGILL : SIGSEGV;
+    }
     tty_puts("[posix] ");
     tty_puts(p->name);
     tty_puts(" (pid ");
     tty_putdec(p->pid);
-    tty_puts(sig == SIGSEGV ? "): violación de segmento en 0x" : "): instrucción ilegal en 0x");
+    tty_puts(sig == SIGSEGV ? "): violación de segmento en 0x" : sig == SIGFPE ? "): error aritmético en 0x"
+                                                             : "): instrucción ilegal en 0x");
     char hex[17];
     uint64_t v = label == seL4_Fault_VMFault ? microkit_mr_get(seL4_VMFault_Addr) : microkit_mr_get(0);
     for (int i = 15; i >= 0; i--, v >>= 4) hex[i] = "0123456789abcdef"[v & 15];

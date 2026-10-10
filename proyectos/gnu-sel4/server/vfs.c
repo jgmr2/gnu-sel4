@@ -1173,6 +1173,7 @@ enum { US_FREE, US_NEW, US_LISTEN, US_CONN };
 
 static struct usock {
     int state;
+    bool dgram;                            /* SOCK_DGRAM: cada envío es un mensaje [len 4][datos] */
     int peer;                              /* índice del par (US_CONN) */
     bool peer_closed;
     int pid;                               /* proceso que lo creó (SO_PEERCRED del par) */
@@ -1281,9 +1282,10 @@ static long usock_fd(int ui, long flags)
 
 static long usock_new(long type)
 {
-    if ((type & 0xf) != 1) return -EPROTONOSUPPORT;     /* solo SOCK_STREAM */
+    if ((type & 0xf) != 1 && (type & 0xf) != 2) return -EPROTONOSUPPORT;   /* STREAM y DGRAM */
     int u = usock_alloc();
     if (u < 0) return -ENFILE;
+    usocks[u].dgram = (type & 0xf) == 2;
     long fd = usock_fd(u, type);
     if (fd < 0) usocks[u].state = US_FREE;
     return fd;
@@ -1291,12 +1293,13 @@ static long usock_new(long type)
 
 static long usock_pair(long type)
 {
-    if ((type & 0xf) != 1) return -EPROTONOSUPPORT;
+    if ((type & 0xf) != 1 && (type & 0xf) != 2) return -EPROTONOSUPPORT;
     int a = usock_alloc(), b = a >= 0 ? usock_alloc() : -1;
     if (b < 0) {
         if (a >= 0) usocks[a].state = US_FREE;
         return -ENFILE;
     }
+    usocks[a].dgram = usocks[b].dgram = (type & 0xf) == 2;
     usocks[a].state = usocks[b].state = US_CONN;
     usocks[a].peer = b;
     usocks[b].peer = a;
@@ -1377,7 +1380,8 @@ static long usock_send(struct ofile *f, size_t len, long flags, long nfds)
     }
     struct usock *p = &usocks[u->peer];
     uint32_t space = USOCK_BUF - (p->tail - p->head);
-    if (!space || (nfds && p->nfdq + nfds > USOCK_MAXFD)) {
+    if (u->dgram && len + 4 > USOCK_BUF) return -EMSGSIZE;
+    if (!space || (u->dgram && space < len + 4) || (nfds && p->nfdq + nfds > USOCK_MAXFD)) {
         if ((f->flags & O_NONBLOCK) || (flags & MSG_DONTWAIT)) return -EAGAIN;
         u->wwait |= 1u << PROC_INDEX(cur);
         return POSIX_RETRY;
@@ -1392,6 +1396,12 @@ static long usock_send(struct ofile *f, size_t len, long flags, long nfds)
         p->fdq[p->nfdq++] = of;
     }
     size_t n = len < space ? len : space;
+    if (u->dgram) {                                     /* mensaje entero, con su longitud delante */
+        uint32_t l = len;
+        for (int i = 0; i < 4; i++) p->buf[(p->tail + i) % USOCK_BUF] = ((const uint8_t *)&l)[i];
+        p->tail += 4;
+        n = len;
+    }
     for (size_t i = 0; i < n; i++) p->buf[(p->tail + i) % USOCK_BUF] = ((const uint8_t *)client_buf)[i];
     p->tail += n;
     usock_wake(p);
@@ -1414,9 +1424,23 @@ static long usock_recv(struct ofile *f, size_t len, long flags, long maxfds)
         return POSIX_RETRY;
     }
     if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
-    size_t n = len < avail ? len : avail;
+    uint32_t skip = 0, msg = avail;
+    if (u->dgram) {                                     /* un mensaje; lo que no cabe se pierde */
+        uint32_t l = 0;
+        for (int i = 0; i < 4; i++) ((uint8_t *)&l)[i] = u->buf[(u->head + i) % USOCK_BUF];
+        u->head += 4;
+        msg = l;
+        skip = 0;
+    }
+    size_t n = len < msg ? len : msg;
     for (size_t i = 0; i < n; i++) ((uint8_t *)client_buf)[i] = u->buf[(u->head + i) % USOCK_BUF];
-    if (!(flags & 2)) u->head += n;                     /* MSG_PEEK */
+    if (u->dgram) {
+        if (flags & 2) u->head -= 4;                    /* MSG_PEEK: el mensaje se queda */
+        else u->head += msg;
+        (void)skip;
+    } else if (!(flags & 2)) {
+        u->head += n;                                   /* MSG_PEEK */
+    }
     /* Los descriptores en tránsito se entregan con los datos (por orden) */
     long got = 0;
     int *out = (int *)(client_buf + NET_ADDR_OFF);

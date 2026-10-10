@@ -41,6 +41,7 @@
 #define ENODEV        19
 #define EFBIG         27
 #define ENOSPC        28
+#define EMSGSIZE      90
 #define ERANGE        34
 #define ENAMETOOLONG  36
 #define ENOSYS        38
@@ -53,6 +54,8 @@
 #define SIGILL   4
 #define SIGKILL  9
 #define SIGSEGV  11
+#define SIGFPE   8
+#define SIGBUS   7
 #define SIGPIPE  13
 #define SIGCHLD  17
 #define SIGCONT  18

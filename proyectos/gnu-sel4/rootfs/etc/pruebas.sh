@@ -26,6 +26,8 @@ prueba vim        vim -es -c 'qa!'
 prueba procps     sh -c 'ps -e | wc -l | test "$(cat)" -ge 3 && free >/dev/null && uptime >/dev/null'
 prueba dhcp       sh -c 'case "$(cat /proc/net/dhcp)" in *concedida*10.0.2.16/24*) ;; *) cat /proc/net/dhcp; exit 1;; esac'
 prueba resolv     sh -c 'case "$(cat /etc/resolv.conf)" in *"nameserver 10.0.2.3"*) ;; *) cat /etc/resolv.conf; exit 1;; esac'
+prueba nc         sh -c '(nc -l 7007 >/tmp/nc.out &) ; sleep 1; echo "hola nc" | nc 127.0.0.1 7007; sleep 1; test "$(cat /tmp/nc.out)" = "hola nc"'
+prueba ssh-llave  sh -c 'rm -f /tmp/k && dropbearkey -t ed25519 -f /tmp/k >/dev/null && ssh -V 2>&1 | head -1 | test -n "$(cat)"'
 prueba red-fija   sh -c 'red fija 10.0.2.40/24 puerta 10.0.2.2 dns 10.0.2.3 && case "$(red)" in *fija*10.0.2.40/24*) ;; *) red; exit 1;; esac && nettest >/dev/null'
 prueba red-dhcp   sh -c 'red dhcp && sleep 1 && case "$(red)" in *concedida*) ;; *) red; exit 1;; esac'
 if [ "$(cat /etc/prueba)" = sin-red ]; then

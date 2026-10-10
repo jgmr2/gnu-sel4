@@ -16,6 +16,8 @@
 | `third_party/mbedtls-3.6.7` | https://github.com/Mbed-TLS/mbedtls/releases | 3.6.7 (LTS) |
 | `third_party/curl-8.22.0` | https://curl.se/download/ | 8.22.0 |
 | `third_party/cacert/cacert.pem` | https://curl.se/ca/cacert.pem | certificados de Mozilla del 2026-09-25 |
+| `third_party/socat-1.8.1.3` | http://www.dest-unreach.org/socat/download/ | 1.8.1.3 |
+| `third_party/dropbear-2026.94` | https://matt.ucc.asn.au/dropbear/releases/ | 2026.94 |
 | `third_party/spleen` | https://github.com/fcambus/spleen | 2.2.0 (`spleen-8x16.bdf`, LICENSE) |
 
 Pendiente: un script que las descargue todas (`obtener-dependencias.sh`).

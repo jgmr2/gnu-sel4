@@ -345,6 +345,10 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
     case NET_OP_GETSOCKOPT: {
         socklen_t olen = a4 < NET_DATA_MAX ? a4 : NET_DATA_MAX;
         r = RET(ff_getsockopt(a1, a2, a3, data, &olen));
+        if (r == 0 && a2 == 1 && a3 == 4 && olen >= 4 && *(int *)data) {   /* SOL_SOCKET, SO_ERROR */
+            ff_os_errno(*(int *)data);         /* el error viene con el número de FreeBSD */
+            *(int *)data = errno;
+        }
         microkit_mr_set(1, olen);
         break;
     }
