@@ -52,4 +52,6 @@ enum fs_op {
     FS_OP_SETTIMES,
     /* MR1: inodo, MR2: uid, MR3: gid (-1 = no cambiar) */
     FS_OP_CHOWN,
+    /* buf: ruta existente, buf+FS_BUF_PATH2: nombre nuevo (enlace duro) */
+    FS_OP_LINK,
 };

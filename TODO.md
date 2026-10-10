@@ -40,7 +40,7 @@ Estado: `[x]` hecho · `[~]` en curso · `[ ]` pendiente
    - [ ] Copy-on-write en fork (hoy copia todas las páginas)
    - [ ] Más de 32 procesos (máscaras de 64 bits en vfs/tty/bridge o listas de espera)
    - [ ] Páginas grandes (2 MiB) para regiones grandes; liberar tablas de páginas sin uso
-5. [~] **Red nativa con la pila de FreeBSD**
+5. [x] **Red nativa con la pila de FreeBSD**
    - [x] Componente `netstack` (`net/`): la pila TCP/IP de FreeBSD de F-Stack 1.25
          (`third_party/f-stack`, solo `lib/` y `freebsd/`, sin DPDK) sobre la red de sDDF, con su
          propio copiador; musl dentro del PD para la libc. TCP, UDP, IPv4/IPv6, ARP, rutas
@@ -53,10 +53,17 @@ Estado: `[x]` hecho · `[~]` en curso · `[ ]` pendiente
          se crea con la concesión (INIT-REBOOT con la IP preferida, DISCOVER, renovación en T1).
          posix_server reescribe /etc/resolv.conf con los DNS recibidos; `/proc/net/dhcp`.
          MAC fijas (antes cambiaban en cada compilación). `make NETSTACK_IP_PREFERIDA=` = sin preferencia
-   - [ ] Configurar la red a mano (`ip`/`ifconfig`/`route`) y IP fija opcional en /etc
-   - [ ] Loopback (127.0.0.1) y socketpair/AF_UNIX
-   - [ ] Herramientas: curl/wget, ssh, nc; servicios (sshd)
-   - [ ] Más de 64 KiB por llamada y menos copias (hoy: proceso -> servidor -> netstack)
+   - [x] Configuración: `red` (estado, `red dhcp`, `red fija IP/P puerta G dns D`, `red aplicar`
+         con /etc/red.conf al arrancar); netstack cambia dirección y ruta en caliente
+   - [x] Loopback 127.0.0.1 (la cola diferida de FreeBSD); AF_UNIX STREAM y DGRAM
+   - [x] Herramientas: curl con HTTPS (mbedTLS 3.6 + certificados de Mozilla; getrandom y
+         /dev/urandom con RDRAND; sel4-cc enlaza compiler-rt), socat + `nc`, cliente ssh/scp de
+         dropbear (probado con llave ed25519 contra un sshd en un contenedor). Enlaces duros en fs_ext2
+   - [x] Rendimiento medido: descarga nativa ~38 MB/s, igual o más que la VM (~31 MB/s): el
+         límite hoy es la red de usuario de QEMU, no las copias proceso -> servidor -> netstack
+   - [ ] Servidor ssh (dropbear): necesita pseudoterminales (/dev/ptmx), que también pide foot
+   - [ ] Red directa entre lo nativo y la VM (hoy se da la vuelta por el host): vswitch de sDDF
+         o virtio-net entre netstack y la VM (ver punto 8)
 6. [ ] **Robustez** (siguiente: protege todo lo demás)
    - [~] Control de versiones: repositorio git (`.gitignore`, `DEPENDENCIAS.md`); falta el push a
          github.com:jgmr2/gnu-sel4 (registrar la llave SSH) y un script que baje las dependencias
@@ -137,7 +144,8 @@ Lo que más pesa para usarlo a diario, además de lo de arriba:
 - [ ] **Usuarios y permisos**: hoy todo es root y no se comprueban permisos; login real
 - [ ] **Instalar software sin recompilar la imagen** (paquetes o actualizaciones); partición ext2
       más grande (64 MB ya no alcanza para la Fase 2)
-- [ ] Herramientas de uso diario: grep, sed, findutils, diffutils, less, tar, gzip
+- [ ] Herramientas de uso diario: grep, sed, findutils, diffutils, less, tar, gzip (curl, ssh,
+      socat/nc ya están)
 
 ## Pendientes conocidos (sin fecha)
 
@@ -145,7 +153,8 @@ Lo que más pesa para usarlo a diario, además de lo de arriba:
 - [ ] `Ctrl-C` a mitad del prompt de dash se procesa con la línea siguiente
 - [ ] Triple propio (`x86_64-sel4-musl`) en vez de `x86_64-linux-musl` (hoy los programas ven `__linux__`)
 - [ ] `mmap` compartido de archivos para escribir (hoy: copia privada, o compartido solo lectura)
-- [ ] Dueño del proceso (uid/gid) al crear archivos (hoy siempre root); enlaces duros en fs_ext2
+- [ ] Dueño del proceso (uid/gid) al crear archivos (hoy siempre root)
+- [ ] Pseudoterminales (/dev/ptmx, openpty): sshd, foot, tmux/screen
 - [x] Tamaño real de la terminal: `resize` (pregunta a la terminal con CSI 6n) al iniciar sesión,
       TIOCSWINSZ + SIGWINCH. Si cambias el tamaño de la ventana: `resize`
 - [ ] `timer_create` (temporizadores POSIX) e hilos (pthreads)

@@ -27,6 +27,7 @@
 /* errno de Linux */
 #define ENOENT        2
 #define EIO           5
+#define EPERM         1
 #define EEXIST        17
 #define ENOTDIR       20
 #define EISDIR        21
@@ -1108,6 +1109,27 @@ static long op_symlink(const char *target, const char *path)
     return w < 0 ? w : 0;
 }
 
+/* Enlace duro: otro nombre para el mismo inodo (no para directorios, como en Linux) */
+static long op_link(const char *from, const char *to)
+{
+    int64_t ino = resolve(from, false);
+    if (ino < 0) return ino;
+    struct ext2_inode in;
+    if (read_inode(ino, &in)) return -EIO;
+    if (S_ISDIR(in.i_mode)) return -EPERM;
+    if (in.i_links_count >= 65000) return -EMLINK;
+    const char *name;
+    uint32_t nlen;
+    int64_t dir = resolve_parent(to, &name, &nlen);
+    if (dir < 0) return dir;
+    if (dir_lookup(dir, name, nlen) > 0) return -EEXIST;
+    int r = dir_add(dir, name, nlen, ino, ftype_of_mode(in.i_mode));
+    if (r) return r;
+    in.i_links_count++;
+    in.i_ctime = now();
+    return write_inode(ino, &in);
+}
+
 /* struct statfs de Linux x86_64 (120 bytes) */
 static long op_statfs(void)
 {
@@ -1128,7 +1150,7 @@ static long op_statfs(void)
 
 static bool is_write_op(long op)
 {
-    return op == FS_OP_WRITE || op == FS_OP_TRUNCATE || op == FS_OP_CREATE || op == FS_OP_UNLINK ||
+    return op == FS_OP_LINK || op == FS_OP_WRITE || op == FS_OP_TRUNCATE || op == FS_OP_CREATE || op == FS_OP_UNLINK ||
            op == FS_OP_RENAME || op == FS_OP_SYMLINK || op == FS_OP_CHMOD || op == FS_OP_SETTIMES || op == FS_OP_CHOWN;
 }
 
@@ -1185,6 +1207,10 @@ static long dispatch(long op, uint64_t a1, uint64_t a2, uint64_t a3)
         buf[FS_PATH_MAX - 1] = 0;
         buf[FS_BUF_PATH2 + FS_PATH_MAX - 1] = 0;
         return op_symlink(buf, buf + FS_BUF_PATH2);
+    case FS_OP_LINK:
+        buf[FS_PATH_MAX - 1] = 0;
+        buf[FS_BUF_PATH2 + FS_PATH_MAX - 1] = 0;
+        return op_link(buf, buf + FS_BUF_PATH2);
     case FS_OP_CHMOD:
         if (read_inode(a1, &in)) return -EIO;
         in.i_mode = (in.i_mode & S_IFMT) | (a2 & 07777);

@@ -21,6 +21,7 @@ prueba() {          # prueba <nombre> <orden...>
 prueba proctest   proctest
 prueba fase1test  fase1test
 prueba archivos   archivos
+prueba enlaces    sh -c 'rm -f /tmp/e1 /tmp/e2; echo x >/tmp/e1 && ln /tmp/e1 /tmp/e2 && [ "$(stat -c %h /tmp/e1)" = 2 ] && rm /tmp/e1 && [ "$(cat /tmp/e2)" = x ] && [ "$(stat -c %h /tmp/e2)" = 1 ] && rm /tmp/e2'
 prueba coreutils  sh -c '[ "$(ls /bin | wc -l)" -gt 100 ] && [ "$(echo hola | tr a-z A-Z)" = HOLA ]'
 prueba vim        vim -es -c 'qa!'
 prueba procps     sh -c 'ps -e | wc -l | test "$(cat)" -ge 3 && free >/dev/null && uptime >/dev/null'

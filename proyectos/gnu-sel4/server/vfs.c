@@ -1130,6 +1130,20 @@ static long do_rename(long olddirfd, long newdirfd)
     return fs_call(FS_OP_RENAME, 0, 0, 0);
 }
 
+/* link/linkat: enlace duro */
+static long do_link(long olddirfd, long newdirfd)
+{
+    char from[FS_PATH_MAX], to[FS_PATH_MAX];
+    long r = normalize(olddirfd, client_path(0), from);
+    if (r) return r;
+    r = normalize(newdirfd, client_path(POSIX_BUF_PATH2), to);
+    if (r) return r;
+    if (dev_type(from) != OF_FREE || is_proc(from) || is_proc(to)) return -EXDEV;
+    fs_set_path(0, from);
+    fs_set_path(FS_BUF_PATH2, to);
+    return fs_call(FS_OP_LINK, 0, 0, 0);
+}
+
 static long do_symlink(long newdirfd)
 {
     char link[FS_PATH_MAX];
@@ -1675,6 +1689,7 @@ bool vfs_handles(long nr)
     case __NR_mkdir: case __NR_mkdirat: case __NR_rmdir: case __NR_unlink: case __NR_unlinkat:
     case __NR_rename: case __NR_renameat: case __NR_renameat2:
     case __NR_symlink: case __NR_symlinkat: case __NR_readlink: case __NR_readlinkat:
+    case __NR_link: case __NR_linkat:
     case __NR_truncate: case __NR_ftruncate: case __NR_access: case __NR_faccessat: case __NR_faccessat2:
     case __NR_chmod: case __NR_fchmod: case __NR_fchmodat: case __NR_umask:
     case __NR_statfs: case __NR_fstatfs: case __NR_fcntl: case __NR_ioctl:
@@ -1734,6 +1749,8 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
     case __NR_rename:     return do_rename(AT_FDCWD, AT_FDCWD);
     case __NR_renameat:   return do_rename(a1, a3);
     case __NR_renameat2:  return a5 ? -EINVAL : do_rename(a1, a3);
+    case __NR_link:       return do_link(AT_FDCWD, AT_FDCWD);
+    case __NR_linkat:     return do_link(a1, a3);
     case __NR_symlink:    return do_symlink(AT_FDCWD);
     case __NR_symlinkat:  return do_symlink(a2);
     case __NR_readlink:   return path_op(__NR_readlink, AT_FDCWD, a3, 0);

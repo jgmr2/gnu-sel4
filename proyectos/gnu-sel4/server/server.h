@@ -39,6 +39,7 @@
 #define ENFILE        23
 #define ENXIO         6
 #define ENODEV        19
+#define EXDEV         18
 #define EFBIG         27
 #define ENOSPC        28
 #define EMSGSIZE      90
