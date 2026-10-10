@@ -1,8 +1,0 @@
-# init de busybox: arranque (en silencio, al log), Docker, el agente del puente y
-# una consola en hvc0 que solo se activa al usarla (Ctrl-\ 1 Enter desde GNU/seL4)
-::sysinit:/etc/rc >/var/log/arranque.log 2>&1
-::respawn:/sbin/run-dockerd
-::respawn:/sbin/sel4-agent /dev/hvc1
-hvc0::respawn:/sbin/consola
-::ctrlaltdel:/sbin/reboot
-::shutdown:/etc/rc.shutdown

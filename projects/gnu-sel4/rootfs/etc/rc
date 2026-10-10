@@ -1,0 +1,11 @@
+#!/bin/sh
+# /etc/rc: run by init at boot, before the login shell.
+
+# Native networking: DHCP or a static address, per /etc/netcfg.conf
+netcfg apply
+
+# Share this file system with the Linux VM at /mnt/sel4 (like /mnt/c in WSL)
+/sbin/9pd /mnt/sel4 </dev/null >/tmp/9pd.log 2>&1 &
+
+# make test: if /etc/test exists, run the automated tests (results go to /dev/kmsg)
+[ -f /etc/test ] && sh /etc/tests.sh

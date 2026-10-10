@@ -1,0 +1,57 @@
+/*
+ * Protocol between the VFS (posix_server) and a file system server
+ * (fs_ext2, and in the future fs_ufs, ramfs...).
+ *
+ * Each operation is a synchronous protected call (microkit_ppcall):
+ *   MR0 = operation (FS_OP_*), MR1..MR4 = arguments
+ * Reply:
+ *   MR0 = result (>= 0) or -errno; MR1.. = extra results depending on the operation
+ *
+ * Paths and data travel through a shared buffer of FS_BUF_SIZE bytes. Paths
+ * are absolute and already normalised by the VFS (no "." or "..").
+ * When an operation takes two paths, the second one starts at FS_BUF_PATH2.
+ */
+#pragma once
+
+#define FS_BUF_SIZE   0x10000      /* 64 KiB, same as POSIX_BUF_SIZE */
+#define FS_BUF_PATH2  0x8000
+#define FS_PATH_MAX   4096
+
+enum fs_op {
+    /* buf: path. MR1: 1 = follow the last symbolic link.
+     * -> inode; MR1 = mode (st_mode), MR2 = size */
+    FS_OP_LOOKUP = 1,
+    /* MR1: inode -> buf: Linux x86_64 struct stat (144 bytes) */
+    FS_OP_STAT,
+    /* MR1: inode, MR2: offset, MR3: bytes -> buf: data; result: bytes read */
+    FS_OP_READ,
+    /* MR1: inode, MR2: offset, MR3: bytes; buf: data -> bytes written */
+    FS_OP_WRITE,
+    /* MR1: inode, MR2: new size */
+    FS_OP_TRUNCATE,
+    /* MR1: directory inode, MR2: position, MR3: max bytes
+     * -> buf: struct linux_dirent64[]; result: bytes; MR1 = next position */
+    FS_OP_GETDENTS,
+    /* MR1: inode -> buf: link target (no '\0'); result: length */
+    FS_OP_READLINK,
+    /* buf: path, MR1: mode (S_IFREG or S_IFDIR | permissions) -> created inode */
+    FS_OP_CREATE,
+    /* buf: path, MR1: 1 = it is rmdir */
+    FS_OP_UNLINK,
+    /* buf: old path, buf+FS_BUF_PATH2: new path */
+    FS_OP_RENAME,
+    /* buf: link target, buf+FS_BUF_PATH2: path of the new link */
+    FS_OP_SYMLINK,
+    /* MR1: inode, MR2: new mode (permissions only) */
+    FS_OP_CHMOD,
+    /* -> buf: Linux x86_64 struct statfs (120 bytes) */
+    FS_OP_STATFS,
+    /* MR1: UNIX time at boot, MR2: TSC at that moment, MR3: TSC frequency */
+    FS_OP_SETCLOCK,
+    /* MR1: inode, MR2: atime, MR3: mtime (UNIX seconds; -1 = leave unchanged) */
+    FS_OP_SETTIMES,
+    /* MR1: inode, MR2: uid, MR3: gid (-1 = leave unchanged) */
+    FS_OP_CHOWN,
+    /* buf: existing path, buf+FS_BUF_PATH2: new name (hard link) */
+    FS_OP_LINK,
+};

@@ -1,0 +1,3 @@
+#!/bin/sh
+# Started (and restarted if it dies) by init. Log in /var/log/dockerd.log
+exec /usr/bin/dockerd --config-file /etc/docker/daemon.json >>/var/log/dockerd.log 2>&1

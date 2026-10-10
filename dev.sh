@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Uso:
-#   ./dev.sh build        construye la imagen Docker (solo la primera vez)
-#   ./dev.sh              abre una terminal dentro del entorno de desarrollo
-#   ./dev.sh <comando>    ejecuta un comando dentro del entorno, en la carpeta actual
-#                         (p. ej. desde proyectos/hola: ../../dev.sh make)
+# Usage:
+#   ./dev.sh build        build the Docker image (first time only)
+#   ./dev.sh              open a shell inside the development environment
+#   ./dev.sh <command>    run a command inside the environment, in the current directory
+#                         (e.g. from projects/gnu-sel4: ../../dev.sh make)
 set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 IMAGE=sel4-dev
@@ -12,7 +12,7 @@ if [ "$1" = "build" ]; then
     exec docker build --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" -t "$IMAGE" "$ROOT"
 fi
 
-# Carpeta actual relativa a la raíz del proyecto (si está dentro de ella)
+# Current directory relative to the project root (if it is inside it)
 case "$PWD/" in
     "$ROOT"/*) REL="${PWD#"$ROOT"}" ;;
     *)         REL="" ;;

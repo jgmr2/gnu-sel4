@@ -1,0 +1,2 @@
+# /etc/zprofile: login zsh. Loads /etc/profile (PATH, TERM, welcome) in sh mode
+emulate sh -c 'source /etc/profile'

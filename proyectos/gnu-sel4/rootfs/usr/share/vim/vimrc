@@ -1,5 +1,0 @@
-" vimrc del sistema (GNU/seL4): lo de defaults.vim (que vim solo carga si no hay vimrc)
-" más resaltado de sintaxis y tipos de archivo
-source $VIMRUNTIME/defaults.vim
-syntax on
-filetype plugin indent on

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Minimal nc on top of socat:  nc HOST PORT  |  nc -l PORT  |  nc -u HOST PORT
+case "$1" in
+    -l) [ -n "$2" ] || { echo "usage: nc -l PORT" >&2; exit 2; }
+        exec socat - "TCP-LISTEN:$2,reuseaddr" ;;
+    -u) exec socat - "UDP:$2:$3" ;;
+    -h|"") echo "usage: nc HOST PORT | nc -l PORT | nc -u HOST PORT (for everything else: socat)" >&2; exit 2 ;;
+    *)  exec socat - "TCP:$1:$2" ;;
+esac

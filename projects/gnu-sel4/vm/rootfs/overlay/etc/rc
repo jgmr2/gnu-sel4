@@ -1,0 +1,48 @@
+#!/bin/sh
+# System boot: mounts, cgroups, modules, persistent disk and network.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts /dev/shm
+mount -t devpts devpts /dev/pts
+mount -t tmpfs -o mode=1777 shm /dev/shm
+mount -t tmpfs -o mode=755 run /run
+mount -t cgroup2 cgroup2 /sys/fs/cgroup
+# Enable every cgroup controller for children (Docker uses them)
+for c in $(cat /sys/fs/cgroup/cgroup.controllers); do
+    echo "+$c" > /sys/fs/cgroup/cgroup.subtree_control 2>/dev/null
+done
+
+# virtio drivers (disk and network) and what Docker needs for its networks
+for m in virtio_blk virtio_net ext4 overlay bridge br_netfilter veth \
+         nf_tables nft_compat nf_nat nf_conntrack xt_MASQUERADE xt_conntrack xt_addrtype \
+         9pnet 9pnet_fd 9p; do
+    modprobe -q $m
+done
+hostname -F /etc/hostname
+ip link set lo up
+
+# Persistent disk: /dev/vda -> /var/lib/docker (images and containers)
+if [ -b /dev/vda ]; then
+    # Requests of at most 128 KiB so the buffer shared with the disk driver (sDDF) does not overflow
+    echo 128 > /sys/block/vda/queue/max_sectors_kb
+    if ! e2fsck -p /dev/vda >/dev/null 2>&1; then
+        echo "rc: /dev/vda has no ext4, formatting it (first boot)..."
+        mkfs.ext4 -q -F -L docker /dev/vda
+    fi
+    mount -t ext4 /dev/vda /var/lib/docker && echo "rc: disk mounted on /var/lib/docker"
+else
+    echo "rc: no disk, Docker will use RAM (lost at shutdown)"
+fi
+
+# Network: DHCP on eth0 (QEMU user-net hands out 10.0.2.15, gateway 10.0.2.2, DNS 10.0.2.3)
+echo 1 > /proc/sys/net/ipv4/ip_forward
+if ip link show eth0 >/dev/null 2>&1; then
+    ip link set eth0 up
+    udhcpc -i eth0 -b -q -t 10 -s /usr/share/udhcpc/default.script
+fi
+
+# Real time via NTP: the virtual clock starts at a fixed date, and without the
+# right time TLS certificates fail (docker pull).
+ntpd -n -q -p pool.ntp.org >/dev/null 2>&1 && echo "rc: time synchronised: $(date)"

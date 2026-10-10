@@ -50,7 +50,7 @@ sdk/                 Microkit SDK 2.3.1 (seL4 kernel + tool + libmicrokit)
 third_party/microkit Microkit 2.3.1 source with our patch to the tool (make microkit-tool)
 libvmm/              libvmm (seL4 VMM) with sDDF in libvmm/dep/sddf (drivers and virtualisers)
 third_party/         third-party sources: musl, dash, coreutils, ncurses, zsh, vim, F-Stack...
-proyectos/gnu-sel4/  the system
+projects/gnu-sel4/  the system
 Dockerfile, dev.sh   build environment (clang/LLVM 18, make, dtc, iasl, sdfgen, e2fsprogs)
 ```
 
@@ -58,12 +58,12 @@ Dockerfile, dev.sh   build environment (clang/LLVM 18, make, dtc, iasl, sdfgen, 
 
 ```sh
 ./dev.sh build                  # build the Docker build image (once)
-cd proyectos/gnu-sel4
+cd projects/gnu-sel4
 make microkit-tool              # (host, once) Microkit tool with our patch
 make vm-rootfs                  # (host, once) kernel + initramfs for the VM
 ../../dev.sh make               # build everything and install it into disk.img
 make run                        # QEMU + KVM with a graphical console (window); quit: Ctrl-a x in the terminal
-make run CONSOLA=serie          # everything over the serial port (also build with CONSOLA=serie)
+make run CONSOLE=serial         # everything over the serial port (also build with CONSOLE=serial)
 make test                       # automated tests in headless QEMU (does not touch disk.img)
 ```
 
@@ -110,7 +110,7 @@ over IPC and sDDF queues.
   component of its own on top of sDDF networking: programs use ordinary POSIX sockets, which
   posix_server forwards to netstack (`include/sel4posix/net_protocol.h`). Address via DHCP
   (under QEMU it asks for 10.0.2.16, the target of the `make run` port forwards) or static
-  with `red`; DNS servers go to `/etc/resolv.conf`. Status: `red` or `cat /proc/net/dhcp`.
+  with `netcfg`; DNS servers go to `/etc/resolv.conf`. Status: `netcfg` or `cat /proc/net/dhcp`.
   Tools: curl (HTTPS), socat/nc, ssh/scp (dropbear client), `nettest`.
 - **Shared files.** The VM sees GNU/seL4 at `/mnt/sel4` (9P: `/sbin/9pd` ↔ `sel4-agent`).
 - **Boot.** `/sbin/init` (pid 1) runs `/etc/rc` (network, 9pd) and keeps root's login shell
@@ -128,7 +128,7 @@ over IPC and sDDF queues.
 Our own programs: `apps/<name>/*.c` → `/bin/<name>` (or `/sbin` if listed in `SBIN_APPS`).
 Third-party ports: `ports/<program>/`.
 
-## Directories in `proyectos/gnu-sel4`
+## Directories in `projects/gnu-sel4`
 
 | Directory | Contents |
 |---|---|
@@ -136,10 +136,10 @@ Third-party ports: `ports/<program>/`.
 | `fs/ext2/` | `fs_ext2.c` |
 | `console/` | fbcon: graphical console (`fbcon.c`: screen and keyboard; `term.c`: terminal emulator) |
 | `net/` | netstack: FreeBSD TCP/IP stack (`netstack.c`: sDDF and calls; `dhcp.c`: DHCP client; `host.c`: what F-Stack expects from the OS) |
-| `runtime/`, `musl/`, `tools/` | program runtime, musl patch, `sel4-cc`, `make test` (`prueba.py`) |
+| `runtime/`, `musl/`, `tools/` | program runtime, musl patch, `sel4-cc`, `make test` (`test.py`) |
 | `microkit/` | patch to the Microkit tool and `build-tool.sh` |
 | `vm/` | the VM's VMM, `vm/agent/` (sel4-agent), `vm/rootfs/` (busybox + Docker) |
-| `apps/` | init, 9pd, linux, red, resize, nettest and tests (proctest, fase1test, archivos) |
+| `apps/` | init, 9pd, linux, netcfg, resize, nettest and tests (proctest, phase1test, filetest) |
 | `ports/` | dash, coreutils, ncurses, zsh, vim, procps, curl, socat, dropbear and `fstack` (builds F-Stack's FreeBSD part) |
 | `rootfs/` | initial contents of the ext2 partition (`/etc/rc`, `/etc/profile`, ...) |
 

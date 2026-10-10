@@ -31,7 +31,7 @@ Status: `[x]` done · `[~]` in progress · `[ ]` pending
          VM with a trimmed initramfs (337 → 252 MiB: no useless modules, no `ctr`)
 4. [ ] **Dynamic user-space memory manager**
    - [x] Microkit 2.3.1 built from source (`make microkit-tool`, patch in
-         `proyectos/gnu-sel4/microkit/`): `<cap_untyped>`, `<cap_cnode>`, `<cap_asid_pool>`,
+         `projects/gnu-sel4/microkit/`): `<cap_untyped>`, `<cap_cnode>`, `<cap_asid_pool>`,
          `<cap_sched_pool>` and `<cap_endpoint>` in `<cspace>`
    - [x] On-demand processes (`server/mem.c`): posix_server creates the TCB, address space,
          CNode and notification from its untyped; pages on page fault; exit/exec/munmap
@@ -48,13 +48,13 @@ Status: `[x]` done · `[~]` in progress · `[ ]` pending
          (`include/sel4posix/net_protocol.h`); blocking with POSIX_RETRY and kqueue wake-ups.
          socket, bind, connect, listen, accept(4), send/recv(from/msg), shutdown, sockopts,
          get{sock,peer}name, poll/select, FIONBIO/FIONREAD, O_NONBLOCK. DNS via /etc/resolv.conf
-   - [x] `nettest` (DNS + HTTP to the internet; `nettest servir` from the host: port 8090)
+   - [x] `nettest` (DNS + HTTP to the internet; `nettest serve` from the host: port 8090)
    - [x] DHCP (`net/dhcp.c`): frame-level client in front of the stack; the FreeBSD interface
          is created with the lease (INIT-REBOOT with the preferred IP, DISCOVER, renewal at T1).
          posix_server rewrites /etc/resolv.conf with the received DNS servers; `/proc/net/dhcp`.
-         Fixed MACs (they used to change on every build). `make NETSTACK_IP_PREFERIDA=` = no preference
-   - [x] Configuration: `red` (status, `red dhcp`, `red fija IP/P puerta G dns D`, `red aplicar`
-         with /etc/red.conf at boot); netstack changes address and route on the fly
+         Fixed MACs (they used to change on every build). `make NETSTACK_PREFERRED_IP=` = no preference
+   - [x] Configuration: `netcfg` (status, `netcfg dhcp`, `netcfg static IP/P gateway G dns D`,
+         `netcfg apply` with /etc/netcfg.conf at boot); netstack changes address and route on the fly
    - [x] Loopback 127.0.0.1 (FreeBSD's deferred queue); AF_UNIX STREAM and DGRAM
    - [x] Tools: curl with HTTPS (mbedTLS 3.6 + Mozilla certificates; getrandom and
          /dev/urandom via RDRAND; sel4-cc links compiler-rt), socat + `nc`, dropbear ssh/scp
@@ -68,9 +68,9 @@ Status: `[x]` done · `[~]` in progress · `[ ]` pending
 6. [ ] **Robustness** (next: it protects everything else)
    - [~] Version control: git repository (`.gitignore`, `DEPENDENCIES.md`); missing: the push to
          github.com:jgmr2/gnu-sel4 (register the SSH key) and a script that fetches the dependencies
-   - [x] `make test` (`tools/prueba.py`): copies the system partition, creates /etc/prueba, boots
-         headless QEMU; /etc/pruebas.sh runs the tests and writes to /dev/kmsg (to the serial
-         port). 15 tests in ~15 s. `make test SIN_RED=1` without internet
+   - [x] `make test` (`tools/test.py`): copies the system partition, creates /etc/test, boots
+         headless QEMU; /etc/tests.sh runs the tests and writes to /dev/kmsg (to the serial
+         port). 16 tests in ~20 s (including the bridge to the Linux VM). `make test NO_NET=1` without internet
    - [ ] Named pipes (`mkfifo`): a FIFO in ext2 that the server treats as a pipe
          (s6 uses them to control services)
    - [ ] s6 + s6-rc as the supervisor (skarnet, ISC; maintained, in C; chosen over runit, which
@@ -87,11 +87,11 @@ Status: `[x]` done · `[~]` in progress · `[ ]` pending
          PS/2 keyboard (i8042, US), our own xterm-256color terminal emulator (UTF-8, 256 and
          24-bit colour, alternate screen, scroll regions, DEC graphics, DA/CPR replies), Spleen
          8x16 font. It is sDDF's "serial driver": nothing else changed. Output 17x faster than
-         the serial port (seq 20000: 4.25 s -> 0.24 s). `make CONSOLA=serie` goes back to the UART
+         the serial port (seq 20000: 4.25 s -> 0.24 s). `make CONSOLE=serial` goes back to the UART
    - [ ] Phase 0a: UEFI GOP framebuffer (laptop); 2x font scaling for HiDPI screens;
          scrollback with Shift+PgUp
    - [ ] Phase 0b: PS/2 mouse; Latin American keyboard layout; virtual consoles
-   - [x] Phase 1: what Wayland needs from POSIX (`fase1test`, all passing, no leaks):
+   - [x] Phase 1: what Wayland needs from POSIX (`phase1test`, all passing, no leaks):
          epoll (in the runtime, on top of poll), eventfd and timerfd (server); AF_UNIX STREAM
          sockets with bind/listen/accept/connect, socketpair, SCM_RIGHTS and SO_PEERCRED
          (server); memfd_create + ftruncate + mmap MAP_SHARED across processes (mem.c: copies
@@ -130,6 +130,19 @@ Status: `[x]` done · `[~]` in progress · `[ ]` pending
          (LKL or Genode-style DDE), no VM
    - [ ] Multicore (seL4 runs on a single core today; the laptop has 4)
    - [ ] Release build (kernel and system without debugging)
+
+12. [ ] **Self-hosted development loop** (long term): develop GNU/seL4 from inside GNU/seL4,
+       autonomously: edit → build → stage → restart the whole userland (not the kernel) →
+       read logs and behaviour → commit if it is good
+   - [ ] First step (almost possible today): Claude Code + toolchain in the Linux VM, working on
+         the tree through `/mnt/sel4`
+   - [ ] Native toolchain: clang/LLVM, make, git (needs pthreads and large memory)
+   - [ ] Native Claude Code: Node.js (pthreads, libuv, executable mappings for V8's JIT)
+   - [ ] Userland restart: a monitor component with authority over the other PDs that stops
+         them, loads new images from a staging area and starts them again (Microkit systems are
+         static: there is no restart today)
+   - [ ] A/B safety net: a watchdog that rolls back to the last good version if the new one
+         does not pass `make test` within N seconds; logs kept across restarts
 
 ## Critical gaps (review of 2026-10-09)
 

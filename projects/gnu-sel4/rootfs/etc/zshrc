@@ -1,0 +1,11 @@
+# /etc/zshrc: zsh configuration for everyone on GNU/seL4
+fpath=(/usr/share/zsh/$ZSH_VERSION/functions $fpath)
+autoload -Uz compinit colors
+compinit -u
+colors
+bindkey -e                                   # emacs-style key bindings (Ctrl-A, Ctrl-E, Ctrl-R...)
+HISTFILE=~/.zsh_history HISTSIZE=2000 SAVEHIST=2000
+setopt HIST_IGNORE_DUPS SHARE_HISTORY AUTO_CD
+zstyle ':completion:*' menu select
+PROMPT='%F{green}%n@%m%f:%F{blue}%~%f%# '
+alias ls='ls --color=auto' ll='ls -l --color=auto' la='ls -la --color=auto'

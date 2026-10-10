@@ -1,6 +1,6 @@
-# Entorno de desarrollo para seL4 Microkit
-# Contiene: compilador (clang/LLVM), make, gdb. (QEMU corre en el host.)
-# El SDK de Microkit vive en el host (./sdk) y se monta en /work/sdk.
+# Development environment for seL4 Microkit
+# Contains: compiler (clang/LLVM), make, gdb. (QEMU runs on the host.)
+# The Microkit SDK lives on the host (./sdk) and is mounted at /work/sdk.
 FROM debian:trixie
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -9,10 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         dosfstools gdisk fdisk e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
 
-# libvmm usa LLVM 18 (clang 19 falla al compilar su código x86_64)
+# libvmm uses LLVM 18 (clang 19 fails to build its x86_64 code)
 ENV PATH=/usr/lib/llvm-18/bin:$PATH
 
-# sdfgen: genera la descripción del sistema (.system) para los ejemplos con sDDF
+# sdfgen: generates the system description (.system) for sDDF-based systems
 RUN pip3 install --break-system-packages sdfgen==0.35.0
 
 ARG UID=1000

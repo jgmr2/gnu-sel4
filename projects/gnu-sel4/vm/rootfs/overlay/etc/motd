@@ -1,0 +1,4 @@
+
+  docker-sel4: Linux kernel + busybox + Docker, as a VM on seL4
+  docker run -it alpine sh  |  log: /var/log/dockerd.log  |  shut down: poweroff
+

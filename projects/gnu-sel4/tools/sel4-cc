@@ -1,0 +1,27 @@
+#!/bin/sh
+# sel4-cc: C compiler for GNU/seL4 programs (like musl-gcc).
+#
+# Compiles against the ported musl and links a static ELF based at 0x10000000
+# (the image region of the slots, see include/sel4posix/procmem.h),
+# with the runtime that turns syscalls into seL4 IPC.
+#
+# Use it to port programs with their own build system:
+#   ./configure --host=x86_64-linux-musl CC=/path/to/sysroot/bin/sel4-cc
+SYSROOT=$(cd "$(dirname "$0")/.." && pwd)
+CC="clang --target=x86_64-linux-musl"
+FLAGS="-nostdinc -isystem $SYSROOT/include -fno-pic -fno-stack-protector"
+
+link=1
+for a in "$@"; do
+    case "$a" in -c|-S|-E|-M|-MM) link=0 ;; esac
+done
+
+if [ "$link" = 1 ]; then
+    # compiler-rt: what the compiler calls on its own (128-bit division, etc.)
+    RT=$($CC --rtlib=compiler-rt -print-libgcc-file-name)
+    exec $CC $FLAGS -static -nostdlib -fuse-ld=lld \
+        -Wl,--image-base=0x10000000 -Wl,-z,max-page-size=4096 -L"$SYSROOT/lib" \
+        "$SYSROOT/lib/crt0.o" "$@" "$SYSROOT/lib/libsel4posix.a" "$SYSROOT/lib/libc.a" "$RT"
+else
+    exec $CC $FLAGS "$@"
+fi

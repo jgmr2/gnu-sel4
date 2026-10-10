@@ -1,9 +1,0 @@
-#!/bin/sh
-# nc mínimo sobre socat:  nc HOST PUERTO  |  nc -l PUERTO  |  nc -u HOST PUERTO
-case "$1" in
-    -l) [ -n "$2" ] || { echo "uso: nc -l PUERTO" >&2; exit 2; }
-        exec socat - "TCP-LISTEN:$2,reuseaddr" ;;
-    -u) exec socat - "UDP:$2:$3" ;;
-    -h|"") echo "uso: nc HOST PUERTO | nc -l PUERTO | nc -u HOST PUERTO (para todo lo demás: socat)" >&2; exit 2 ;;
-    *)  exec socat - "TCP:$1:$2" ;;
-esac

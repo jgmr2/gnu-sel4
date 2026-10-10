@@ -1,0 +1,32 @@
+/*
+ * Protocol between the POSIX runtime (in every program) and posix_server.
+ *
+ * A system call travels as a seL4 protected procedure call (PPC,
+ * microkit_ppcall): synchronous, like a Linux syscall.
+ *   MR0      = syscall number (Linux x86_64 numbering, the one musl uses)
+ *   MR1..MR6 = arguments
+ * Reply:
+ *   MR0      = return value (negative = -errno, like the Linux kernel)
+ *
+ * Pointer arguments do not cross: the runtime copies the data into a shared
+ * buffer (POSIX_BUF_SIZE bytes) and replaces the pointer with the offset
+ * inside the buffer.
+ *
+ * Blocking calls (read with no data, write with the console full): the
+ * server cannot sleep in the middle of a PPC, so it replies POSIX_RETRY.
+ * The runtime then waits for a seL4 notification on the same channel
+ * (the server sends it once there is data or room) and retries.
+ */
+#pragma once
+
+#define POSIX_CHANNEL   0           /* channel from the program to the server */
+#define POSIX_BUF_SIZE  0x10000     /* 64 KiB */
+#define POSIX_NUM_MRS   7
+/* Calls with two paths (rename, symlink...): the second one goes at this offset */
+#define POSIX_BUF_PATH2 0x8000
+
+/* In every reply, MR6 carries the process's pending signals (bit s-1 = signal s) */
+#define POSIX_MR_SIGNALS 6
+
+/* Outside the errno range (-1..-4095): it never reaches the program */
+#define POSIX_RETRY     (-0x7000)

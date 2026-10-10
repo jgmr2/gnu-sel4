@@ -1,0 +1,8 @@
+# busybox init: boot (quietly, to the log), Docker, the bridge agent and a
+# console on hvc0 that only activates when used (Ctrl-\ 1 Enter from GNU/seL4)
+::sysinit:/etc/rc >/var/log/boot.log 2>&1
+::respawn:/sbin/run-dockerd
+::respawn:/sbin/sel4-agent /dev/hvc1
+hvc0::respawn:/sbin/console
+::ctrlaltdel:/sbin/reboot
+::shutdown:/etc/rc.shutdown

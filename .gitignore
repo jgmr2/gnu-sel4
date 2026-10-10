@@ -4,8 +4,8 @@
 /third_party/
 
 # Build output
-/proyectos/gnu-sel4/build/
-/proyectos/gnu-sel4/vm/rootfs/out/
+/projects/gnu-sel4/build/
+/projects/gnu-sel4/vm/rootfs/out/
 
 # Disk images (8+ GB; they hold data: back them up separately)
 *.img
