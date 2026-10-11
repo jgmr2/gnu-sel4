@@ -1,0 +1,11 @@
+Services of GNU/seL4, for s6-rc (https://skarnet.org/software/s6-rc/).
+
+source/<name>/type      oneshot (runs once: "up", "down") or longrun (supervised: "run")
+source/<name>/dependencies.d/<other>   start <other> first
+source/default          the bundle brought up at boot
+
+/etc/rc compiles source/ into /run/s6-rc/db at every boot (s6-rc-compile), starts s6-rc on
+the s6-svscan scan directory /run/service and brings "default" up. At run time:
+  s6-rc -a list              services that are up
+  s6-rc -u change NAME       bring NAME (and what it depends on) up; -d brings it down
+  s6-svstat /run/service/NAME   state of a longrun; s6-svc -r restarts it

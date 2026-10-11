@@ -1,0 +1,3 @@
+# net: native network configuration from /etc/netcfg.conf (DHCP or a static address).
+# A oneshot: s6-rc runs it once when bringing the "default" bundle up. (execline syntax)
+/bin/netcfg apply

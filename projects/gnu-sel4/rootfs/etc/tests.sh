@@ -43,6 +43,9 @@ check s6          sh -c 'svstat() { s6-svstat -p /run/service/9pd; }; i=0; while
                          p1=$(svstat); kill "$p1"; i=0; while { p2=$(svstat); [ "$p2" = "$p1" ] || [ "$p2" -le 0 ]; } && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
                          echo "9pd: $p1 -> $p2"; [ "$p1" -gt 0 ] && [ "$p2" -gt 0 ] && [ "$p1" != "$p2" ] || exit 1
                          s6-svc -wd -T 5000 -d /run/service/9pd && [ "$(svstat)" = -1 ] && s6-svc -wu -T 5000 -u /run/service/9pd && [ "$(svstat)" -gt 0 ]'
+check s6-rc       sh -c 'cat /tmp/s6-rc.log; up=$(s6-rc -a list | sort | xargs echo); echo "up: $up"; case " $up " in *" 9pd "*) ;; *) exit 1;; esac
+                         case " $up " in *" net "*) ;; *) exit 1;; esac
+                         s6-rc -d change 9pd && [ "$(s6-svstat -p /run/service/9pd)" = -1 ] && s6-rc -u change 9pd && [ "$(s6-svstat -p /run/service/9pd)" -gt 0 ]'
 check linux-vm    sh -c 'test "$(linux echo hello from the VM)" = "hello from the VM" && linux sh -c "exit 3"; test $? = 3'
 if [ "$(cat /etc/test)" = no-net ]; then
     check nettest-local nettest local

@@ -142,7 +142,6 @@ static long fifo_open(uint32_t ino, uint32_t flags, const char *abs);
 #define S_IFSOCK_     0140000
 static void usock_free(int i);
 static long usock_new(long type);
-static bool usock_bound(const char *abs, bool remove);
 
 /* eventfd: a counter; read empties it (or subtracts 1 with EFD_SEMAPHORE), write adds */
 #define NEVFD 32
@@ -273,6 +272,62 @@ static const char *client_path(uint32_t off)
     return p;
 }
 
+/* Physical resolution of an absolute path, as realpath(): every symlink is followed, so ".."
+ * goes to the real parent. A component that does not exist ends the resolution: the rest is
+ * kept lexically (create, mkdir...). */
+static long realpath_abs(const char *in, char *out)
+{
+    static char rest[FS_PATH_MAX * 2], res[FS_PATH_MAX], tmp[FS_PATH_MAX * 2];
+    size_t inl = strlen(in);
+    if (inl >= sizeof rest) return -ENAMETOOLONG;
+    memcpy(rest, in, inl + 1);
+    size_t rl = 0, pos = 0;
+    int loops = 0;
+    bool missing = false;
+    while (rest[pos]) {
+        while (rest[pos] == '/') pos++;
+        if (!rest[pos]) break;
+        size_t e = pos;
+        while (rest[e] && rest[e] != '/') e++;
+        size_t len = e - pos;
+        if (len == 1 && rest[pos] == '.') { pos = e; continue; }
+        if (len == 2 && rest[pos] == '.' && rest[pos + 1] == '.') {
+            while (rl > 0 && res[rl - 1] != '/') rl--;
+            if (rl > 0) rl--;
+            pos = e;
+            continue;
+        }
+        if (rl + 1 + len + 1 > FS_PATH_MAX) return -ENAMETOOLONG;
+        size_t prev = rl;
+        res[rl++] = '/';
+        memcpy(res + rl, rest + pos, len);
+        rl += len;
+        res[rl] = 0;
+        pos = e;
+        if (missing) continue;
+        uint32_t mode;
+        long ino = fs_lookup(res, false, &mode, NULL);
+        if (ino == -ENOENT) { missing = true; continue; }
+        if (ino < 0) return ino;
+        if (!S_ISLNK(mode)) continue;
+        if (++loops > 40) return -ELOOP;
+        long n = fs_call(FS_OP_READLINK, ino, 0, 0);
+        if (n < 0) return n;
+        size_t restl = strlen(rest + pos);
+        if ((size_t)n + 1 + restl + 1 > sizeof tmp) return -ENAMETOOLONG;
+        memcpy(tmp, (void *)fs_buf, n);                 /* target + what was left after the link */
+        tmp[n] = '/';
+        memcpy(tmp + n + 1, rest + pos, restl + 1);
+        memcpy(rest, tmp, n + 1 + restl + 1);
+        pos = 0;
+        rl = tmp[0] == '/' ? 0 : prev;                 /* absolute target: start again at the root */
+    }
+    if (rl == 0) res[rl++] = '/';
+    res[rl] = 0;
+    memcpy(out, res, rl + 1);
+    return 0;
+}
+
 /* Turns path (relative to dirfd or the current directory) into a normalised absolute path */
 static long normalize(long dirfd, const char *path, char *out)
 {
@@ -318,6 +373,10 @@ static long normalize(long dirfd, const char *path, char *out)
     }
     if (o == 0) out[o++] = '/';
     out[o] = 0;
+    /* ".." after a symlink means the link target's parent (POSIX): resolve physically. Only
+     * when ".." is there, so the usual case stays a lexical, lookup-free operation */
+    for (const char *q = tmp; *q; q++)
+        if (q[0] == '/' && q[1] == '.' && q[2] == '.' && (q[3] == '/' || q[3] == 0)) return realpath_abs(tmp, out);
     return 0;
 }
 
@@ -389,6 +448,7 @@ static long do_open(long dirfd, uint32_t flags, uint32_t mode)
         ino = res;
         if (S_ISLNK(fmode)) return -ELOOP;
         if ((fmode & S_IFMT) == S_IFIFO) return fifo_open(ino, flags, abs);
+        if ((fmode & S_IFMT) == S_IFSOCK_) return -ENXIO;          /* sockets are not opened */
         if (S_ISDIR(fmode)) {
             if ((flags & O_ACCMODE) != O_RDONLY) return -EISDIR;
             type = OF_DIR;
@@ -1099,12 +1159,6 @@ static long do_stat(long dirfd, long flags)
         dev_stat(type);
         return 0;
     }
-    if (usock_bound(abs, false)) {
-        memset((void *)client_buf, 0, K_STAT_SIZE);
-        ((uint32_t *)client_buf)[6] = S_IFSOCK_ | 0755;
-        ((uint64_t *)client_buf)[2] = 1;
-        return 0;
-    }
     if (is_proc(abs)) {
         if (!(flags & AT_SYMLINK_NOFOLLOW) && procfs_kind(abs) == PROCFS_LINK) {
             char t[FS_PATH_MAX];
@@ -1151,8 +1205,7 @@ static long do_chdir(const char *abs)
     long ino = fs_lookup(abs, true, &mode, NULL);
     if (ino < 0) return ino;
     if (!S_ISDIR(mode)) return -ENOTDIR;
-    memcpy(cur->cwd, abs, strlen(abs) + 1);
-    return 0;
+    return realpath_abs(abs, cur->cwd);                /* the physical directory, as getcwd() shows */
 }
 
 /* Calls that take a path: normalise it and operate on it */
@@ -1180,7 +1233,6 @@ static long path_op(long nr, long dirfd, long a, long b)
         return r < 0 ? r : 0;
     case __NR_unlink:
         if (dev_type(abs) != OF_FREE) return -EBUSY;
-        if (!a && usock_bound(abs, true)) return 0;     /* name of a local socket */
         fs_set_path(0, abs);
         return fs_call(FS_OP_UNLINK, a, 0, 0);       /* a: 1 = rmdir */
     case __NR_readlink: {
@@ -1297,16 +1349,13 @@ static struct usock {
     bool peer_closed;
     int pid;                               /* process that created it (the peer's SO_PEERCRED) */
     char name[108];                        /* bind: absolute path or "@abstract" */
+    uint32_t ino;                          /* bound to a path: the socket's inode on disk */
     uint32_t head, tail;                   /* input buffer */
     uint8_t buf[USOCK_BUF];
     int fdq[USOCK_MAXFD], nfdq;            /* open file descriptions in transit (ofiles indices) */
     int pend[8], npend;                    /* US_LISTEN: connections waiting to be accepted */
     uint32_t rwait, wwait;
 } usocks[NUSOCK];
-
-/* Names of sockets already closed: like the socket file in Linux, they stay
- * until unlink (connect -> ECONNREFUSED, bind -> EADDRINUSE) */
-static char stale_names[NUSOCK][108];
 
 static int usock_alloc(void)
 {
@@ -1336,9 +1385,6 @@ static void usock_free(int i)
         usocks[u->peer].peer_closed = true;
         usock_wake(&usocks[u->peer]);
     }
-    if (u->name[0] == '/')                             /* abstract ones vanish with the socket */
-        for (int k = 0; k < NUSOCK; k++)
-            if (!stale_names[k][0]) { memcpy(stale_names[k], u->name, sizeof u->name); break; }
     u->state = US_FREE;
 }
 
@@ -1365,27 +1411,24 @@ static long usock_name(long alen, char *out)
     return 0;
 }
 
-static int usock_lookup(const char *name)
+/* The listening socket a name refers to, or -errno. A path is resolved through the file system
+ * (symlinks included) to its socket inode, as in Unix: the same socket can be reached by any
+ * path to it. The socket file stays after close until unlink (connect -> ECONNREFUSED). An
+ * abstract name (Linux's "@...") exists only while its socket does. */
+static long usock_lookup(const char *name)
 {
-    for (int i = 0; i < NUSOCK; i++)
-        if (usocks[i].state == US_LISTEN && !strcmp(usocks[i].name, name)) return i;
-    return -1;
-}
-
-/* For unlink/stat: is there a socket with this name? (and unlink removes it) */
-static bool usock_bound(const char *abs, bool remove)
-{
-    for (int i = 0; i < NUSOCK; i++)
-        if (usocks[i].state != US_FREE && usocks[i].name[0] && !strcmp(usocks[i].name, abs)) {
-            if (remove) usocks[i].name[0] = 0;
-            return true;
-        }
-    for (int i = 0; i < NUSOCK; i++)
-        if (stale_names[i][0] && !strcmp(stale_names[i], abs)) {
-            if (remove) stale_names[i][0] = 0;
-            return true;
-        }
-    return false;
+    uint32_t mode = 0;
+    long ino = 0;
+    if (name[0] != '@') {
+        ino = fs_lookup(name, true, &mode, NULL);
+        if (ino < 0) return ino;
+        if ((mode & S_IFMT) != S_IFSOCK_) return -ECONNREFUSED;
+    }
+    for (int i = 0; i < NUSOCK; i++) {
+        if (usocks[i].state != US_LISTEN) continue;
+        if (name[0] == '@' ? !strcmp(usocks[i].name, name) : usocks[i].ino == (uint32_t)ino) return i;
+    }
+    return -ECONNREFUSED;
 }
 
 static long usock_fd(int ui, long flags)
@@ -1438,10 +1481,15 @@ static long usock_bind(struct ofile *f, long alen)
     long r = usock_name(alen, name);
     if (r) return r;
     if (u->name[0]) return -EINVAL;
-    if (usock_bound(name, false)) return -EADDRINUSE;
-    if (name[0] == '/') {                               /* like Linux: not if the file already exists */
-        uint32_t mode;
-        if (fs_lookup(name, false, &mode, NULL) >= 0) return -EADDRINUSE;
+    if (name[0] == '@') {                               /* abstract: unique among live sockets */
+        for (int i = 0; i < NUSOCK; i++)
+            if (usocks[i].state != US_FREE && !strcmp(usocks[i].name, name)) return -EADDRINUSE;
+    } else {                                            /* a socket file: fails if the path exists */
+        fs_set_path(0, name);
+        long ino = fs_call(FS_OP_CREATE, S_IFSOCK_ | (0777 & ~cur->umask), 0, 0);
+        if (ino == -EEXIST) return -EADDRINUSE;
+        if (ino < 0) return ino;
+        u->ino = ino;
     }
     memcpy(u->name, name, sizeof name);
     return 0;
@@ -1455,9 +1503,8 @@ static long usock_connect(struct ofile *f, long alen)
     char name[108];
     long r = usock_name(alen, name);
     if (r) return r;
-    int li = usock_lookup(name);
-    if (li < 0) return usock_bound(name, false) || (name[0] == '/' && fs_lookup(name, true, NULL, NULL) >= 0)
-                       ? -ECONNREFUSED : -ENOENT;
+    long li = usock_lookup(name);
+    if (li < 0) return li;
     struct usock *l = &usocks[li];
     if (l->npend == 8) return -EAGAIN;
     int s = usock_alloc();                              /* the server's end */

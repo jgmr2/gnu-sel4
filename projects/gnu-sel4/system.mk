@@ -264,9 +264,8 @@ licenses/.built: $(foreach l,$(LICENSE_FILES),$(lastword $(subst :, ,$(l))))
 		> licenses/ca-certificates/LICENSE
 	touch $@
 # Data trees copied to the disk: "source:destination"
-# s6 services (rootfs/etc/s6/sv/*) and the ones enabled at boot (symlinks in /run/service)
-S6_ENABLED := 9pd
-DATA_TREES := $(POSIX)/rootfs/etc/s6:/etc/s6 zsh/inst/usr/share/zsh:/usr/share/zsh vim/runtime-min:/usr/share/vim/vim92 curl/ssl:/etc/ssl/certs \
+# s6-rc service sources (rootfs/etc/s6-rc), compiled at boot by /etc/rc
+DATA_TREES := $(POSIX)/rootfs/etc/s6-rc:/etc/s6-rc zsh/inst/usr/share/zsh:/usr/share/zsh vim/runtime-min:/usr/share/vim/vim92 curl/ssl:/etc/ssl/certs \
 	      licenses:/usr/share/licenses
 # Symlinks: "name:target". The coreutils ones come from coreutils/programs.txt
 # Linux VM commands available as native ones (bridge, like WSL interop)
@@ -348,13 +347,12 @@ SYSFILES := etc/motd etc/profile etc/rc etc/mtab etc/zshrc etc/zprofile etc/shel
 EXTRA_BINS ?=
 LINKS ?=
 install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EXTRA_BINS),$(firstword $(subst :, ,$(b)))) zsh/Src/zsh vim/src/vim procps/.built \
-	       $(addprefix $(POSIX)/rootfs/,$(SYSFILES)) $(shell find $(POSIX)/rootfs/etc/s6 -type f)
+	       $(addprefix $(POSIX)/rootfs/,$(SYSFILES)) $(shell find $(POSIX)/rootfs/etc/s6-rc -type f)
 	set -e; \
 	python3 -c 'import fcntl,sys; fcntl.lockf(open(sys.argv[1],"r+b"), fcntl.LOCK_EX | fcntl.LOCK_NB)' $(DISK) 2>/dev/null \
 		|| { echo "ERROR: $(DISK) is in use (QEMU running?): close it and run make again"; exit 1; }; \
 	dd if=$(DISK) of=part.img bs=1M skip=1 count=$(EXT2_MB) status=none; \
-	{ echo "mkdir /sbin"; echo "mkdir /mnt"; echo "mkdir /run"; echo "mkdir /run/service"; \
-	  for sv in $(S6_ENABLED); do echo "symlink /run/service/$$sv /etc/s6/sv/$$sv"; done; \
+	{ echo "mkdir /sbin"; echo "mkdir /mnt"; echo "mkdir /run"; \
 	  for b in $(BINS) $(EXTRA_BINS); do \
 	    src=$${b%%:*}; name=$$(basename $${b##*:}); dir=/bin; \
 	    case " $(SBIN_APPS) " in *" $$name "*) dir=/sbin;; esac; \

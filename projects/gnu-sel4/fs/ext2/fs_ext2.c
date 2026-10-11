@@ -601,6 +601,7 @@ static uint8_t ftype_of_mode(uint16_t mode)
     if (S_ISDIR(mode)) return FT_DIR;
     if (S_ISLNK(mode)) return FT_SYMLINK;
     if ((mode & S_IFMT) == 0010000) return FT_FIFO;             /* named pipe (mkfifo) */
+    if ((mode & S_IFMT) == 0140000) return 6;                   /* socket (AF_UNIX bind) */
     return FT_UNKNOWN;
 }
 
