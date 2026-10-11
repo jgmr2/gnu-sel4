@@ -84,19 +84,17 @@ Real hardware stays last on purpose: first the system has to be worth booting.
        `fetch-deps.sh`; a Docker image with all of it and the patched Microkit tool, and
        `docker-compose.yml` (build, test, shell, vm-rootfs). A fresh clone builds and passes
        `make test` with Docker alone. Next: CI on GitHub Actions running `make test` on every push
-4. [~] **Supervision: `mkfifo` + s6 + s6-rc** (M)
-   - [x] Named pipes (`mkfifo`): a FIFO in ext2 that the server treats as a pipe
-         (s6 uses them to control services)
-   - [ ] s6 + s6-rc (skarnet, ISC; maintained, in C; chosen over runit, which has not been
-         maintained since 2014): skalibs + s6 + s6-rc (+ execline). `s6-svscan` as PID 1 or
-         started by `/sbin/init`; services: 9pd, login + zsh; later dhcp, sshd, sway. s6-rc:
-         dependencies ("sshd after the network") and one-shot tasks (fsck, time, network).
-         skalibs without signalfd until signalfd exists (it uses its fallback).
-         Crashed services come back on their own: the first step towards restarting the userland
-   - [x] skalibs 2.15.1, execline 2.9.9 (multicall), s6 2.15.1 and s6-rc 0.7.0 ported;
-         `s6-svscan /run/service` from /etc/rc; 9pd is supervised (test `s6`: kill -> restarted)
-   - [ ] s6-rc: compiled service database, dependencies, network as a oneshot; the login session
-         as a supervised service
+4. [x] **Supervision: `mkfifo` + s6 + s6-rc** (M)
+   - [x] Named pipes (`mkfifo`) with POSIX semantics (blocking opens meet, ENXIO, O_RDWR)
+   - [x] skalibs 2.15.1, execline 2.9.9 (multicall), s6 2.15.1 and s6-rc 0.7.0 (skarnet, ISC;
+         chosen over runit, unmaintained since 2014); helpers in /usr/libexec
+   - [x] s6-rc: sources in /etc/s6-rc/source (net: oneshot `netcfg apply`; 9pd: longrun; the
+         `default` bundle), compiled at every boot by /etc/rc, s6-svscan on /run/service.
+         Crashed services come back on their own: the first step towards restarting the userland.
+         Tests `s6` (kill 9pd -> restarted; s6-svc -d/-u) and `s6-rc` (down/up through s6-rc)
+   - [x] On the way: AF_UNIX names are socket inodes in ext2 (connect resolves symlinks); chdir
+         keeps the physical directory and `..` after a symlink goes to the target's parent
+   - Next services as they appear: sshd (item 7), the login session with `login` (item 6), sway
 5. [ ] **Clean shutdown and disk safety** (S–M)
    - [ ] Real `poweroff`/`reboot`: stop services, `sync`, shut down the VM, power off (ACPI)
    - [ ] ext2 fsck at boot if the disk was left dirty (ext2 state flag)
@@ -105,7 +103,8 @@ Real hardware stays last on purpose: first the system has to be worth booting.
          process owner on created files (today always root)
    - [ ] Permission checks in the VFS and fs_ext2 (owner/group/other bits, sticky /tmp, umask)
    - [ ] `login` against `/etc/shadow` (musl has `crypt`) and a normal user account by default;
-         init starts a login prompt instead of root's shell
+         the login session becomes an s6-rc longrun (a getty-like service) instead of init's
+         respawn loop
    - [ ] `sudo` (port of sudo 1.9, works with musl and without PAM, via `/etc/shadow`) for root
          work from the normal account; `/etc/sudoers` with the `wheel` group; `su` as well
    - [ ] Users from the network later on: musl asks an nscd-protocol daemon for users it does not
