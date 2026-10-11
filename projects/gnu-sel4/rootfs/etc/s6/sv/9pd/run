@@ -1,0 +1,6 @@
+#!/bin/sh
+# 9pd: shares this file system with the Linux VM at /mnt/sel4 (like /mnt/c in WSL).
+# Supervised by s6: if it dies, s6-supervise starts it again.
+#
+# SPDX-License-Identifier: BSD-2-Clause
+exec /sbin/9pd /mnt/sel4 </dev/null

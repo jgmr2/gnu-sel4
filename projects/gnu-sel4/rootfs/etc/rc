@@ -6,8 +6,9 @@
 # Native networking: DHCP or a static address, per /etc/netcfg.conf
 netcfg apply
 
-# Share this file system with the Linux VM at /mnt/sel4 (like /mnt/c in WSL)
-/sbin/9pd /mnt/sel4 </dev/null >/tmp/9pd.log 2>&1 &
+# Services, supervised by s6 (they are started again if they die): one directory per service
+# in /etc/s6/sv, enabled by a symlink in /run/service. s6-svc / s6-svstat control them.
+s6-svscan /run/service </dev/null >/tmp/s6-svscan.log 2>&1 &
 
 # make test: if /etc/test exists, run the automated tests (results go to /dev/kmsg)
 [ -f /etc/test ] && sh /etc/tests.sh

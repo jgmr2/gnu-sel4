@@ -33,4 +33,8 @@ tar  third_party/diffutils-3.12    https://ftp.gnu.org/gnu/diffutils/diffutils-3
 tar  third_party/tar-1.35          https://ftp.gnu.org/gnu/tar/tar-1.35.tar.xz                         4d62ff37342ec7aed748535323930c7cf94acf71c3591882b26a7ea50f3edc16
 tar  third_party/gzip-1.15         https://ftp.gnu.org/gnu/gzip/gzip-1.15.tar.xz                       9aa0cc780dec156b8282844833b342ab7cb08c25d2cd9a1869cdd0df31deff48
 tar  third_party/less-710          https://www.greenwoodsoftware.com/less/less-710.tar.gz              d1008fb78dcae1323ddab664bcb352a61f022b1b131bd8018548e021d975ec7a
+tar  third_party/skalibs-2.15.1.0   https://skarnet.org/software/skalibs/skalibs-2.15.1.0.tar.gz        f9c905e74935c6fe911c7e344e3e89d5fbd2014c1a04650b524b15ce9b5635d1
+tar  third_party/execline-2.9.9.2  https://skarnet.org/software/execline/execline-2.9.9.2.tar.gz      908ed4db3a6b3a23a205d8fd4cf2a71089156f2aeae0f54656045aafad2dee32
+tar  third_party/s6-2.15.1.0       https://skarnet.org/software/s6/s6-2.15.1.0.tar.gz                  eab9c46e22b66b16135f9a05ec68a0ea287d9060b84d10defaaa2caad158ab52
+tar  third_party/s6-rc-0.7.0.0     https://skarnet.org/software/s6-rc/s6-rc-0.7.0.0.tar.gz             bf5b8ce0da5a4ee70d642b818b61d9916a7a9b64a457595f388113e54a188688
 tar  third_party/spleen            https://github.com/fcambus/spleen/releases/download/2.2.0/spleen-2.2.0.tar.gz  ec42925c6b56d2138c862b2f97147c872e472f674bf03423417d827a08d69a89  only=spleen-8x16.bdf,LICENSE

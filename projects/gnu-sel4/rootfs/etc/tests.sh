@@ -39,6 +39,10 @@ check nc          sh -c '(nc -l 7007 >/tmp/nc.out &) ; sleep 1; echo "hello nc" 
 check ssh-key     sh -c 'rm -f /tmp/k && dropbearkey -t ed25519 -f /tmp/k >/dev/null && ssh -V 2>&1 | head -1 | test -n "$(cat)"'
 check net-static  sh -c 'netcfg static 10.0.2.40/24 gateway 10.0.2.2 dns 10.0.2.3 && case "$(netcfg)" in *static*10.0.2.40/24*) ;; *) netcfg; exit 1;; esac && nettest >/dev/null'
 check net-dhcp    sh -c 'netcfg dhcp && sleep 1 && case "$(netcfg)" in *bound*) ;; *) netcfg; exit 1;; esac'
+check s6          sh -c 'svstat() { s6-svstat -p /run/service/9pd; }; i=0; while [ "$(svstat)" -le 0 ] 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+                         p1=$(svstat); kill "$p1"; i=0; while { p2=$(svstat); [ "$p2" = "$p1" ] || [ "$p2" -le 0 ]; } && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+                         echo "9pd: $p1 -> $p2"; [ "$p1" -gt 0 ] && [ "$p2" -gt 0 ] && [ "$p1" != "$p2" ] || exit 1
+                         s6-svc -wd -T 5000 -d /run/service/9pd && [ "$(svstat)" = -1 ] && s6-svc -wu -T 5000 -u /run/service/9pd && [ "$(svstat)" -gt 0 ]'
 check linux-vm    sh -c 'test "$(linux echo hello from the VM)" = "hello from the VM" && linux sh -c "exit 3"; test $? = 3'
 if [ "$(cat /etc/test)" = no-net ]; then
     check nettest-local nettest local

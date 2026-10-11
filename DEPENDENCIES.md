@@ -29,6 +29,10 @@ image (`docker compose`, see README.md) carries them already fetched.
 | `third_party/tar-1.35` | https://ftp.gnu.org/gnu/tar/ | 1.35 |
 | `third_party/gzip-1.15` | https://ftp.gnu.org/gnu/gzip/ | 1.15 |
 | `third_party/less-710` | https://www.greenwoodsoftware.com/less/ | 710 |
+| `third_party/skalibs-2.15.1.0` | https://skarnet.org/software/skalibs/ | 2.15.1.0 |
+| `third_party/execline-2.9.9.2` | https://skarnet.org/software/execline/ | 2.9.9.2 |
+| `third_party/s6-2.15.1.0` | https://skarnet.org/software/s6/ | 2.15.1.0 |
+| `third_party/s6-rc-0.7.0.0` | https://skarnet.org/software/s6-rc/ | 0.7.0.0 |
 | `third_party/spleen` | https://github.com/fcambus/spleen | 2.2.0 (`spleen-8x16.bdf`, LICENSE) |
 
 To do: a script that downloads them all.

@@ -227,6 +227,19 @@ EXTRA_BINS := dash/src/dash:dash coreutils.bin:coreutils zsh/Src/zsh:zsh vim.bin
 	      socat.bin:socat dropbear.bin:dropbearmulti $(GNU_BINS) \
 	      $(foreach p,$(NC_PROGS),ncurses/inst/usr/bin/$(p):$(p)) \
 	      $(foreach p,$(PROCPS_PROGS),procps/bin/$(p):$(p))
+# skarnet.org: skalibs (library) -> execline -> s6 -> s6-rc (ports/skarnet/build-skarnet.sh).
+# Their programs go to /bin; execline is one multicall binary plus symlinks (links.txt)
+SKARNET_PKGS := skalibs-2.15.1.0 execline-2.9.9.2 s6-2.15.1.0 s6-rc-0.7.0.0
+sk_dir = $(TP)/$(firstword $(filter $(1)-%,$(SKARNET_PKGS)))   # s6-% also matches s6-rc
+sk-skalibs/.built: $(SYSROOT_READY) $(POSIX)/ports/skarnet/build-skarnet.sh
+sk-execline/.built: sk-skalibs/.built
+sk-s6/.built: sk-execline/.built
+sk-s6-rc/.built: sk-s6/.built
+sk-%/.built:
+	$(POSIX)/ports/skarnet/build-skarnet.sh $(call sk_dir,$*) sk-$* $(SYSROOT)
+	touch $@
+SKARNET_BUILT := sk-execline/.built sk-s6/.built sk-s6-rc/.built
+
 # License texts of everything on the disk -> /usr/share/licenses/<project>/ (see THIRD_PARTY.md)
 gnu_dir = $(firstword $(subst -, ,$(1)))
 LICENSE_FILES := gnu-sel4:$(POSIX)/../../LICENSE gnu-sel4:$(POSIX)/../../THIRD_PARTY.md \
@@ -240,6 +253,7 @@ LICENSE_FILES := gnu-sel4:$(POSIX)/../../LICENSE gnu-sel4:$(POSIX)/../../THIRD_P
 	curl:$(TP)/curl-8.22.0/COPYING mbedtls:$(TP)/mbedtls-3.6.7/LICENSE \
 	socat:$(TP)/socat-1.8.1.3/COPYING socat:$(TP)/socat-1.8.1.3/COPYING.OpenSSL \
 	dropbear:$(TP)/dropbear-2026.94/LICENSE spleen:$(TP)/spleen/LICENSE \
+	$(foreach p,$(SKARNET_PKGS),$(call gnu_dir,$(p)):$(TP)/$(p)/COPYING) \
 	llvm-compiler-rt:$(SDDF)/LICENSES/Apache-2.0.txt llvm-compiler-rt:$(SDDF)/LICENSES/LLVM-exception.txt
 licenses/.built: $(foreach l,$(LICENSE_FILES),$(lastword $(subst :, ,$(l))))
 	rm -rf licenses && mkdir licenses
@@ -250,7 +264,9 @@ licenses/.built: $(foreach l,$(LICENSE_FILES),$(lastword $(subst :, ,$(l))))
 		> licenses/ca-certificates/LICENSE
 	touch $@
 # Data trees copied to the disk: "source:destination"
-DATA_TREES := zsh/inst/usr/share/zsh:/usr/share/zsh vim/runtime-min:/usr/share/vim/vim92 curl/ssl:/etc/ssl/certs \
+# s6 services (rootfs/etc/s6/sv/*) and the ones enabled at boot (symlinks in /run/service)
+S6_ENABLED := 9pd
+DATA_TREES := $(POSIX)/rootfs/etc/s6:/etc/s6 zsh/inst/usr/share/zsh:/usr/share/zsh vim/runtime-min:/usr/share/vim/vim92 curl/ssl:/etc/ssl/certs \
 	      licenses:/usr/share/licenses
 # Symlinks: "name:target". The coreutils ones come from coreutils/programs.txt
 # Linux VM commands available as native ones (bridge, like WSL interop)
@@ -331,13 +347,14 @@ SYSFILES := etc/motd etc/profile etc/rc etc/mtab etc/zshrc etc/zprofile etc/shel
 # EXTRA_BINS: ported programs (dash...), as "local/path:name"; LINKS: "name:target"
 EXTRA_BINS ?=
 LINKS ?=
-install.stamp: $(DISK) licenses/.built $(BINS) $(foreach b,$(EXTRA_BINS),$(firstword $(subst :, ,$(b)))) zsh/Src/zsh vim/src/vim procps/.built \
-	       $(addprefix $(POSIX)/rootfs/,$(SYSFILES))
+install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EXTRA_BINS),$(firstword $(subst :, ,$(b)))) zsh/Src/zsh vim/src/vim procps/.built \
+	       $(addprefix $(POSIX)/rootfs/,$(SYSFILES)) $(shell find $(POSIX)/rootfs/etc/s6 -type f)
 	set -e; \
 	python3 -c 'import fcntl,sys; fcntl.lockf(open(sys.argv[1],"r+b"), fcntl.LOCK_EX | fcntl.LOCK_NB)' $(DISK) 2>/dev/null \
 		|| { echo "ERROR: $(DISK) is in use (QEMU running?): close it and run make again"; exit 1; }; \
 	dd if=$(DISK) of=part.img bs=1M skip=1 count=$(EXT2_MB) status=none; \
-	{ echo "mkdir /sbin"; echo "mkdir /mnt"; \
+	{ echo "mkdir /sbin"; echo "mkdir /mnt"; echo "mkdir /run"; echo "mkdir /run/service"; \
+	  for sv in $(S6_ENABLED); do echo "symlink /run/service/$$sv /etc/s6/sv/$$sv"; done; \
 	  for b in $(BINS) $(EXTRA_BINS); do \
 	    src=$${b%%:*}; name=$$(basename $${b##*:}); dir=/bin; \
 	    case " $(SBIN_APPS) " in *" $$name "*) dir=/sbin;; esac; \
@@ -346,6 +363,14 @@ install.stamp: $(DISK) licenses/.built $(BINS) $(foreach b,$(EXTRA_BINS),$(first
 	  done; \
 	  for l in $(LINKS); do echo "rm /bin/$${l%%:*}"; echo "symlink /bin/$${l%%:*} $${l##*:}"; done; \
 	  for p in $$(cat coreutils/programs.txt); do echo "rm /bin/$$p"; echo "symlink /bin/$$p coreutils"; done; \
+	  for f in $(patsubst %/.built,%/bin/*,$(SKARNET_BUILT)); do name=$$(basename $$f); \
+	    echo "rm /bin/$$name"; echo "write $$f /bin/$$name"; echo "sif /bin/$$name mode 0100755"; \
+	    echo "sif /bin/$$name uid 0"; echo "sif /bin/$$name gid 0"; done; \
+	  echo "mkdir /usr/libexec"; for f in $(patsubst %/.built,%/libexec/*,$(SKARNET_BUILT)); do \
+	    [ -f $$f ] || continue; name=$$(basename $$f); echo "rm /usr/libexec/$$name"; \
+	    echo "write $$f /usr/libexec/$$name"; echo "sif /usr/libexec/$$name mode 0100755"; done; \
+	  cat $(patsubst %/.built,%/links.txt,$(SKARNET_BUILT)) | while read name target; do \
+	    echo "rm /bin/$$name"; echo "symlink /bin/$$name $$target"; done; \
 	  for d in /usr /usr/share /usr/share/terminfo; do echo "mkdir $$d"; done; \
 	  for t in $(TERMINFO); do echo "mkdir /usr/share/terminfo/$${t%%/*}"; \
 	    echo "rm /usr/share/terminfo/$$t"; echo "write ncurses/inst/usr/share/terminfo/$$t /usr/share/terminfo/$$t"; done; \
