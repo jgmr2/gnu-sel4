@@ -1,7 +1,8 @@
 /*
  * posix_server's VFS: file descriptors, current directory, paths and dispatch
  * of file calls to the file system server (fs_ext2, through the protocol in
- * include/sel4posix/fs_protocol.h).
+ * include/sel4posix/fs_protocol.h). Pipes, eventfd/timerfd and sockets are in
+ * vfs_*.c (see vfs.h).
  *
  * As in Unix, a descriptor points to an "open file description" (struct ofile)
  * that holds the offset; dup() shares the same one.
@@ -15,149 +16,13 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
-#include <os/sddf.h>
-#include <string.h>
-#include <sel4posix/fs_protocol.h>
-#include <sel4posix/net_protocol.h>
-#include <sddf/util/printf.h>
-#include "server.h"
-#include "syscall_nr.h"
+#include "vfs.h"
 
 /* Buffer shared with the file server (set by Microkit, see meta.py) */
 uintptr_t fs_buf;
 
-#define AT_FDCWD             (-100)
-#define AT_SYMLINK_NOFOLLOW  0x100
-#define AT_REMOVEDIR         0x200
-#define AT_EMPTY_PATH        0x1000
 
-#define O_ACCMODE    03
-#define O_RDONLY     00
-#define O_WRONLY     01
-#define O_RDWR       02
-#define O_CREAT      0100
-#define O_EXCL       0200
-#define O_TRUNC      01000
-#define O_APPEND     02000
-#define O_NONBLOCK   04000
-#define O_DIRECTORY  0200000
-#define O_NOFOLLOW   0400000
-#define O_CLOEXEC    02000000
-
-#define S_IFMT   0170000
-#define S_IFREG  0100000
-#define S_IFDIR  0040000
-#define S_IFCHR  0020000
-#define S_IFLNK  0120000
-#define S_IFIFO  0010000
-#define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
-#define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
-#define S_ISLNK(m) (((m) & S_IFMT) == S_IFLNK)
-
-#define F_DUPFD          0
-#define F_GETFD          1
-#define F_SETFD          2
-#define F_GETFL          3
-#define F_SETFL          4
-#define F_GETLK          5
-#define F_SETLK          6
-#define F_SETLKW         7
-#define F_DUPFD_CLOEXEC  1030
-#define FD_CLOEXEC       1
-
-#define X_OK 1
-
-#define K_STAT_SIZE    144     /* Linux x86_64 struct stat */
-#define K_STATFS_SIZE  120     /* Linux x86_64 struct statfs */
-#define ST_SIZE_OFFSET 48      /* offsetof(struct stat, st_size) */
-
-/* ---------------- descriptors ---------------- */
-
-enum { OF_FREE, OF_TTY, OF_NULL, OF_FILE, OF_DIR, OF_PIPE_R, OF_PIPE_W, OF_LINUX, OF_SOCKET,
-       OF_PROCDIR, OF_PROCFILE,        /* /proc (procfs.c): identified by its path */
-       OF_EVENTFD, OF_TIMERFD,         /* counters and timers that are read like files */
-       OF_EPOLL,                       /* placeholder: the interest set lives in the runtime */
-       OF_USOCK,                       /* local socket (AF_UNIX) */
-       OF_SHM,                         /* memfd: shared memory (mem.c) */
-       OF_KMSG,                        /* /dev/kmsg: to the serial port (logs, make test) */
-       OF_RANDOM };                    /* /dev/urandom, /dev/random (RDRAND) */
-
-/* Is the path under /proc? */
-static bool is_proc(const char *abs)
-{
-    return !strncmp(abs, "/proc", 5) && (abs[5] == 0 || abs[5] == '/');
-}
-
-struct ofile {
-    int refs;
-    int type;
-    uint32_t ino;               /* file/directory; pipe index; netstack socket */
-    uint64_t off;               /* (socket: 1 = blocking connect() in progress) */
-    uint32_t flags;
-    char path[FS_PATH_MAX];     /* absolute path (for fchdir and the *at calls) */
-};
-
-#define NOFILE 256
-static struct ofile ofiles[NOFILE];
-
-/* Pipes: circular buffer; whoever blocks goes into rwait/wwait (bits = process index).
- * A named pipe (mkfifo) is the same object, found by its inode while someone has it open or
- * is blocked opening it; its data goes away with the last close, as in Linux. */
-#define NPIPE     64
-#define PIPE_SIZE 16384
-static struct pipe {
-    bool used;
-    int readers, writers;
-    uint32_t head, tail;        /* tail - head = bytes in the buffer */
-    uint32_t rwait, wwait;
-    uint32_t fifo;              /* named pipe: its inode (0 = anonymous pipe) */
-    uint32_t owait;             /* processes blocked in open() waiting for the other end */
-    uint32_t r_opens, w_opens;  /* opens of each end so far: a waiter returns once the other moved */
-    char buf[PIPE_SIZE];
-} pipes[NPIPE];
-
-static void pipe_maybe_free(struct pipe *pp)
-{
-    if (!pp->readers && !pp->writers) pp->used = false;
-}
-
-/* A process blocked opening a FIFO already counts as a reader or writer (as in Linux); if it
- * gives up (signal, exit, another open) that count goes away */
-void fifo_cancel_wait(struct proc *p)
-{
-    if (!p->fifo_wait) return;
-    struct pipe *pp = &pipes[p->fifo_wait - 1];
-    if (p->fifo_wait_write) pp->writers--; else pp->readers--;
-    p->fifo_wait = 0;
-    proc_wake_mask(pp->rwait | pp->wwait | pp->owait);
-    pp->rwait = pp->wwait = pp->owait = 0;
-    pipe_maybe_free(pp);
-}
-
-static long net_call(long op, long a1, long a2, long a3, long a4);
-static long fifo_open(uint32_t ino, uint32_t flags, const char *abs);
-
-/* Local sockets (AF_UNIX): implemented further down, next to poll */
-#define AF_UNIX_      1
-#define S_IFSOCK_     0140000
-static void usock_free(int i);
-static long usock_new(long type);
-
-/* eventfd: a counter; read empties it (or subtracts 1 with EFD_SEMAPHORE), write adds */
-#define NEVFD 32
-static struct evfd {
-    bool used, semaphore;
-    uint64_t count;
-    uint32_t rwait, wwait;
-} evfds[NEVFD];
-
-/* timerfd: deadlines in server timer ns; read returns the expirations */
-#define NTFD 32
-static struct tfd {
-    bool used;
-    uint64_t next, interval, expirations;
-    uint32_t rwait;
-} tfds[NTFD];
+struct ofile ofiles[NOFILE];
 
 static struct ofile *fd_get(long fd)
 {
@@ -165,7 +30,7 @@ static struct ofile *fd_get(long fd)
     return &ofiles[cur->fdt[fd].of];
 }
 
-static int ofile_alloc(int type)
+int ofile_alloc(int type)
 {
     for (int i = 0; i < NOFILE; i++) {
         if (!ofiles[i].refs) {
@@ -181,7 +46,7 @@ static int ofile_alloc(int type)
     return -1;
 }
 
-static int fd_alloc(int of, long min, bool cloexec)
+int fd_alloc(int of, long min, bool cloexec)
 {
     for (long fd = min < 0 ? 0 : min; fd < NFD; fd++) {
         if (cur->fdt[fd].of < 0) {
@@ -195,7 +60,7 @@ static int fd_alloc(int of, long min, bool cloexec)
 
 /* Drops a reference to an open file description; when it is freed, pipes
  * wake up the other end (EOF for readers, EPIPE for writers) */
-static void ofile_release(int of)
+void ofile_release(int of)
 {
     struct ofile *f = &ofiles[of];
     if (--f->refs > 0) return;
@@ -217,7 +82,7 @@ static void ofile_release(int of)
     if (type == OF_SHM) mem_shm_unref(f->ino);
 }
 
-static long fd_close(long fd)
+long fd_close(long fd)
 {
     struct ofile *f = fd_get(fd);
     if (!f) return -EBADF;
@@ -250,7 +115,7 @@ static void fs_send_cred(void)
     memmove(fs_cred_groups, g, n * 4);
 }
 
-static long fs_call(long op, uint64_t a1, uint64_t a2, uint64_t a3)
+long fs_call(long op, uint64_t a1, uint64_t a2, uint64_t a3)
 {
     uint64_t t0 = clock_rdtsc();
     fs_send_cred();
@@ -273,16 +138,16 @@ size_t vfs_fs_stats(char *dst, size_t max)
     return r;
 }
 
-static void fs_set_path(uint32_t off, const char *abs)
+void fs_set_path(uint32_t off, const char *abs)
 {
     size_t n = strlen(abs);
     memcpy((char *)fs_buf + off, abs, n + 1);
 }
 
 /* Looks up an absolute path. Returns the inode and, optionally, mode and size. */
-static uint32_t last_uid, last_gid;          /* owner of what fs_lookup found last */
+uint32_t last_uid, last_gid;
 
-static long fs_lookup(const char *abs, bool follow, uint32_t *mode, uint64_t *size)
+long fs_lookup(const char *abs, bool follow, uint32_t *mode, uint64_t *size)
 {
     fs_set_path(0, abs);
     long ino = fs_call(FS_OP_LOOKUP, follow, 0, 0);
@@ -293,6 +158,25 @@ static long fs_lookup(const char *abs, bool follow, uint32_t *mode, uint64_t *si
         last_gid = microkit_mr_get(4);
     }
     return ino;
+}
+
+/* Replaces a whole file from the server */
+long write_file(const char *abs, const char *data, size_t len)
+{
+    fs_as_server = true;                               /* the server's own write: as root */
+    long ino = fs_lookup(abs, true, NULL, NULL);
+    if (ino == -ENOENT) {
+        fs_set_path(0, abs);
+        ino = fs_call(FS_OP_CREATE, S_IFREG | 0644, 0, 0);
+    }
+    if (ino > 0) proc_image_release(ino);
+    long r = ino < 0 ? ino : fs_call(FS_OP_TRUNCATE, ino, 0, 0);
+    if (r >= 0) {
+        memcpy((void *)fs_buf, data, len);
+        r = fs_call(FS_OP_WRITE, ino, 0, len);
+    }
+    fs_as_server = false;
+    return r;
 }
 
 /* ---------------- permissions ---------------- */
@@ -308,7 +192,7 @@ static void parent_of(const char *abs, char *out)
 }
 
 /* Write and search permission on the directory that will hold a new name (or lose one) */
-static long may_change_dir(const char *abs)
+long may_change_dir(const char *abs)
 {
     char dir[FS_PATH_MAX];
     parent_of(abs, dir);
@@ -412,7 +296,7 @@ static long realpath_abs(const char *in, char *out)
 }
 
 /* Turns path (relative to dirfd or the current directory) into a normalised absolute path */
-static long normalize(long dirfd, const char *path, char *out)
+long normalize(long dirfd, const char *path, char *out)
 {
     static char tmp[FS_PATH_MAX * 2];
     if (!*path) return -ENOENT;
@@ -570,491 +454,6 @@ static long do_open(long dirfd, uint32_t flags, uint32_t mode)
     return fd;
 }
 
-static long pipe_read(struct ofile *f, size_t len)
-{
-    struct pipe *pp = &pipes[f->ino];
-    uint32_t avail = pp->tail - pp->head;
-    if (!avail) {
-        if (!pp->writers) return 0;                       /* end of file */
-        if (f->flags & O_NONBLOCK) return -EAGAIN;
-        pp->rwait |= 1u << PROC_INDEX(cur);
-        return POSIX_RETRY;
-    }
-    size_t n = len < avail ? len : avail;
-    if (n > POSIX_BUF_SIZE) n = POSIX_BUF_SIZE;
-    for (size_t i = 0; i < n; i++) ((char *)client_buf)[i] = pp->buf[(pp->head + i) % PIPE_SIZE];
-    pp->head += n;
-    proc_wake_mask(pp->wwait);
-    pp->wwait = 0;
-    return n;
-}
-
-static long pipe_write(struct ofile *f, size_t len)
-{
-    struct pipe *pp = &pipes[f->ino];
-    if (!pp->readers) {
-        proc_signal(cur, SIGPIPE);
-        return -EPIPE;
-    }
-    uint32_t space = PIPE_SIZE - (pp->tail - pp->head);
-    if (!space) {
-        if (f->flags & O_NONBLOCK) return -EAGAIN;
-        pp->wwait |= 1u << PROC_INDEX(cur);
-        return POSIX_RETRY;
-    }
-    size_t n = len < space ? len : space;
-    for (size_t i = 0; i < n; i++) pp->buf[(pp->tail + i) % PIPE_SIZE] = ((const char *)client_buf)[i];
-    pp->tail += n;
-    proc_wake_mask(pp->rwait);
-    pp->rwait = 0;
-    return n;
-}
-
-static long do_pipe(long flags)
-{
-    int pi = -1;
-    for (int i = 0; i < NPIPE; i++) if (!pipes[i].used) { pi = i; break; }
-    if (pi < 0) return -EMFILE;
-    int r = ofile_alloc(OF_PIPE_R), w = r >= 0 ? ofile_alloc(OF_PIPE_W) : -1;
-    if (r < 0 || w < 0) {
-        if (r >= 0) ofiles[r].refs = 0;
-        return -EMFILE;
-    }
-    int fr = fd_alloc(r, 0, flags & O_CLOEXEC);
-    int fw = fr >= 0 ? fd_alloc(w, 0, flags & O_CLOEXEC) : -EMFILE;
-    if (fw < 0) {
-        if (fr >= 0) cur->fdt[fr].of = -1;
-        ofiles[r].refs = ofiles[w].refs = 0;
-        return -EMFILE;
-    }
-    struct pipe *pp = &pipes[pi];
-    pp->used = true;
-    pp->readers = pp->writers = 1;
-    pp->head = pp->tail = 0;
-    pp->rwait = pp->wwait = pp->owait = 0;
-    pp->fifo = 0;
-    ofiles[r].ino = ofiles[w].ino = pi;
-    ofiles[r].flags = flags & O_NONBLOCK;
-    ofiles[w].flags = 1 | (flags & O_NONBLOCK);       /* O_WRONLY */
-    microkit_mr_set(1, fr);
-    microkit_mr_set(2, fw);
-    return 0;
-}
-
-/* open() of a named pipe, with Linux's semantics: for reading or writing alone, open waits for
- * the other end; with O_NONBLOCK reading opens at once and writing fails with ENXIO; O_RDWR
- * never waits. As in Linux, an opener counts as a reader or writer from the moment it enters,
- * even while it waits, so two blocked opens on both ends meet each other. */
-static long fifo_open(uint32_t ino, uint32_t flags, const char *abs)
-{
-    int pi = -1, free_pi = -1;
-    for (int i = 0; i < NPIPE; i++) {
-        if (pipes[i].used && pipes[i].fifo == ino) { pi = i; break; }
-        if (!pipes[i].used && free_pi < 0) free_pi = i;
-    }
-    if (cur->fifo_wait && cur->fifo_wait != pi + 1) fifo_cancel_wait(cur);   /* gave up on another one */
-    if (pi < 0) {
-        if (free_pi < 0) return -ENFILE;
-        pi = free_pi;
-        struct pipe *np = &pipes[pi];
-        np->used = true;
-        np->fifo = ino;
-        np->readers = np->writers = 0;
-        np->head = np->tail = 0;
-        np->rwait = np->wwait = np->owait = 0;
-        np->r_opens = np->w_opens = 0;
-    }
-    struct pipe *pp = &pipes[pi];
-    uint32_t acc = flags & O_ACCMODE;
-    bool rd = acc == O_RDONLY;
-    if (cur->fifo_wait != pi + 1) {                     /* first time here (not a retry) */
-        if (acc == O_WRONLY && (flags & O_NONBLOCK) && !pp->readers) {
-            pipe_maybe_free(pp);
-            return -ENXIO;                              /* write end, nobody reading */
-        }
-        if (acc != O_WRONLY) { pp->readers++; pp->r_opens++; }
-        if (acc != O_RDONLY) { pp->writers++; pp->w_opens++; }
-        proc_wake_mask(pp->owait | pp->rwait | pp->wwait);   /* the other end may be waiting for us */
-        pp->owait = pp->rwait = pp->wwait = 0;
-    }
-    /* wait until the other end is open, or was opened since we started (it may be gone already) */
-    uint32_t other = rd ? pp->w_opens : pp->r_opens;
-    bool retry = cur->fifo_wait == pi + 1;
-    if (acc != O_RDWR && !(flags & O_NONBLOCK) && !(rd ? pp->writers : pp->readers) &&
-        !(retry && other != cur->fifo_wait_opens)) {
-        if (!retry) cur->fifo_wait_opens = other;
-        cur->fifo_wait = pi + 1;                        /* keeps its count while it waits */
-        cur->fifo_wait_write = !rd;
-        pp->owait |= 1u << PROC_INDEX(cur);
-        return POSIX_RETRY;
-    }
-    cur->fifo_wait = 0;
-    int of = ofile_alloc(acc == O_WRONLY ? OF_PIPE_W : OF_PIPE_R);
-    if (of < 0) {
-        if (acc != O_WRONLY) pp->readers--;
-        if (acc != O_RDONLY) pp->writers--;
-        pipe_maybe_free(pp);
-        return -ENFILE;
-    }
-    ofiles[of].ino = pi;
-    ofiles[of].flags = flags & (O_ACCMODE | O_NONBLOCK | O_APPEND);
-    memcpy(ofiles[of].path, abs, strlen(abs) + 1);
-    int fd = fd_alloc(of, 0, flags & O_CLOEXEC);
-    if (fd < 0) ofile_release(of);
-    return fd;
-}
-
-/* ---------------- eventfd and timerfd ---------------- */
-
-#define EFD_SEMAPHORE 1
-#define EVFD_MAX 0xfffffffffffffffeULL
-
-static long evfd_new(uint64_t init, long flags)
-{
-    int i = 0;
-    while (i < NEVFD && evfds[i].used) i++;
-    if (i == NEVFD) return -ENFILE;
-    int of = ofile_alloc(OF_EVENTFD);
-    if (of < 0) return -ENFILE;
-    evfds[i] = (struct evfd){ .used = true, .semaphore = flags & EFD_SEMAPHORE, .count = init };
-    ofiles[of].ino = i;
-    ofiles[of].flags = 2 | (flags & O_NONBLOCK);
-    int fd = fd_alloc(of, 0, flags & O_CLOEXEC);
-    if (fd < 0) ofile_release(of);
-    return fd;
-}
-
-static long evfd_read(struct ofile *f, size_t len)
-{
-    struct evfd *e = &evfds[f->ino];
-    if (len < 8) return -EINVAL;
-    if (!e->count) {
-        if (f->flags & O_NONBLOCK) return -EAGAIN;
-        e->rwait |= 1u << PROC_INDEX(cur);
-        return POSIX_RETRY;
-    }
-    uint64_t v = e->semaphore ? 1 : e->count;
-    e->count -= v;
-    memcpy((void *)client_buf, &v, 8);
-    proc_wake_mask(e->wwait);
-    e->wwait = 0;
-    return 8;
-}
-
-static long evfd_write(struct ofile *f, size_t len)
-{
-    struct evfd *e = &evfds[f->ino];
-    uint64_t v;
-    if (len < 8) return -EINVAL;
-    memcpy(&v, (void *)client_buf, 8);
-    if (v == ~0ULL) return -EINVAL;
-    if (v > EVFD_MAX - e->count) {
-        if (f->flags & O_NONBLOCK) return -EAGAIN;
-        e->wwait |= 1u << PROC_INDEX(cur);
-        return POSIX_RETRY;
-    }
-    e->count += v;
-    proc_wake_mask(e->rwait);
-    e->rwait = 0;
-    return 8;
-}
-
-static long tfd_new(long flags)
-{
-    int i = 0;
-    while (i < NTFD && tfds[i].used) i++;
-    if (i == NTFD) return -ENFILE;
-    int of = ofile_alloc(OF_TIMERFD);
-    if (of < 0) return -ENFILE;
-    tfds[i] = (struct tfd){ .used = true };
-    ofiles[of].ino = i;
-    ofiles[of].flags = flags & O_NONBLOCK;
-    int fd = fd_alloc(of, 0, flags & O_CLOEXEC);
-    if (fd < 0) ofile_release(of);
-    return fd;
-}
-
-/* Accumulates the expirations that are due */
-static void tfd_update(struct tfd *t, uint64_t now)
-{
-    if (!t->next || now < t->next) return;
-    uint64_t n = 1 + (t->interval ? (now - t->next) / t->interval : 0);
-    t->expirations += n;
-    t->next = t->interval ? t->next + n * t->interval : 0;
-}
-
-/* settime: value (relative, ns; 0 = disarm) and interval; the previous ones in MR1/MR2 */
-static long tfd_settime(struct ofile *f, bool set, uint64_t value, uint64_t interval)
-{
-    struct tfd *t = &tfds[f->ino];
-    uint64_t now = timer_now_ns();
-    tfd_update(t, now);
-    microkit_mr_set(1, t->next ? t->next - now : 0);
-    microkit_mr_set(2, t->interval);
-    if (set) {
-        t->next = value ? now + value : 0;
-        t->interval = value ? interval : 0;
-        t->expirations = 0;
-        timer_rearm();
-    }
-    return 0;
-}
-
-static long tfd_read(struct ofile *f, size_t len)
-{
-    struct tfd *t = &tfds[f->ino];
-    if (len < 8) return -EINVAL;
-    tfd_update(t, timer_now_ns());
-    if (!t->expirations) {
-        if (f->flags & O_NONBLOCK) return -EAGAIN;
-        t->rwait |= 1u << PROC_INDEX(cur);
-        return POSIX_RETRY;
-    }
-    memcpy((void *)client_buf, &t->expirations, 8);
-    t->expirations = 0;
-    return 8;
-}
-
-/* For clock.c: the nearest timerfd deadline, and waking whoever waits on expired ones */
-uint64_t vfs_timerfd_next(void)
-{
-    uint64_t next = 0;
-    for (int i = 0; i < NTFD; i++)
-        if (tfds[i].used && tfds[i].next && (!next || tfds[i].next < next)) next = tfds[i].next;
-    return next;
-}
-
-void vfs_timerfd_fire(uint64_t now)
-{
-    for (int i = 0; i < NTFD; i++) {
-        struct tfd *t = &tfds[i];
-        if (!t->used || !t->next || now < t->next) continue;
-        tfd_update(t, now);
-        proc_wake_mask(t->rwait);
-        t->rwait = 0;
-    }
-}
-
-/* ---------------- sockets (FreeBSD TCP/IP stack in netstack) ---------------- */
-
-/* Inside netstack sockets never block: here we decide whether the call waits
- * (POSIX_RETRY, retried when netstack reports activity) */
-uintptr_t net_buf;                         /* shared with netstack (setvar in meta.py) */
-static uint32_t net_waiters;
-
-#define FIONREAD     0x541B
-#define FIONBIO      0x5421
-#define SOCK_NONBLOCK 04000
-#define SOCK_CLOEXEC  02000000
-#define MSG_NOSIGNAL 0x4000
-#define MSG_DONTWAIT 0x40
-#define SOL_SOCKET   1
-#define SO_ERROR     4
-#define EINPROGRESS  115
-#define EALREADY     114
-#define EISCONN      106
-#define ENOTSOCK     88
-#define EOPNOTSUPP   95
-#define POLLOUT_     0x004
-#define POLLERR_     0x008
-#define POLLHUP_     0x010
-
-static long net_call(long op, long a1, long a2, long a3, long a4)
-{
-    microkit_mr_set(0, op);
-    microkit_mr_set(1, a1);
-    microkit_mr_set(2, a2);
-    microkit_mr_set(3, a3);
-    microkit_mr_set(4, a4);
-    microkit_ppcall(NET_CH, microkit_msginfo_new(0, 5));
-    return (long)microkit_mr_get(0);
-}
-
-/* netstack notifies: whatever was waiting on a socket is retried */
-void net_notified(void)
-{
-    proc_wake_mask(net_waiters);
-    net_waiters = 0;
-}
-
-/* ---------------- network configuration (netstack's DHCP) ---------------- */
-
-static const char *ip4(uint32_t a, char *out)       /* network byte order -> "a.b.c.d" */
-{
-    const uint8_t *b = (const uint8_t *)&a;
-    sddf_snprintf(out, 16, "%u.%u.%u.%u", b[0], b[1], b[2], b[3]);
-    return out;
-}
-
-static bool net_info(struct net_info *ni)
-{
-    if (net_call(NET_OP_INFO, 0, 0, 0, 0) < 0) return false;
-    memcpy(ni, (void *)net_buf, sizeof *ni);
-    return true;
-}
-
-/* Replaces a whole file from the server */
-static long write_file(const char *abs, const char *data, size_t len)
-{
-    fs_as_server = true;                               /* the server's own write: as root */
-    long ino = fs_lookup(abs, true, NULL, NULL);
-    if (ino == -ENOENT) {
-        fs_set_path(0, abs);
-        ino = fs_call(FS_OP_CREATE, S_IFREG | 0644, 0, 0);
-    }
-    if (ino > 0) proc_image_release(ino);
-    long r = ino < 0 ? ino : fs_call(FS_OP_TRUNCATE, ino, 0, 0);
-    if (r >= 0) {
-        memcpy((void *)fs_buf, data, len);
-        r = fs_call(FS_OP_WRITE, ino, 0, len);
-    }
-    fs_as_server = false;
-    return r;
-}
-
-/* New or renewed lease: the DNS servers the DHCP server gave go to /etc/resolv.conf */
-void net_lease_changed(void)
-{
-    struct net_info ni;
-    if (!net_info(&ni) || !ni.dns[0]) return;
-    char buf[192], a[16], b[16];
-    int n = sddf_snprintf(buf, sizeof buf, "# Written by posix_server from the network configuration (netcfg, DHCP)\n"
-                          "nameserver %s\n", ip4(ni.dns[0], a));
-    if (ni.dns[1]) n += sddf_snprintf(buf + n, sizeof buf - n, "nameserver %s\n", ip4(ni.dns[1], b));
-    write_file("/etc/resolv.conf", buf, n);
-}
-
-/* /proc/net/dhcp */
-long net_info_text(char *out, size_t max)
-{
-    static const char *const states[] = { "off", "init-reboot (asking for the previous address)",
-                                          "selecting (looking for a server)",
-                                          "requesting (asking for the offered address)", "bound", "renewing",
-                                          "static (no DHCP)" };
-    struct net_info ni;
-    if (!net_info(&ni)) return sddf_snprintf(out, max, "netstack is not responding\n");
-    char ip[16], gw[16], d0[16], d1[16], sv[16];
-    int pl = __builtin_popcount(ni.mask);
-    return sddf_snprintf(out, max,
-        "state:     %s\ninterface: eth0 %02x:%02x:%02x:%02x:%02x:%02x\naddress:   %s/%d\ngateway:   %s\n"
-        "dns:       %s %s\nserver:    %s\nlease:     %u s (%u s left)\n",
-        ni.state < 7 ? states[ni.state] : "?", ni.mac[0], ni.mac[1], ni.mac[2], ni.mac[3], ni.mac[4], ni.mac[5],
-        ip4(ni.ip, ip), pl, ip4(ni.gw, gw), ip4(ni.dns[0], d0), ni.dns[1] ? ip4(ni.dns[1], d1) : "",
-        ip4(ni.server, sv), ni.lease, ni.remaining);
-}
-
-static long sock_wait(struct ofile *f, long r, long flags)
-{
-    if (r != -EAGAIN) return r;
-    if ((f->flags & O_NONBLOCK) || (flags & MSG_DONTWAIT)) return -EAGAIN;
-    net_waiters |= 1u << PROC_INDEX(cur);
-    return POSIX_RETRY;
-}
-
-/* The address netstack returned -> the process's buffer (MR1 = length) */
-static void sock_addr_out(void)
-{
-    long alen = microkit_mr_get(1);
-    if (alen > NET_ADDR_MAX) alen = NET_ADDR_MAX;
-    memcpy((void *)(client_buf + NET_ADDR_OFF), (void *)(net_buf + NET_ADDR_OFF), alen);
-    microkit_mr_set(1, alen);
-}
-
-static long sock_socket(long domain, long type, long proto)
-{
-    int of = ofile_alloc(OF_SOCKET);
-    if (of < 0) return -ENFILE;
-    if (domain == AF_UNIX_) {
-        ofiles[of].refs = 0;
-        ofiles[of].type = OF_FREE;
-        return usock_new(type);
-    }
-    long s = net_call(NET_OP_SOCKET, domain, type & ~(SOCK_NONBLOCK | SOCK_CLOEXEC), proto, 0);
-    if (s < 0) {
-        ofiles[of].refs = 0;
-        ofiles[of].type = OF_FREE;
-        return s;
-    }
-    ofiles[of].ino = s;
-    ofiles[of].flags = 2 | (type & SOCK_NONBLOCK ? O_NONBLOCK : 0);       /* O_RDWR */
-    int fd = fd_alloc(of, 0, type & SOCK_CLOEXEC);
-    if (fd < 0) ofile_release(of);
-    return fd;
-}
-
-/* bind and connect: address in the process's buffer, at NET_ADDR_OFF */
-static long sock_addr_call(long op, struct ofile *f, long alen)
-{
-    if (alen < 0 || alen > NET_ADDR_MAX) return -EINVAL;
-    memcpy((void *)(net_buf + NET_ADDR_OFF), (void *)(client_buf + NET_ADDR_OFF), alen);
-    return net_call(op, f->ino, alen, 0, 0);
-}
-
-static long sock_connect(struct ofile *f, long alen)
-{
-    if (f->off) {                                     /* blocking connect() already in progress */
-        long p = net_call(NET_OP_POLL, f->ino, POLLOUT_, 0, 0);
-        if (p >= 0 && !(p & (POLLOUT_ | POLLERR_ | POLLHUP_))) {
-            net_waiters |= 1u << PROC_INDEX(cur);
-            return POSIX_RETRY;
-        }
-        f->off = 0;
-        long r = net_call(NET_OP_GETSOCKOPT, f->ino, SOL_SOCKET, SO_ERROR, 4);
-        if (r < 0) return r;
-        int err = *(int *)net_buf;
-        return err ? -err : 0;
-    }
-    long r = sock_addr_call(NET_OP_CONNECT, f, alen);
-    if (r != -EINPROGRESS) return r;
-    if (f->flags & O_NONBLOCK) return r;
-    f->off = 1;
-    net_waiters |= 1u << PROC_INDEX(cur);
-    return POSIX_RETRY;
-}
-
-static long sock_accept(struct ofile *f, long flags)
-{
-    int of = ofile_alloc(OF_SOCKET);
-    if (of < 0) return -ENFILE;
-    long s = net_call(NET_OP_ACCEPT, f->ino, 0, 0, 0);
-    if (s < 0) {
-        ofiles[of].refs = 0;
-        ofiles[of].type = OF_FREE;
-        return sock_wait(f, s, 0);
-    }
-    sock_addr_out();
-    ofiles[of].ino = s;
-    ofiles[of].flags = 2 | (flags & SOCK_NONBLOCK ? O_NONBLOCK : 0);
-    int fd = fd_alloc(of, 0, flags & SOCK_CLOEXEC);
-    if (fd < 0) ofile_release(of);
-    return fd;
-}
-
-/* send/sendto/write: data at the start of the buffer, address (alen > 0) at NET_ADDR_OFF */
-static long sock_send(struct ofile *f, size_t len, long flags, long alen)
-{
-    if (len > NET_DATA_MAX) len = NET_DATA_MAX;
-    memcpy((void *)net_buf, (void *)client_buf, len);
-    if (alen > 0) memcpy((void *)(net_buf + NET_ADDR_OFF), (void *)(client_buf + NET_ADDR_OFF), alen);
-    long r = net_call(NET_OP_SEND, f->ino, len, flags, alen > 0 ? alen : 0);
-    if (r == -EPIPE && !(flags & MSG_NOSIGNAL)) proc_signal(cur, SIGPIPE);
-    return sock_wait(f, r, flags);
-}
-
-/* recv/recvfrom/read: data at the start of the buffer; source address at NET_ADDR_OFF (MR1) */
-static long sock_recv(struct ofile *f, size_t len, long flags)
-{
-    if (len > NET_DATA_MAX) len = NET_DATA_MAX;
-    long r = net_call(NET_OP_RECV, f->ino, len, flags, 0);
-    microkit_mr_set(2, 0);                              /* no descriptors (AF_UNIX only) */
-    if (r < 0) return sock_wait(f, r, flags);
-    memcpy((void *)client_buf, (void *)net_buf, r);
-    sock_addr_out();
-    return r;
-}
-
-static long usock_recv(struct ofile *f, size_t len, long flags, long maxfds);
-static long usock_send(struct ofile *f, size_t len, long flags, long nfds);
 
 static long do_read(long fd, size_t len, bool positional, uint64_t pos)
 {
@@ -1429,357 +828,7 @@ static long do_symlink(long newdirfd)
     return fs_call(FS_OP_SYMLINK, cur->euid, cur->egid, 0);
 }
 
-/* poll(): struct pollfd[] in the buffer; timeout_ns < 0 = no timeout */
-#define POLLIN   0x001
-#define POLLOUT  0x004
-#define POLLERR  0x008
-#define POLLHUP  0x010
-#define POLLNVAL 0x020
-struct k_pollfd { int fd; short events, revents; };
 
-/* ---------------- local sockets (AF_UNIX, SOCK_STREAM and SOCK_DGRAM) ---------------- */
-
-/* They live in the server: each connected socket has its input buffer (what its peer
- * writes to it) and a queue of descriptors in transit (SCM_RIGHTS: references to the
- * open file description are held until the other process receives them).
- * Names (bind) are in a server table, not on disk: unlink and stat of the path see
- * them. sendmsg/recvmsg data: the descriptors go at NET_ADDR_OFF of the process's
- * buffer. */
-#define AF_UNIX_      1
-#define NUSOCK        64
-#define USOCK_BUF     32768
-#define USOCK_MAXFD   32
-#define SO_PEERCRED   17
-#define S_IFSOCK_     0140000
-#define MSG_CMSG_CLOEXEC 0x40000000
-#define EADDRINUSE    98
-#define ECONNREFUSED  111
-#define EPROTONOSUPPORT 93
-#define ENOTCONN      107
-enum { US_FREE, US_NEW, US_LISTEN, US_CONN };
-
-static struct usock {
-    int state;
-    bool dgram;                            /* SOCK_DGRAM: each send is one message [len 4][data] */
-    int peer;                              /* index of the peer (US_CONN) */
-    bool peer_closed;
-    int pid;                               /* process that created it (the peer's SO_PEERCRED) */
-    char name[108];                        /* bind: absolute path or "@abstract" */
-    uint32_t ino;                          /* bound to a path: the socket's inode on disk */
-    uint32_t head, tail;                   /* input buffer */
-    uint8_t buf[USOCK_BUF];
-    int fdq[USOCK_MAXFD], nfdq;            /* open file descriptions in transit (ofiles indices) */
-    int pend[8], npend;                    /* US_LISTEN: connections waiting to be accepted */
-    uint32_t rwait, wwait;
-} usocks[NUSOCK];
-
-static int usock_alloc(void)
-{
-    for (int i = 0; i < NUSOCK; i++)
-        if (usocks[i].state == US_FREE) {
-            memset(&usocks[i], 0, offsetof(struct usock, buf));
-            usocks[i].state = US_NEW;
-            usocks[i].peer = -1;
-            usocks[i].pid = cur->pid;
-            return i;
-        }
-    return -1;
-}
-
-static void usock_wake(struct usock *u)
-{
-    proc_wake_mask(u->rwait | u->wwait);
-    u->rwait = u->wwait = 0;
-}
-
-static void usock_free(int i)
-{
-    struct usock *u = &usocks[i];
-    for (int k = 0; k < u->nfdq; k++) ofile_release(u->fdq[k]);
-    for (int k = 0; k < u->npend; k++) usock_free(u->pend[k]);   /* connections never accepted */
-    if (u->state == US_CONN && u->peer >= 0) {
-        usocks[u->peer].peer_closed = true;
-        usock_wake(&usocks[u->peer]);
-    }
-    u->state = US_FREE;
-}
-
-/* sockaddr_un at NET_ADDR_OFF of the process's buffer -> name */
-static long usock_name(long alen, char *out)
-{
-    const char *sa = (const char *)(client_buf + NET_ADDR_OFF);
-    if (alen <= 2 || alen > 110) return -EINVAL;
-    if (sa[2] == 0) {                                   /* Linux abstract namespace */
-        size_t n = alen - 3 < 106 ? alen - 3 : 106;
-        out[0] = '@';
-        memcpy(out + 1, sa + 3, n);
-        out[n + 1] = 0;
-        return 0;
-    }
-    char path[109], abs[FS_PATH_MAX];
-    size_t n = alen - 2;
-    memcpy(path, sa + 2, n);
-    path[n] = 0;
-    long r = normalize(AT_FDCWD, path, abs);
-    if (r) return r;
-    if (strlen(abs) >= 108) return -ENAMETOOLONG;
-    memcpy(out, abs, strlen(abs) + 1);
-    return 0;
-}
-
-/* The listening socket a name refers to, or -errno. A path is resolved through the file system
- * (symlinks included) to its socket inode, as in Unix: the same socket can be reached by any
- * path to it. The socket file stays after close until unlink (connect -> ECONNREFUSED). An
- * abstract name (Linux's "@...") exists only while its socket does. */
-static long usock_lookup(const char *name)
-{
-    uint32_t mode = 0;
-    long ino = 0;
-    if (name[0] != '@') {
-        ino = fs_lookup(name, true, &mode, NULL);
-        if (ino < 0) return ino;
-        if ((mode & S_IFMT) != S_IFSOCK_) return -ECONNREFUSED;
-        if (!cred_may(cur, mode, last_uid, last_gid, 2)) return -EACCES;   /* connect needs write */
-    }
-    for (int i = 0; i < NUSOCK; i++) {
-        if (usocks[i].state != US_LISTEN) continue;
-        if (name[0] == '@' ? !strcmp(usocks[i].name, name) : usocks[i].ino == (uint32_t)ino) return i;
-    }
-    return -ECONNREFUSED;
-}
-
-static long usock_fd(int ui, long flags)
-{
-    int of = ofile_alloc(OF_USOCK);
-    if (of < 0) return -ENFILE;
-    ofiles[of].ino = ui;
-    ofiles[of].flags = 2 | (flags & SOCK_NONBLOCK ? O_NONBLOCK : 0);
-    int fd = fd_alloc(of, 0, flags & SOCK_CLOEXEC);
-    if (fd < 0) ofile_release(of);
-    return fd;
-}
-
-static long usock_new(long type)
-{
-    if ((type & 0xf) != 1 && (type & 0xf) != 2) return -EPROTONOSUPPORT;   /* STREAM and DGRAM */
-    int u = usock_alloc();
-    if (u < 0) return -ENFILE;
-    usocks[u].dgram = (type & 0xf) == 2;
-    long fd = usock_fd(u, type);
-    if (fd < 0) usocks[u].state = US_FREE;
-    return fd;
-}
-
-static long usock_pair(long type)
-{
-    if ((type & 0xf) != 1 && (type & 0xf) != 2) return -EPROTONOSUPPORT;
-    int a = usock_alloc(), b = a >= 0 ? usock_alloc() : -1;
-    if (b < 0) {
-        if (a >= 0) usocks[a].state = US_FREE;
-        return -ENFILE;
-    }
-    usocks[a].dgram = usocks[b].dgram = (type & 0xf) == 2;
-    usocks[a].state = usocks[b].state = US_CONN;
-    usocks[a].peer = b;
-    usocks[b].peer = a;
-    long fa = usock_fd(a, type);
-    if (fa < 0) { usocks[a].state = usocks[b].state = US_FREE; return fa; }
-    long fb = usock_fd(b, type);
-    if (fb < 0) { fd_close(fa); return fb; }
-    microkit_mr_set(1, fa);
-    microkit_mr_set(2, fb);
-    return 0;
-}
-
-static long usock_bind(struct ofile *f, long alen)
-{
-    struct usock *u = &usocks[f->ino];
-    char name[108];
-    long r = usock_name(alen, name);
-    if (r) return r;
-    if (u->name[0]) return -EINVAL;
-    if (name[0] == '@') {                               /* abstract: unique among live sockets */
-        for (int i = 0; i < NUSOCK; i++)
-            if (usocks[i].state != US_FREE && !strcmp(usocks[i].name, name)) return -EADDRINUSE;
-    } else {                                            /* a socket file: fails if the path exists */
-        if ((r = may_change_dir(name))) return r;
-        fs_set_path(0, name);
-        long ino = fs_call(FS_OP_CREATE, S_IFSOCK_ | (0777 & ~cur->umask), cur->euid, cur->egid);
-        if (ino == -EEXIST) return -EADDRINUSE;
-        if (ino < 0) return ino;
-        u->ino = ino;
-    }
-    memcpy(u->name, name, sizeof name);
-    return 0;
-}
-
-static long usock_connect(struct ofile *f, long alen)
-{
-    struct usock *u = &usocks[f->ino];
-    if (u->state == US_CONN) return -EISCONN;
-    if (u->state != US_NEW) return -EINVAL;
-    char name[108];
-    long r = usock_name(alen, name);
-    if (r) return r;
-    long li = usock_lookup(name);
-    if (li < 0) return li;
-    struct usock *l = &usocks[li];
-    if (l->npend == 8) return -EAGAIN;
-    int s = usock_alloc();                              /* the server's end */
-    if (s < 0) return -ENFILE;
-    usocks[s].state = u->state = US_CONN;
-    usocks[s].peer = f->ino;
-    usocks[s].pid = l->pid;
-    u->peer = s;
-    l->pend[l->npend++] = s;
-    usock_wake(l);
-    return 0;
-}
-
-static long usock_accept(struct ofile *f, long flags)
-{
-    struct usock *l = &usocks[f->ino];
-    if (l->state != US_LISTEN) return -EINVAL;
-    if (!l->npend) {
-        if (f->flags & O_NONBLOCK) return -EAGAIN;
-        l->rwait |= 1u << PROC_INDEX(cur);
-        return POSIX_RETRY;
-    }
-    int s = l->pend[0];
-    memmove(l->pend, l->pend + 1, --l->npend * sizeof(int));
-    long fd = usock_fd(s, flags);
-    if (fd < 0) usock_free(s);
-    microkit_mr_set(1, 0);                              /* the client has no name */
-    return fd;
-}
-
-/* send: data at the start of client_buf; nfds descriptors at NET_ADDR_OFF */
-static long usock_send(struct ofile *f, size_t len, long flags, long nfds)
-{
-    struct usock *u = &usocks[f->ino];
-    if (u->state != US_CONN) return -ENOTCONN;
-    if (u->peer_closed) {
-        if (!(flags & MSG_NOSIGNAL)) proc_signal(cur, SIGPIPE);
-        return -EPIPE;
-    }
-    struct usock *p = &usocks[u->peer];
-    uint32_t space = USOCK_BUF - (p->tail - p->head);
-    if (u->dgram && len + 4 > USOCK_BUF) return -EMSGSIZE;
-    if (!space || (u->dgram && space < len + 4) || (nfds && p->nfdq + nfds > USOCK_MAXFD)) {
-        if ((f->flags & O_NONBLOCK) || (flags & MSG_DONTWAIT)) return -EAGAIN;
-        u->wwait |= 1u << PROC_INDEX(cur);
-        return POSIX_RETRY;
-    }
-    const int *fds = (const int *)(client_buf + NET_ADDR_OFF);
-    for (long k = 0; k < nfds; k++) {                   /* check before moving anything */
-        if (fds[k] < 0 || fds[k] >= NFD || cur->fdt[fds[k]].of < 0) return -EBADF;
-    }
-    for (long k = 0; k < nfds; k++) {
-        int of = cur->fdt[fds[k]].of;
-        ofiles[of].refs++;
-        p->fdq[p->nfdq++] = of;
-    }
-    size_t n = len < space ? len : space;
-    if (u->dgram) {                                     /* the whole message, with its length in front */
-        uint32_t l = len;
-        for (int i = 0; i < 4; i++) p->buf[(p->tail + i) % USOCK_BUF] = ((const uint8_t *)&l)[i];
-        p->tail += 4;
-        n = len;
-    }
-    for (size_t i = 0; i < n; i++) p->buf[(p->tail + i) % USOCK_BUF] = ((const uint8_t *)client_buf)[i];
-    p->tail += n;
-    usock_wake(p);
-    return n;
-}
-
-/* recv: data at the start of client_buf; received descriptors at NET_ADDR_OFF
- * (MR2 = how many; maxfds = how many fit on the process's side) */
-static long usock_recv(struct ofile *f, size_t len, long flags, long maxfds)
-{
-    struct usock *u = &usocks[f->ino];
-    microkit_mr_set(1, 0);
-    microkit_mr_set(2, 0);
-    if (u->state != US_CONN) return -ENOTCONN;
-    uint32_t avail = u->tail - u->head;
-    if (!avail) {
-        if (u->peer_closed) return 0;
-        if ((f->flags & O_NONBLOCK) || (flags & MSG_DONTWAIT)) return -EAGAIN;
-        u->rwait |= 1u << PROC_INDEX(cur);
-        return POSIX_RETRY;
-    }
-    if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
-    uint32_t skip = 0, msg = avail;
-    if (u->dgram) {                                     /* one message; whatever does not fit is lost */
-        uint32_t l = 0;
-        for (int i = 0; i < 4; i++) ((uint8_t *)&l)[i] = u->buf[(u->head + i) % USOCK_BUF];
-        u->head += 4;
-        msg = l;
-        skip = 0;
-    }
-    size_t n = len < msg ? len : msg;
-    for (size_t i = 0; i < n; i++) ((uint8_t *)client_buf)[i] = u->buf[(u->head + i) % USOCK_BUF];
-    if (u->dgram) {
-        if (flags & 2) u->head -= 4;                    /* MSG_PEEK: the message stays */
-        else u->head += msg;
-        (void)skip;
-    } else if (!(flags & 2)) {
-        u->head += n;                                   /* MSG_PEEK */
-    }
-    /* Descriptors in transit are delivered with the data (in order) */
-    long got = 0;
-    int *out = (int *)(client_buf + NET_ADDR_OFF);
-    while (maxfds > 0 && got < maxfds && u->nfdq && !(flags & 2)) {
-        int of = u->fdq[0];
-        memmove(u->fdq, u->fdq + 1, --u->nfdq * sizeof(int));
-        int fd = fd_alloc(of, 0, flags & MSG_CMSG_CLOEXEC);
-        if (fd < 0) { ofile_release(of); continue; }
-        out[got++] = fd;
-    }
-    microkit_mr_set(2, got);
-    if (u->peer >= 0) usock_wake(&usocks[u->peer]);     /* there is room for the writer */
-    return n;
-}
-
-static short usock_poll(struct ofile *f, short events, bool wait)
-{
-    struct usock *u = &usocks[f->ino];
-    short r = 0;
-    if (u->state == US_LISTEN) {
-        if (u->npend) r |= POLLIN;
-    } else if (u->state == US_CONN) {
-        if (u->tail != u->head || u->peer_closed) r |= POLLIN;
-        if (u->peer_closed) r |= POLLHUP;
-        else if (usocks[u->peer].tail - usocks[u->peer].head < USOCK_BUF) r |= POLLOUT;
-    } else {
-        r |= POLLOUT;
-    }
-    if (!(r & (events | POLLHUP)) && wait) {
-        if (events & POLLIN) u->rwait |= 1u << PROC_INDEX(cur);
-        if (events & POLLOUT) u->wwait |= 1u << PROC_INDEX(cur);
-    }
-    return r;
-}
-
-/* getsockname/getpeername: sockaddr_un at NET_ADDR_OFF of client_buf, MR1 = length */
-static long usock_addr(struct ofile *f, bool peer)
-{
-    struct usock *u = &usocks[f->ino];
-    if (peer && u->state != US_CONN) return -ENOTCONN;
-    const char *name = peer ? (u->peer >= 0 ? usocks[u->peer].name : "") : u->name;
-    char *sa = (char *)(client_buf + NET_ADDR_OFF);
-    memset(sa, 0, 110);
-    sa[0] = AF_UNIX_;
-    size_t n = strlen(name);
-    if (name[0] == '@') {                               /* abstract: \0 + name, no terminator */
-        memcpy(sa + 3, name + 1, n - 1);
-        n += 2;
-    } else {
-        memcpy(sa + 2, name, n + 1);
-        n = n ? n + 3 : 2;
-    }
-    microkit_mr_set(1, n);
-    return 0;
-}
 
 static short fd_poll(int fd, short events, bool wait)
 {
@@ -1815,34 +864,20 @@ static short fd_poll(int fd, short events, bool wait)
         if (b & 4) r |= POLLOUT;
         break;
     }
-    case OF_EVENTFD: {
-        struct evfd *e = &evfds[f->ino];
-        if (e->count) r |= POLLIN;
-        if (e->count < EVFD_MAX) r |= POLLOUT;
-        if (!(r & events) && wait) {
-            if (in) e->rwait |= 1u << PROC_INDEX(cur);
-            if (out) e->wwait |= 1u << PROC_INDEX(cur);
-        }
+    case OF_EVENTFD:
+        r = evfd_poll(f, events, in, out, wait);
         break;
-    }
-    case OF_TIMERFD: {
-        struct tfd *t = &tfds[f->ino];
-        tfd_update(t, timer_now_ns());
-        if (t->expirations) r |= POLLIN;
-        else if (wait && in) t->rwait |= 1u << PROC_INDEX(cur);
+    case OF_TIMERFD:
+        r = tfd_poll(f, in, wait);
         break;
-    }
     case OF_EPOLL:                         /* epoll nested in poll: never ready (not implemented) */
         break;
     case OF_USOCK:
         r = usock_poll(f, events, wait);
         break;
-    case OF_SOCKET: {
-        long p = net_call(NET_OP_POLL, f->ino, events, 0, 0);
-        r = p < 0 ? POLLERR : p;
-        if (!(r & (events | POLLERR | POLLHUP)) && wait) net_waiters |= 1u << PROC_INDEX(cur);
+    case OF_SOCKET:
+        r = sock_poll(f, events, wait);
         break;
-    }
     default:                               /* files, directories, /dev/null: always ready */
         r = POLLIN | POLLOUT;
     }
@@ -2175,73 +1210,9 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
     if (nr == __NR_socketpair) return a1 == AF_UNIX_ ? usock_pair(a2) : -EOPNOTSUPP;
     f = fd_get(a1);
     if (!f) return -EBADF;
-    if (f->type == OF_USOCK) {
-        switch (nr) {
-        case __NR_bind:       return usock_bind(f, a3);
-        case __NR_listen:     if (usocks[f->ino].state == US_NEW) usocks[f->ino].state = US_LISTEN; return 0;
-        case __NR_connect:    return usock_connect(f, a3);
-        case __NR_accept:     return usock_accept(f, 0);
-        case __NR_accept4:    return usock_accept(f, a4);
-        case __NR_sendto:     return usock_send(f, a3, a4, a6);
-        case __NR_recvfrom:   return usock_recv(f, a3, a4, a5);
-        case __NR_shutdown: {
-            struct usock *u = &usocks[f->ino];
-            if ((a2 == 1 || a2 == 2) && u->state == US_CONN) {        /* SHUT_WR/RDWR: EOF to the peer */
-                usocks[u->peer].peer_closed = true;
-                usock_wake(&usocks[u->peer]);
-            }
-            return 0;
-        }
-        case __NR_setsockopt: return 0;
-        case __NR_getsockopt: {
-            struct usock *u = &usocks[f->ino];
-            if (a2 == SOL_SOCKET && a3 == SO_PEERCRED) {                 /* struct ucred */
-                int cred[3] = { u->peer >= 0 ? usocks[u->peer].pid : 0, 0, 0 };
-                memcpy((void *)client_buf, cred, 12);
-                microkit_mr_set(1, 12);
-                return 0;
-            }
-            int v = a3 == 3 /* SO_TYPE */ ? 1 : 0;
-            memcpy((void *)client_buf, &v, 4);
-            microkit_mr_set(1, 4);
-            return 0;
-        }
-        case __NR_getsockname: return usock_addr(f, false);
-        case __NR_getpeername: return usock_addr(f, true);
-        }
-        return -EOPNOTSUPP;
-    }
+    if (f->type == OF_USOCK) return usock_syscall(nr, f, a2, a3, a4, a5, a6);
     if (f->type != OF_SOCKET) return -ENOTSOCK;
-    switch (nr) {
-    case __NR_bind:        return sock_addr_call(NET_OP_BIND, f, a3);
-    case __NR_connect:     return sock_connect(f, a3);
-    case __NR_listen:      return net_call(NET_OP_LISTEN, f->ino, a2, 0, 0);
-    case __NR_accept:      return sock_accept(f, 0);
-    case __NR_accept4:     return sock_accept(f, a4);
-    case __NR_sendto:      return sock_send(f, a3, a4, a5 > NET_ADDR_MAX ? NET_ADDR_MAX : a5);
-    case __NR_recvfrom:    return sock_recv(f, a3, a4);
-    case __NR_shutdown:    return net_call(NET_OP_SHUTDOWN, f->ino, a2, 0, 0);
-    case __NR_setsockopt:
-        if (a5 > NET_DATA_MAX) return -EINVAL;
-        memcpy((void *)net_buf, (void *)client_buf, a5);
-        return net_call(NET_OP_SETSOCKOPT, f->ino, a2, a3, a5);
-    case __NR_getsockopt: {
-        long r = net_call(NET_OP_GETSOCKOPT, f->ino, a2, a3, a4);
-        if (r >= 0) {
-            long olen = microkit_mr_get(1);
-            memcpy((void *)client_buf, (void *)net_buf, olen);
-            microkit_mr_set(1, olen);
-        }
-        return r;
-    }
-    case __NR_getsockname:
-    case __NR_getpeername: {
-        long r = net_call(nr == __NR_getsockname ? NET_OP_GETSOCKNAME : NET_OP_GETPEERNAME, f->ino, 0, 0, 0);
-        if (r >= 0) sock_addr_out();
-        return r;
-    }
-    }
-    return -ENOSYS;
+    return sock_syscall(nr, f, a2, a3, a4, a5, a6);
 }
 
 void vfs_init(void)
