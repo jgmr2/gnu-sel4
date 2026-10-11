@@ -94,19 +94,27 @@ Real hardware stays last on purpose: first the system has to be worth booting.
 5. [ ] **Clean shutdown and disk safety** (S–M)
    - [ ] Real `poweroff`/`reboot`: stop services, `sync`, shut down the VM, power off (ACPI)
    - [ ] ext2 fsck at boot if the disk was left dirty (ext2 state flag)
-6. [ ] **Pseudo-terminals** (M): `/dev/ptmx`, openpty. Unlocks the ssh server (dropbear),
+6. [ ] **Users and permissions** (M): today everything runs as root and nothing is checked
+   - [ ] uid/gid per process (real, effective, saved), setuid/setgid, supplementary groups; the
+         process owner on created files (today always root)
+   - [ ] Permission checks in the VFS and fs_ext2 (owner/group/other bits, sticky /tmp, umask)
+   - [ ] `login` against `/etc/shadow` (musl has `crypt`), `su`/`doas`, a real user account by
+         default; init starts a login prompt instead of root's shell
+   - [ ] Users from the network later on: musl asks an nscd-protocol daemon for users it does not
+         find in /etc/passwd (or skarnet's nsss): the hook for item 17
+7. [ ] **Pseudo-terminals** (M): `/dev/ptmx`, openpty. Unlocks the ssh server (dropbear),
        tmux/screen and later foot
-7. [ ] **Room to grow** (M)
+8. [ ] **Room to grow** (M)
    - [ ] A bigger ext2 partition (64 MB is not enough for the desktop libraries)
    - [ ] Installing software without rebuilding the image (packages or updates)
    - [ ] More than 32 processes and larger server tables (today: 128 open files, 32 pipes,
          64 sockets): a desktop exceeds them (64-bit masks in vfs/tty/bridge, or wait lists)
-8. [ ] **Job control and signals** (M): asynchronous signals to processes that make no syscalls
+9. [ ] **Job control and signals** (M): asynchronous signals to processes that make no syscalls
        (pure loops); `Ctrl-Z` / stopping processes; `Ctrl-C` in the middle of dash's prompt is
        processed with the next line
-9. [ ] **Threads: pthreads and `timer_create`** (L): several seL4 TCBs in one address space.
+10. [ ] **Threads: pthreads and `timer_create`** (L): several seL4 TCBs in one address space.
        Blocks glib (pango, sway), browsers, Node.js and almost any large program
-10. [ ] **Graphical desktop: sway + Wayland** (L), on top of items 6, 7 and 9
+11. [ ] **Graphical desktop: sway + Wayland** (L), on top of items 7, 8 and 10
    - [ ] Phase 1b: signalfd, shm_open (/dev/shm), AF_UNIX SEQPACKET, nested epoll in poll
    - [ ] Phase 0b: PS/2 mouse; Latin American keyboard layout; virtual consoles
    - [ ] Phase 2: libraries: libwayland, wayland-protocols, libffi, libxkbcommon (+ keymaps),
@@ -116,7 +124,7 @@ Real hardware stays last on purpose: first the system has to be worth booting.
          and unmodified sway
    - [ ] Phase 4: foot as the native terminal; Linux VM windows through waypipe (like WSLg);
          per-origin border colours (native / VM), Qubes-style
-11. [ ] **Performance** (M): measure first, then optimise what the numbers point at
+12. [ ] **Performance** (M): measure first, then optimise what the numbers point at
    - [ ] Measurements: TSC counters for fork, exec, exit, page faults, PPCs and copies, visible
          in /proc (numbers before any optimisation)
    - [ ] Copy-on-write fork: today `mem_fork` copies every page, and fork + exec (every command
@@ -130,7 +138,7 @@ Real hardware stays last on purpose: first the system has to be worth booting.
          (>= 64 KiB) passing page capabilities instead of copying. Small transfers keep copying:
          mapping + unmapping costs more than copying 4 KiB
    - [ ] Large pages (2 MiB) for large regions; free unused page tables
-12. [ ] **Linux VM integration** (M–L; the VM runs Linux at native speed with VT-x; what is slow
+13. [ ] **Linux VM integration** (M–L; the VM runs Linux at native speed with VT-x; what is slow
         is the current bridge: serial-port-style queues with byte-by-byte copies)
    - [ ] vsock (AF_VSOCK): POSIX sockets between native and VM processes (virtio-vsock in
          libvmm, AF_VSOCK in posix_server); `docker`/`linux` over vsock instead of the current
@@ -144,7 +152,7 @@ Real hardware stays last on purpose: first the system has to be worth booting.
    - [ ] Memory server: move mem.c out of posix_server into a component that hands pages to
          posix_server and the VMM (a single pool); Microkit: capability to the VM's EPT
    - [ ] The VM's system on disk instead of an initramfs in RAM (252 MB fixed today)
-13. [ ] **Self-hosted development loop** (L): develop GNU/seL4 from inside GNU/seL4,
+14. [ ] **Self-hosted development loop** (L): develop GNU/seL4 from inside GNU/seL4,
         autonomously: edit → build → stage → restart the whole userland (not the kernel) →
         read logs and behaviour → commit if it is good
    - [ ] First step: Claude Code + toolchain in the Linux VM, working on the tree through
@@ -156,8 +164,6 @@ Real hardware stays last on purpose: first the system has to be worth booting.
          does not pass `make test` within N seconds; logs kept across restarts
    - [ ] Native toolchain: clang/LLVM, make, git (needs pthreads and large memory)
    - [ ] Native Claude Code: Node.js (pthreads, libuv, executable mappings for V8's JIT)
-14. [ ] **Users and permissions** (M): today everything is root and permissions are not checked;
-        real login; process owner (uid/gid) when creating files
 15. [ ] **Journal in fs_ext2** (L), towards ext3/ext4
 16. [ ] **Booting on real hardware: Dell Latitude 7390 2-in-1, UEFI** (L)
    - [ ] Live ISO: GRUB (multiboot2) loads seL4 + the system + an ext2 disk into RAM
@@ -172,10 +178,17 @@ Real hardware stays last on purpose: first the system has to be worth booting.
    - [ ] Multicore (seL4 runs on a single core today; the laptop has 4)
    - [ ] Release build (kernel and system without debugging)
 
+17. [ ] **Directory services, native: LDAP, Kerberos, Active Directory, Samba** (L), last on purpose
+   - [ ] LDAP client (OpenLDAP's libldap; needs OpenSSL or GnuTLS) and a small nscd-protocol daemon
+         backed by LDAP, so `id`, `ls -l`, `ps` see directory users unmodified (item 6)
+   - [ ] Kerberos (MIT krb5 or Heimdal) and pluggable authentication (Linux-PAM works with musl)
+   - [ ] Joining an Active Directory domain: SSSD or Samba's winbind (both need pthreads)
+   - [ ] SMB file sharing: Samba (needs pthreads; waf/Python at build time)
+
 ## Long term
 
 - [ ] io_uring as an interface for programs: not planned (a Linux-only ABI that almost nothing
-      uses directly; seL4 PPCs are cheap). The ring model is used between servers instead (item 11)
+      uses directly; seL4 PPCs are cheap). The ring model is used between servers instead (item 12)
 - [ ] **posix_server is a single point of failure**: if it goes down, all of native goes down;
       split it into servers (processes/memory, files, network, tty)
 - [ ] Our own triple (`x86_64-sel4-musl`) instead of `x86_64-linux-musl` (today programs see `__linux__`)
