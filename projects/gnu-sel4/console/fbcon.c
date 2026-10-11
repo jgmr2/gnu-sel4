@@ -256,6 +256,9 @@ void init(void)
     serial_queue_init(&tx_q, config.tx.queue.vaddr, config.tx.data.size, config.tx.data.vaddr);
     display_init();
     term_init(FB_W / (FONT_W * FONT_SCALE), FB_H / (FONT_H * FONT_SCALE));
+    static const char hello[] = "GNU/seL4: console ready. Starting the file system, posix_server, "
+                                "the network stack and the Linux VM...\r\n";
+    term_input((const uint8_t *)hello, sizeof hello - 1);
     term_render();
     kbd_init();
 }

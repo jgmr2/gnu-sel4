@@ -16,7 +16,10 @@ case " $(cat /etc/test 2>/dev/null) " in
 esac
 RESULTS=/var/log/test-results
 : > $RESULTS
-say() { echo "$1"; echo "$1" >> $RESULTS; }
+say() {
+    if [ -n "$LIVE" ]; then printf '\r\033[K%s\n' "$1"; else echo "$1"; fi
+    echo "$1" >> $RESULTS
+}
 # make test with a script (tools/test.py --script FILE): only that script, then power off
 if [ -f /etc/test.script ]; then
     sh /etc/test.script >> $RESULTS 2>&1
@@ -25,6 +28,13 @@ if [ -f /etc/test.script ]; then
     exec /sbin/poweroff
 fi
 say "== TESTS: BEGIN =="
+if [ -n "$LIVE" ]; then
+    # Everything below waits on timers: if this line stays, timer interrupts are not arriving
+    printf '%s' "Checking the timer (sleep 1 s; if this line stays here, timer interrupts do not arrive)... "
+    t0=$(date +%s%N); sleep 1; t1=$(date +%s%N)
+    say "timer ok: sleep 1 took $(( (t1 - t0) / 1000000 )) ms"
+    say "(each test shows 'running...' while it runs; a hung one fails after 60 s)"
+fi
 mode=" $(cat /etc/test) "
 failures=0
 total=0
@@ -35,6 +45,7 @@ TEST_TIMEOUT=60
 check() {          # check <name> <command...>; output lines starting with "INFO " are always shown
     name=$1; shift
     total=$((total + 1))
+    [ -n "$LIVE" ] && printf '  [%2d] %-14s running...\r' "$total" "$name"
     "$@" >/tmp/test.log 2>&1 </dev/null &
     tpid=$!
     ticks=0
@@ -92,7 +103,8 @@ check nice        sh -c 'loop() { i=0; while [ $i -lt 3000 ]; do i=$((i+1)); don
                          out=$(printf "nice -n -5 true\nexit\n" | login -f user 2>&1)
                          echo "$out" | grep -q "Permission denied" || { echo "user lowered its nice: $out"; exit 1; }'
 check many-procs  sh -c 'i=0; while [ $i -lt 50 ]; do sleep 3 & i=$((i+1)); done
-                         n=$(ps -e | grep -c " sleep"); echo "INFO 50 background processes started, $n running"
+                         k=0; while n=$(ps -e | grep -c " sleep"); [ "$n" -lt 50 ] && [ $k -lt 20 ]; do sleep 0.1; k=$((k+1)); done
+                         echo "INFO 50 background processes started, $n running"
                          wait; [ "$n" -ge 50 ]'
 check proc-files  sh -c 'grep -q "\[stack\]" /proc/self/maps || { echo "no stack in maps"; exit 1; }
                          sh -c "exec 3</etc/passwd; readlink /proc/\$\$/fd/3" | grep -qx /etc/passwd || { echo "fd/3 is not /etc/passwd"; exit 1; }

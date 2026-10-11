@@ -29,7 +29,7 @@ include $(SDDF)/drivers/blk/$(BLK_DRIV_DIR)/blk_driver.mk
 include $(BLK_COMPONENTS)/blk_components.mk
 include $(SDDF)/drivers/network/$(NET_DRIV_DIR)/eth_driver.mk
 include $(NET_COMPONENTS)/network_components.mk
-include $(SDDF)/drivers/timer/$(TIMER_DRIV_DIR)/timer_driver.mk
+# timer: our copy of sDDF's TSC + HPET driver (timer/hpet_timer.c: deadlines already passed)
 include $(LIBVMM)/vmm.mk
 vpath %.c $(SDDF) $(LIBVMM)
 
@@ -60,6 +60,11 @@ IMAGES := serial_driver.elf serial_virt_tx.elf serial_virt_rx.elf $(BLK_ELFS) \
 	  $(ETH_ELF) network_virt_rx.elf network_virt_tx.elf network_copy.elf timer_driver.elf \
 	  fs_ext2.elf posix_server.elf client_vmm.elf netstack.elf netstack_copy.elf fbcon.elf
 $(IMAGES): libsddf_util_debug.a
+
+timer_driver.o: $(POSIX)/timer/hpet_timer.c
+	$(CC) $(CFLAGS) -c $< -o $@
+timer_driver.elf: timer_driver.o
+	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@
 
 # --- syscall tables generated from musl (Linux x86_64 numbers and names) ---
 MUSL_SRC := $(TP)/musl-1.2.6

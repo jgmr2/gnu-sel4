@@ -6,6 +6,9 @@
 # Services (see /etc/s6-rc/README): s6-svscan supervises the scan directory /run/service and
 # s6-rc brings the "default" bundle up in dependency order: the network configuration
 # (a oneshot) and 9pd (supervised: started again if it dies). /run starts clean at every boot.
+# The live system on real hardware tells what it is doing (nothing else to look at there)
+case " $(cat /etc/test 2>/dev/null) " in *" live "*) status() { echo "  ... $*"; } ;; *) status() { :; } ;; esac
+status "rc: starting the services (s6-svscan, s6-rc: network, 9pd)"
 rm -rf /run/service /run/s6-rc /run/s6-rc:* /run/s6-rc-db
 mkdir -p /run/service
 s6-svscan /run/service </dev/null >/tmp/s6-svscan.log 2>&1 &
@@ -13,6 +16,7 @@ i=0; while [ ! -p /run/service/.s6-svscan/control ] && [ $i -lt 50 ]; do sleep 0
 { s6-rc-compile /run/s6-rc-db /etc/s6-rc/source && s6-rc-init -c /run/s6-rc-db /run/service &&
   s6-rc -u change default; } >/tmp/s6-rc.log 2>&1 ||
     echo "rc: s6-rc failed to start the services (see /tmp/s6-rc.log)" >&2
+status "rc: services up; the Linux VM keeps booting in the background"
 
 # make test: if /etc/test exists, run the automated tests (results go to /dev/kmsg)
 [ -f /etc/test ] && sh /etc/tests.sh
