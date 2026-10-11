@@ -8,6 +8,13 @@
  * and whoever waits for it waits forever. QEMU fires such deadlines anyway, real chipsets do not
  * (Linux's hpet_clkevt_set_next_event checks the same thing). After programming the comparator
  * we read the counter again and handle the deadline at once if it is not safely ahead.
+ *
+ * Second change, also from the real laptop: its HPET runs slow while the CPU idles (deadlines came
+ * 3-4x late; Linux does not use the HPET there either, "dysfunctional in PC10"). So the TSC is
+ * the only clock: deadlines are kept in TSC nanoseconds and the HPET is just an alarm, armed at
+ * most ARM_MAX_NS ahead; when it rings, the deadlines are checked against the TSC and the alarm
+ * is armed again. A slow HPET then delays a deadline by a few milliseconds at worst, and there
+ * are no wake-ups while nothing waits. Without a usable TSC the HPET is the clock, as before.
  */
 
 #include <stdint.h>
@@ -126,13 +133,18 @@ void set_timeout(uint64_t timeout)
 
 /* A deadline closer than this to the counter is handled now rather than programmed */
 static uint64_t min_delta_ticks;
+#define EARLY_NS   20000               /* deadlines this close count as reached (20 us) */
+#define ARM_MAX_NS 1000000             /* the HPET alarm is never armed further than 1 ms */
 
-static void process_timeouts(uint64_t curr_ticks)
+static uint64_t now_ns(void);
+
+/* timeouts[] are deadlines in now_ns() nanoseconds */
+static void process_timeouts(void)
 {
     for (;;) {
-        uint64_t next_timeout = UINT64_MAX;
+        uint64_t now = now_ns(), next_timeout = UINT64_MAX;
         for (int i = 0; i < MAX_TIMEOUTS; i++) {
-            if (timeouts[i] <= curr_ticks + min_delta_ticks) {
+            if (timeouts[i] <= now + EARLY_NS) {
                 sddf_notify(i);
                 timeouts[i] = UINT64_MAX;
             } else if (timeouts[i] < next_timeout) {
@@ -140,16 +152,23 @@ static void process_timeouts(uint64_t curr_ticks)
             }
         }
         if (next_timeout == UINT64_MAX) return;
-        set_timeout(next_timeout);
+        uint64_t delta = next_timeout - now;
+        if (tsc_freq && delta > ARM_MAX_NS) delta = ARM_MAX_NS;
+        uint64_t target = get_hpet_ticks() + ns_to_hpet_ticks(delta);
+        set_timeout(target);
         /* The comparator only fires on a match: make sure the counter has not passed it */
-        curr_ticks = get_hpet_ticks();
-        if (next_timeout > curr_ticks + min_delta_ticks) return;
+        if (target > get_hpet_ticks() + min_delta_ticks) return;
     }
 }
 
 static uint64_t tsc_ticks_to_ns(uint64_t tsc)
 {
     return ticks_to_ns(tsc, tsc_freq);
+}
+
+static uint64_t now_ns(void)
+{
+    return tsc_freq ? tsc_ticks_to_ns(sddf_read_counter()) : hpet_ticks_to_ns(get_hpet_ticks());
 }
 
 void init(void)
@@ -224,21 +243,14 @@ seL4_MessageInfo_t protected(microkit_channel ch, microkit_msginfo msginfo)
     switch (microkit_msginfo_get_label(msginfo)) {
 
     case SDDF_TIMER_GET_TIME: {
-        if (tsc_freq) {
-            microkit_mr_set(0, tsc_ticks_to_ns(sddf_read_counter()));
-        } else {
-            microkit_mr_set(0, hpet_ticks_to_ns(get_hpet_ticks()));
-        }
+        microkit_mr_set(0, now_ns());
         return microkit_msginfo_new(0, 1);
     }
 
     case SDDF_TIMER_SET_TIMEOUT: {
-        uint64_t ticks_now = get_hpet_ticks();
         uint64_t delta = microkit_mr_get(0);
-        uint64_t delta_ticks = ns_to_hpet_ticks(delta);
-
-        timeouts[ch] = ticks_now + delta_ticks;
-        process_timeouts(ticks_now);
+        timeouts[ch] = now_ns() + delta;
+        process_timeouts();
         return microkit_msginfo_new(0, 0);
     }
 
@@ -255,5 +267,5 @@ void notified(microkit_channel ch)
 
     microkit_deferred_irq_ack(IRQ_CH);
 
-    process_timeouts(get_hpet_ticks());
+    process_timeouts();
 }

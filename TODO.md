@@ -166,6 +166,11 @@ Principles the plan follows:
          (`qrlog`, Nayuki's qrcodegen) and the login prompt. Checked in QEMU, also booting the
          ISO itself with OVMF (UEFI): under UEFI seL4 finds no serial port by itself, so a second
          menu entry passes console_port=0x3f8
+   - [x] First boots on the laptop: UEFI, the IOMMU, the framebuffer, the RAM file system and
+         posix_server work. Two timer bugs only real hardware shows: the HPET driver lost
+         deadlines already passed when programmed (a real HPET only fires on a match), and the
+         laptop's HPET runs 3-4x slow while the CPU idles (Linux does not use it there either).
+         timer/hpet_timer.c keeps time with the TSC and uses the HPET only as a 1 ms alarm
    - [ ] Boot it on the laptop and bring back the QR codes; revisit the decisions marked
          "under QEMU" with them
    - [ ] Power off through \_S5 from the ACPI tables (today: halt, then the power button)
