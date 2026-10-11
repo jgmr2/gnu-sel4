@@ -8,9 +8,11 @@
 exec >/dev/kmsg 2>&1
 echo "== TESTS: BEGIN =="
 failures=0
+total=0
 
 check() {          # check <name> <command...>
     name=$1; shift
+    total=$((total + 1))
     if "$@" >/tmp/test.log 2>&1; then
         echo "TEST $name: ok"
     else
@@ -38,7 +40,7 @@ check gnu-tools   sh -c 'set -e; rm -rf /tmp/gt; mkdir /tmp/gt; cd /tmp/gt; prin
                          test "$(zcat x.tgz | tar tf - | xargs echo)" = "f g"; less -V >/dev/null; cd /; rm -rf /tmp/gt'
 check licenses    sh -c 'test -f /usr/share/licenses/gnu-sel4/LICENSE && test -f /usr/share/licenses/coreutils/COPYING && test "$(ls /usr/share/licenses | wc -l)" -ge 25'
 check vim         vim -es -c 'qa!'
-check vim-netrw   vim -es -c 'packadd netrw' -c 'if exists(":Explore") | qa! | else | cquit | endif'
+check vim-netrw   vim -N -es -c 'packadd netrw' -c 'if exists(":Explore") | qa! | else | cquit | endif'
 check procps      sh -c 'ps -e | wc -l | test "$(cat)" -ge 3 && free >/dev/null && uptime >/dev/null'
 check dhcp        sh -c 'case "$(cat /proc/net/dhcp)" in *bound*10.0.2.16/24*) ;; *) cat /proc/net/dhcp; exit 1;; esac'
 check resolv      sh -c 'case "$(cat /etc/resolv.conf)" in *"nameserver 10.0.2.3"*) ;; *) cat /etc/resolv.conf; exit 1;; esac'
@@ -61,7 +63,7 @@ else
     check curl-https sh -c 'curl -sS -o /tmp/ex.html -w "%{http_code}" https://example.com | test "$(cat)" = 200 && test -s /tmp/ex.html'
 fi
 
-echo "== TESTS: END ($failures failures) =="
+echo "== TESTS: END ($failures failures, $total tests) =="
 
 # Last: an orderly power off (make test checks that QEMU exits on its own and the disk is clean)
 exec /sbin/poweroff

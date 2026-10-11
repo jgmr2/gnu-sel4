@@ -119,6 +119,15 @@ def main():
     if end is None:
         print("DID NOT FINISH: the tests did not reach the end in %d s" % a.timeout)
         return 1
+    # The serial port is shared (other components log there too): a line can get mangled and
+    # lost. The guest says how many tests it ran; any missing result counts as a failure.
+    import re
+    m = re.search(r"(\d+) tests\)", end)
+    ran = int(m.group(1)) if m else -1
+    got = len([r for r in results if r.startswith("TEST ") and not r.split(":")[0][5:] in ("poweroff", "clean-unmount", "e2fsck")])
+    if ran != got:
+        results.append("TEST serial: FAIL (the guest ran %d tests, %d results arrived)" % (ran, got))
+        print(results[-1])
     bad = [r for r in results if "FAIL" in r]
     print("%s: %d tests, %d failures (%.0f s)" % ("PASS" if not bad else "FAIL", len(results),
                                                   len(bad), time.time() - t0))
