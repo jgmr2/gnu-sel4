@@ -16,6 +16,9 @@ Principles the plan follows:
 - **Measure first, then optimise.** `/proc/perf` and `perfstat` exist for that. Numbers taken
   under QEMU (nested virtualisation, the host's page cache as the disk) are marked as such and
   checked again on the real laptop.
+- **QEMU is the development machine; the real laptop checks it.** Every change is built and
+  tested under QEMU; whatever touches the hardware path goes to the laptop as a numbered live ISO
+  (`make PLATFORM=latitude7390 iso ventoy`), and what the laptop shows corrects the QEMU numbers.
 - **Cheap and unlocking first; dependencies before what needs them.** Pending items are in the
   order they should be done; each says what it needs.
 
@@ -82,7 +85,7 @@ Principles the plan follows:
    - Clean shutdown: `/sbin/poweroff` (`reboot`, `halt`) brings services and the VM down, the
      file system is unmounted clean and the machine powers off through ACPI (0x604) or restarts
      (0xCF9). Mounted dirty (power cut), the free counts are recounted from the bitmaps. That
-     fixes the counts only: deeper damage needs a real fsck (pending item 3)
+     fixes the counts only: deeper damage needs a real fsck (pending item 4)
 6. [x] **Networking**
    - `netstack`: the FreeBSD TCP/IP stack from F-Stack 1.25 (`lib/` and `freebsd/`, no DPDK) on
      sDDF networking, with musl inside the PD. TCP, UDP, IPv4/IPv6, ARP, routes, loopback
@@ -128,7 +131,39 @@ Principles the plan follows:
          native credentials (it switches its effective IDs); the VM's root is squashed to nobody,
          so root inside the VM (Docker) has no power over native files
    - [x] reboot(2) and the network configuration ioctl need root; writing /dev/kmsg needs root
-2. [ ] **Reliability, reproducibility and CI** (S–M). Needs: 1 (tests for it)
+2. [~] **The real laptop, stage 1: the live system works there** (M). Needs: nothing. Dell
+       Latitude 7390 2-in-1 (i5-8350U, UEFI). Everything in RAM: the machine's disks are never
+       touched (no disk driver at all). Priority: real hardware early, surprises are cheaper now
+   - [x] `make PLATFORM=latitude7390 iso` and `make ventoy`: a live ISO, numbered by build (in its
+         name, the GRUB menu and the log), copied to the Ventoy stick. The file system is an ext2
+         image inside fs_ext2; the console on the firmware's 1920x1080 framebuffer (0x60000000);
+         the PS/2 keyboard; a network driver with no card; the VM without a disk (Docker in RAM).
+         At boot: the suite without network, hardware measurements, the log as QR codes (`qrlog`)
+   - [x] Works on the laptop (builds 001-004): UEFI boot through GRUB, seL4 with the IOMMU (VT-d),
+         the framebuffer and the keyboard, posix_server, processes and page faults, the RAM file
+         system, epoll/eventfd/AF_UNIX/SCM_RIGHTS/memfd (phase1test except its timer part)
+   - [x] Bugs only real hardware showed: account files owned by uid 1000 on a fresh disk (fixed);
+         the HPET driver losing deadlines already passed when programmed (fixed: a real HPET only
+         fires on a match, QEMU fires anyway)
+   - [~] **Timers on the laptop: the open problem.** The HPET stops counting when the package
+         enters PC10 (Linux disables it on such CPUs since 5.15: "HPET dysfunctional in PC10") and
+         uses the local APIC in TSC-deadline mode, which keeps running (the CPU has ARAT and
+         tsc_deadline_timer). The TSC is right (1896 MHz measured; the driver now measures it at
+         boot and keeps time with it). Build 002: sleep 1 took 2.9 s; 003 (HPET as a 1 ms alarm):
+         hung at the timer check; 004 (timer_ticker: the kernel's own timer through MCS budget
+         refills, 100 us every 1 ms): 2.4 s once, hung the next time. Nobody has published sDDF or
+         libvmm on real x86 (libvmm's manual: QEMU only); sDDF issue #797 (TSC frequency from
+         BootInfo) is related and open
+   - [ ] Build 005, diagnostics on the screen: HPET interrupts per second, ticker wake-ups per
+         second, the measured TSC frequency, deadlines delivered, before and after the timer check
+   - [ ] Experiment: keep the CPU out of deep idle states (a lowest-priority component that spins
+         instead of letting the core halt): if timing becomes right, PC10 is confirmed; it also
+         unblocks the tests meanwhile (at the cost of power and heat)
+   - [ ] The real fix, from what 005 shows: the kernel's timer reaching the deadlines reliably
+         (the ticker's wake-up latency, the kernel's TSC calibration), or a C-state limit
+   - [ ] Then: the whole battery to the QR codes; revisit the decisions marked "under QEMU"
+   - [ ] Power off through \_S5 from the ACPI tables (today: halt, then the power button)
+3. [ ] **Reliability, reproducibility and CI** (S–M). Needs: 1 (tests for it)
    - [ ] The rare (about 1 boot in 12) SIGABRT of s6rc-oneshot-runner while s6-rc starts it
          (the `net` oneshot does not run; the `s6-rc` test prints /tmp/s6-svscan.log)
    - [ ] The VM image pinned: Alpine packages with exact versions and the base image by digest,
@@ -136,12 +171,12 @@ Principles the plan follows:
    - [ ] CI that works: GitHub's runners are VMs themselves, and the full test needs QEMU with
          KVM plus VT-x for the Linux VM inside seL4 (nested twice). A test mode without the Linux
          VM for GitHub Actions on every push, and the full `make test` on a self-hosted runner
-3. [ ] **File system robustness I** (M). Needs: nothing. The disk takes more and more data and
+4. [ ] **File system robustness I** (M). Needs: nothing. The disk takes more and more data and
        its only protection is the recount of free blocks
    - [ ] e2fsprogs ported: e2fsck run when the disk mounts dirty (and native mke2fs/resize2fs)
    - [ ] Write ordering within an operation where it matters (data before the inode that points
          to it), so a power cut leaves less to repair
-4. [ ] **Terminals, sessions and job control** (M). Needs: nothing. What makes daily use and ssh real
+5. [ ] **Terminals, sessions and job control** (M). Needs: nothing. What makes daily use and ssh real
    - [ ] Pseudo-terminals: `/dev/ptmx`, `/dev/pts/N`, openpty, grantpt/unlockpt, TIOCSWINSZ
    - [ ] Sessions and controlling terminals: setsid, TIOCSCTTY, tcsetpgrp/tcgetpgrp, SIGHUP;
          terminal signals go to the foreground process group
@@ -150,38 +185,12 @@ Principles the plan follows:
    - [ ] Asynchronous signals to processes that make no system calls (pure loops)
    - [ ] With it: the console login as an s6-rc longrun (getty-like); the dropbear ssh server as
          a longrun; sudo without `!use_pty`; /proc shows the tty name; tmux or screen
-5. [ ] **Memory limits** (S). Needs: nothing (fork copies, so counting pages is simple)
+6. [ ] **Memory limits** (S). Needs: nothing (fork copies, so counting pages is simple)
    - [ ] A page budget per process and per user (like RLIMIT_AS): today one process can take
          the whole 768 MiB pool. Shared (memfd) pages counted once
-6. [~] **First boot on the real laptop: Dell Latitude 7390 2-in-1, UEFI** (M). Needs: nothing.
-       Early on purpose: the QEMU numbers (VM exits ~1 ms, the disk being the host's cache)
-       drove several decisions, and surprises are cheaper now than at the end
-   - [x] `make PLATFORM=latitude7390 iso`: a live ISO (GRUB, UEFI or BIOS, e.g. from Ventoy) that
-         runs entirely in RAM: the file system is an ext2 image inside fs_ext2 (no disk driver at
-         all, the machine's disks are never touched), the console on the firmware's 1920x1080
-         framebuffer (0x60000000, read from the running laptop), the PS/2 keyboard, a network
-         driver with no card (net/null_driver.c), the VM without a disk (Docker in its RAM)
-   - [x] At boot: the test suite without network, hardware measurements (fork/exec, the RAM file
-         system, the VM with real VT-x, the bridge, /proc/perf), then the whole log as QR codes
-         (`qrlog`, Nayuki's qrcodegen) and the login prompt. Checked in QEMU, also booting the
-         ISO itself with OVMF (UEFI): under UEFI seL4 finds no serial port by itself, so a second
-         menu entry passes console_port=0x3f8
-   - [x] First boots on the laptop: UEFI, the IOMMU, the framebuffer, the RAM file system and
-         posix_server work. Two timer bugs only real hardware shows: the HPET driver lost
-         deadlines already passed when programmed (a real HPET only fires on a match), and the
-         laptop's HPET runs 3-4x slow while the CPU idles (Linux does not use it there either).
-         timer/hpet_timer.c keeps time with the TSC (measured against the HPET at boot) and uses
-         the HPET only as a 1 ms alarm; build 003 showed the alarm does not ring either while the
-         laptop idles, so timer_ticker (timer/ticker.c) gets the kernel's own timer through MCS
-         budget refills (100 us every 1 ms; 20 us, the kernel's minimum, is never refilled) and
-         notifies the driver when a deadline passes. make TIMER_TICKER_ONLY=1 checks that alone
-   - [ ] Boot it on the laptop and bring back the QR codes; revisit the decisions marked
-         "under QEMU" with them
-   - [ ] Power off through \_S5 from the ACPI tables (today: halt, then the power button)
-
-7. [ ] **Memory server: the first piece out of posix_server** (M–L). Needs: 5 (its budgets)
+7. [ ] **Memory server: the first piece out of posix_server** (M–L). Needs: 6 (its budgets)
    - [ ] mem.c moves into its own component that hands pages to posix_server and the VMM (one
-         pool, the budgets of item 5); Microkit: a capability to the VM's EPT
+         pool, the budgets of item 6); Microkit: a capability to the VM's EPT
    - [ ] Dynamic VM memory: the VM sees plenty of RAM, each page created on first use (EPT fault
          -> page from the pool) and returned when Linux frees it (virtio-balloon, "free page
          reporting"); a cap per VM and a reserve for native
@@ -195,7 +204,18 @@ Principles the plan follows:
          or virtio-net between netstack and the VM
    - [ ] Fast shared files: virtio-fs or 9P over shared-memory queues; hard links over 9P
    - [ ] The VM's system on disk instead of an initramfs in RAM (252 MB fixed today)
-9. [ ] **Graphical desktop: our own Wayland compositor** (L). Needs: 4 (terminal), 7 (more than
+9. [ ] **The real laptop, stage 2: daily development on it** (L). Needs: 2, 7 (memory for the
+       driver VM), 8. Realistic in months of steady work; the network is the biggest piece
+   - [ ] Persistent disk: the sDDF NVMe driver, only on a partition of its own and only when
+         asked for explicitly (Debian's partitions are never touched)
+   - [ ] Network: the Wi-Fi card (Intel 8265) passed to a driver VM with VT-d, where Linux's
+         iwlwifi and wpa_supplicant already work (credentials outside the repository); its
+         traffic is untrusted (netstack only sees frames on a queue); passthrough is new work in
+         libvmm. Alternative: the Linux driver inside a component (LKL or Genode-style DDE)
+   - [ ] USB: through the driver VM, or natively (sel4-cap's experimental xHCI driver for
+         Microkit); a separate USB VM with an input proxy (a compromised VM must not type)
+   - [ ] Multicore (seL4 supports it; one core used today; the laptop has 4)
+10. [ ] **Graphical desktop: our own Wayland compositor** (L). Needs: 5 (terminal), 7 (more than
        64 processes), 8 (the VM side). Sway/wlroots dropped: cairo, pango, glib, harfbuzz,
        freetype, fontconfig, libdrm, libinput would multiply the native attack surface. No
        threads needed: libwayland runs single-threaded
@@ -216,15 +236,15 @@ Principles the plan follows:
          native proxy checks it and turns each VM window into a normal window with a border colour
          for its origin. The untrusted VM never talks Wayland to the native compositor.
          Clipboard and drag and drop through an explicit channel, not automatically
-10. [ ] **Threads, then the software that needs them** (L). Needs: 7 (memory per thread)
+11. [ ] **Threads, then the software that needs them** (L). Needs: 7 (memory per thread)
    - [ ] pthreads and `timer_create`: several TCBs in one address space, each with its own IPC
          buffer, system call buffer and endpoint badge; private futexes in the server (musl's
          fast path is atomic in user space). posix_server itself stays single-threaded: it does
-         block on fs_ext2 and netstack calls, which is what the rings of item 11 remove
+         block on fs_ext2 and netstack calls, which is what the rings of item 12 remove
    - [ ] dpkg + apt with our own `.deb` repository built from our ports (Debian's binaries are
          for glibc and Linux); dpkg first (C), apt needs libc++ and threads
-11. [ ] **Performance II: rings, asynchronous I/O, zero copy** (L). Needs: 6 (measurements on
-        real hardware), 10. Measured under QEMU and not worth it yet: what costs today is CPU
+12. [ ] **Performance II: rings, asynchronous I/O, zero copy** (L). Needs: 2 (measurements on
+        real hardware), 11. Measured under QEMU and not worth it yet: what costs today is CPU
    - [x] Asynchronous file reads built, measured and left out: 186 ms against 183 ms synchronous
          next to a cold 24 MiB read (each 64 KiB operation waits ~0.3 ms for the disk)
    - [x] Zero copy measured: a cached 64 KiB read costs 28 us (two copies); mapping cache pages
@@ -236,37 +256,34 @@ Principles the plan follows:
    - [ ] Zero copy where it pays off: shared mmap of files on the cache pages; large read/write
          passing page capabilities
    - [ ] kqueue as the native event API; large pages (2 MiB) for large regions
-12. [ ] **posix_server split and restartable** (L). Needs: 7 (memory already out), 11 (rings
+13. [ ] **posix_server split and restartable** (L). Needs: 7 (memory already out), 12 (rings
         between components). Today it is a single point of failure for everything native
    - [ ] Separate servers for processes, files, network and the tty, talking over rings
-   - [ ] Important state kept outside each one, so a monitor (item 14) can restart it
-13. [ ] **Native isolation and process restriction** (M–L). Needs: 12. Ideas from FreeBSD and
+   - [ ] Important state kept outside each one, so a monitor (item 15) can restart it
+14. [ ] **Native isolation and process restriction** (M–L). Needs: 13. Ideas from FreeBSD and
         OpenBSD; Docker is not affected (it stays in the VM)
    - [ ] Jails: their own root, processes and network; on seL4 a jail can be a separate
          posix_server instance in its own component (isolation by the kernel). Later OCI
          images on jails
    - [ ] Capsicum (capability mode) or pledge/unveil, enforced where every call already goes
    - [ ] `sysctl` (FreeBSD style) next to the Linux-format /proc
-14. [ ] **Self-hosted development loop** (L). Needs: 7 (VM memory), 10 (threads), 12 (restart)
+15. [ ] **Self-hosted development loop** (L). Needs: 7 (VM memory), 11 (threads), 13 (restart)
    - [ ] Claude Code + toolchain in the Linux VM, working on the tree through /mnt/sel4
    - [ ] Userland restart: a monitor component that stops the PDs, loads new images and starts
          them again; an A/B watchdog that rolls back if `make test` fails
    - [ ] Native toolchain (clang/LLVM, make, git) and native Claude Code (Node.js)
-15. [ ] **File system robustness II: a journal** (L). Needs: 3. Towards ext3/ext4
-16. [ ] **Full support for the real laptop** (L). Needs: 6, 7 (driver VM memory), 8
-   - [ ] Persistent disk with the sDDF NVMe driver; poweroff through \_S5 from the ACPI tables
-   - [ ] Wi-Fi (Intel 8265), USB and audio through a driver VM (VT-d): the IOMMU is mandatory,
-         its traffic is untrusted, USB in a separate VM with an input proxy; the internal
-         keyboard and touchpad (i8042, I²C-HID) stay native
-   - [ ] Native networking through the driver VM (virtio-net with netstack); alternative: the
-         Linux Wi-Fi driver inside a component (LKL or Genode-style DDE)
-   - [ ] Touchpad and touchscreen (I²C-HID)
+16. [ ] **File system robustness II: a journal** (L). Needs: 4. Towards ext3/ext4
+17. [ ] **The real laptop, stage 3: replacing Debian** (L, probably more than a year at this pace).
+        Needs: 9
+   - [ ] Touchpad and touchscreen (I²C-HID); the internal keyboard and touchpad stay native
+   - [ ] Suspend and resume, battery, thermal, brightness (ACPI)
+   - [ ] Audio, accelerated graphics (today: the firmware's framebuffer only)
    - [ ] Side channels: kernel mitigations, the VM on its own cores, seL4's domain scheduler
-   - [ ] Multicore (seL4 runs on one core today; the laptop has 4); scrollback in the console
-17. [ ] **Directory services, native: LDAP, Kerberos, Active Directory, Samba** (L). Needs: 10
+   - [ ] Console scrollback
+18. [ ] **Directory services, native: LDAP, Kerberos, Active Directory, Samba** (L). Needs: 11
         (SSSD, winbind and Samba use threads), 1
    - [ ] An LDAP client and a small nscd-protocol daemon (musl asks it for users it does not
          find in /etc/passwd), Kerberos and PAM, joining an AD domain, SMB file sharing
-18. [ ] **Toolchain identity and other architectures** (L). Needs: nothing, lowest priority
+19. [ ] **Toolchain identity and other architectures** (L). Needs: nothing, lowest priority
    - [ ] Our own triple (`x86_64-sel4-musl`) instead of `x86_64-linux-musl` (programs see `__linux__`)
    - [ ] ARM64 / Raspberry Pi 4 (sDDF lacks an SD driver)
