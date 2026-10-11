@@ -69,8 +69,14 @@ git clone https://github.com/jgmr2/gnu-sel4 && cd gnu-sel4
 docker compose run --rm vm-rootfs   # (once) kernel + initramfs for the Linux VM
 docker compose run --rm build       # build everything and install it into projects/gnu-sel4/disk.img
 docker compose run --rm test        # automated tests in headless QEMU
-cd projects/gnu-sel4 && make run    # boot it (on the host: QEMU opens a window)
+docker compose run --rm --service-ports run   # boot it: screen over VNC, serial console here
 ```
+
+The `run` service shows the screen over VNC: open `localhost:5900` with any VNC viewer
+(`vncviewer localhost:5900`, Remmina, TigerVNC...). The serial console and the QEMU monitor stay in
+the terminal (`Ctrl-a x` quits). The usual ports are forwarded to the host: 8080 -> VM:80,
+2222 -> VM:22, 8090 -> native GNU/seL4:8080. With QEMU installed on the host,
+`cd projects/gnu-sel4 && make run` opens a window instead.
 
 **With the dependencies on the host** (what development uses; same result):
 

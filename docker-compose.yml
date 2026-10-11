@@ -3,9 +3,12 @@
 #   docker compose run --rm test         automated tests in headless QEMU (needs /dev/kvm)
 #   docker compose run --rm shell        a shell in the build environment
 #   docker compose run --rm vm-rootfs    kernel + initramfs of the Linux VM (once, before build)
+#   docker compose run --rm --service-ports run
+#                                        boot it: screen over VNC on localhost:5900, serial console
+#                                        and QEMU monitor in this terminal (Ctrl-a x quits)
 # The image is pulled from Docker Hub (jgmr2/gnu-sel4-dev, published by .github/workflows);
 # if it cannot be pulled, it is built here: every dependency is fetched and checked against deps.lock.
-# `make run` (QEMU with a window) runs on the host: see README.md.
+# `make run` on the host opens a window instead of VNC: see README.md.
 #
 # SPDX-License-Identifier: BSD-2-Clause
 x-gnu-sel4: &gnu-sel4
@@ -28,6 +31,19 @@ services:
       - /dev/kvm
     user: root                       # /dev/kvm belongs to the host's kvm group
     command: make test
+  run:
+    <<: *gnu-sel4
+    devices:
+      - /dev/kvm
+    user: root                       # /dev/kvm belongs to the host's kvm group
+    stdin_open: true
+    tty: true
+    ports:
+      - "127.0.0.1:5900:5900"        # screen (VNC)
+      - "127.0.0.1:8080:8080"        # -> VM:80
+      - "127.0.0.1:2222:2222"        # -> VM:22
+      - "127.0.0.1:8090:8090"        # -> native GNU/seL4:8080
+    command: make run DISPLAY_OPTS="-display vnc=0.0.0.0:0 -vga none -device bochs-display,addr=0x5"
   shell:
     <<: *gnu-sel4
     command: bash
