@@ -66,4 +66,20 @@ enum fs_op {
     FS_OP_SETCRED,
     /* -> buf: counters as text lines "name count cycles" (TSC cycles); result: length */
     FS_OP_STATS,
+    /* The partition as a raw device (/dev/root, for e2fsprogs), through the block cache so the
+     * file system sees what is written. MR1: FS_RAW_READ (-> buf) or FS_RAW_WRITE (buf ->; only
+     * while the file system is read-only: -EBUSY otherwise), MR2: byte offset, MR3: bytes (up to
+     * FS_BUF_SIZE) -> bytes done (0 at the end). MR1 = FS_RAW_SIZE -> size in bytes */
+    FS_OP_RAW,
+    /* MR1: 1 = read-write, 0 = read-only (written out and marked clean, as at unmount).
+     * Read-write reads the superblock and group descriptors again (e2fsck may have changed them):
+     * -EUCLEAN while the disk is not clean (e2fsck has not fixed it) */
+    FS_OP_REMOUNT,
+    /* -> MR1: flags: FS_STATE_RO (mounted read-only), FS_STATE_DIRTY (not cleanly unmounted:
+     * mounted read-only until e2fsck has checked it) */
+    FS_OP_STATE,
 };
+
+enum { FS_RAW_READ, FS_RAW_WRITE, FS_RAW_SIZE };
+#define FS_STATE_RO    1
+#define FS_STATE_DIRTY 2

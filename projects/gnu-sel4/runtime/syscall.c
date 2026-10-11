@@ -1280,6 +1280,7 @@ long __sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6
     case SYS_link:           return PATH2_CALL(a1, a2, n, 0, 0, 0, 0, 0, 0);
     case SYS_linkat:         return PATH2_CALL(a2, a4, n, a1, 0, a3, 0, a5, 0);
     case SYS_statfs:         { long r = PATH_CALL(a1, n, 0, 0, 0, 0, 0, 0); return copy_out(r, (void *)a2, K_STATFS_SIZE); }
+    case SYS_mount:          return PATH_CALL(a2, n, 0, 0, a4, 0, 0, 0);    /* the target; the flags */
     case SYS_fstatfs:        return copy_out(server_call(n, a1, 0, 0, 0, 0, 0), (void *)a2, K_STATFS_SIZE);
     case SYS_uname:          return copy_out(server_call(n, 0, 0, 0, 0, 0, 0), (void *)a1, 390);
     case SYS_ioctl:          return sys_ioctl(a1, a2, (void *)a3);

@@ -197,8 +197,8 @@ netstack_copy.elf: network_copy.elf
 	cp $< $@
 
 # --- programs from apps/<name>/*.c -> bin/<name> (in /bin, or in /sbin for SBIN_APPS) ---
-SBIN_APPS := init 9pd poweroff
-SBIN_LINKS := reboot:poweroff halt:poweroff
+SBIN_APPS = init 9pd poweroff $(E2FS_PROGS)
+SBIN_LINKS := reboot:poweroff halt:poweroff fsck.ext2:e2fsck mkfs.ext2:mke2fs
 # Installed set-user-ID root (they act for the user on root's files: /etc/shadow)
 SETUID_APPS := passwd sudo
 APPS := $(notdir $(wildcard $(POSIX)/apps/*))
@@ -292,6 +292,15 @@ gnu-%/.built: $(SYSROOT_READY) $(NCURSES) $(POSIX)/ports/gnu/build-gnu.sh
 $(foreach n,$(sort $(dir $(GNU_PROGS))),$(eval gnu-$(n)bin/%: gnu-$(n).built ; @test -f $$@))
 GNU_BINS := $(foreach p,$(GNU_PROGS),gnu-$(dir $(p))bin/$(notdir $(p)):$(notdir $(p)))
 
+# e2fsprogs: e2fsck (run by /etc/rc when the disk was not cleanly unmounted), mke2fs, tune2fs,
+# dumpe2fs, resize2fs, in /sbin; they work on /dev/root (server/vfs.c)
+E2FS_SRC := $(TP)/e2fsprogs-1.47.4
+E2FS_PROGS := e2fsck mke2fs tune2fs dumpe2fs resize2fs
+e2fsprogs/.built: $(SYSROOT_READY) $(POSIX)/ports/e2fsprogs/build-e2fsprogs.sh
+	$(POSIX)/ports/e2fsprogs/build-e2fsprogs.sh $(E2FS_SRC) e2fsprogs $(SYSROOT)
+	touch $@
+$(addprefix e2fsprogs/bin/,$(E2FS_PROGS)): e2fsprogs/.built ;
+
 # sudo: one static binary with the sudoers policy inside; installed set-user-ID root
 SUDO_SRC := $(TP)/sudo-1.9.17p2
 sudo/.built: $(SYSROOT_READY) $(POSIX)/ports/sudo/build-sudo.sh
@@ -302,7 +311,8 @@ sudo/bin/sudo sudo/bin/visudo: sudo/.built ;
 EXTRA_BINS := dash/src/dash:dash sudo/bin/sudo:sudo sudo/bin/visudo:visudo coreutils.bin:coreutils zsh/Src/zsh:zsh vim.bin:vim curl.bin:curl \
 	      socat.bin:socat dropbear.bin:dropbearmulti $(GNU_BINS) \
 	      $(foreach p,$(NC_PROGS),ncurses/inst/usr/bin/$(p):$(p)) \
-	      $(foreach p,$(PROCPS_PROGS),procps/bin/$(p):$(p))
+	      $(foreach p,$(PROCPS_PROGS),procps/bin/$(p):$(p)) \
+	      $(foreach p,$(E2FS_PROGS),e2fsprogs/bin/$(p):$(p))
 # skarnet.org: skalibs (library) -> execline -> s6 -> s6-rc (ports/skarnet/build-skarnet.sh).
 # Their programs go to /bin; execline is one multicall binary plus symlinks (links.txt)
 SKARNET_PKGS := skalibs-2.15.1.0 execline-2.9.9.2 s6-2.15.1.0 s6-rc-0.7.0.0
@@ -325,7 +335,7 @@ LICENSE_FILES := gnu-sel4:$(POSIX)/../../LICENSE gnu-sel4:$(POSIX)/../../THIRD_P
 	f-stack:$(TP)/f-stack/LICENSE dash:$(TP)/dash-0.5.13.5/COPYING zsh:$(TP)/zsh-5.9.2/LICENCE \
 	vim:$(TP)/vim-9.2.1172/LICENSE ncurses:$(TP)/ncurses-6.6/COPYING qrcodegen:$(TP)/qrcodegen/Readme.markdown \
 	coreutils:$(TP)/coreutils-9.12/COPYING $(foreach p,$(GNU_PKGS),$(call gnu_dir,$(p)):$(TP)/$(p)/COPYING) \
-	less:$(TP)/less-710/LICENSE procps-ng:$(TP)/procps-ng-4.0.7/COPYING procps-ng:$(TP)/procps-ng-4.0.7/COPYING.LIB \
+	less:$(TP)/less-710/LICENSE e2fsprogs:$(E2FS_SRC)/NOTICE e2fsprogs:$(E2FS_SRC)/lib/uuid/COPYING procps-ng:$(TP)/procps-ng-4.0.7/COPYING procps-ng:$(TP)/procps-ng-4.0.7/COPYING.LIB \
 	curl:$(TP)/curl-8.22.0/COPYING mbedtls:$(TP)/mbedtls-3.6.7/LICENSE \
 	socat:$(TP)/socat-1.8.1.3/COPYING socat:$(TP)/socat-1.8.1.3/COPYING.OpenSSL \
 	dropbear:$(TP)/dropbear-2026.94/LICENSE spleen:$(TP)/spleen/LICENSE sudo:$(TP)/sudo-1.9.17p2/LICENSE.md \
@@ -429,7 +439,7 @@ $(DISK):
 
 # --- installs the programs into /bin and the system files (leaving everything else alone) ---
 # SYSFILES: files from rootfs/ that the system manages and that are updated on every build
-SYSFILES := etc/motd etc/profile etc/rc etc/mtab etc/zshrc etc/zprofile etc/shells \
+SYSFILES := etc/motd etc/profile etc/rc etc/zshrc etc/zprofile etc/shells \
 	    etc/resolv.conf usr/share/vim/vimrc etc/tests.sh bin/nc
 # INITFILES: the user's own configuration (accounts, passwords, network): installed only when
 # missing, never overwritten ("path:mode"); but always root's with that mode (a disk made by
@@ -476,6 +486,7 @@ install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EX
 	     find . -type f | while read f; do f=$${f#./}; echo "rm $$dst/$$f"; echo "write $$src/$$f $$dst/$$f"; done); done; \
 	  for f in $(SYSFILES); do echo "rm /$$f"; echo "write $(POSIX)/rootfs/$$f /$$f"; \
 	    echo "sif /$$f uid 0"; echo "sif /$$f gid 0"; done; \
+	  echo "rm /etc/mtab"; echo "symlink /etc/mtab /proc/mounts"; \
 	  for i in $(INITFILES); do f=$${i%%:*}; \
 	    if debugfs -R "stat /$$f" part.img 2>&1 | grep -q "not found"; then \
 	      echo "write $(POSIX)/rootfs/$$f /$$f"; fi; \

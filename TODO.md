@@ -140,13 +140,22 @@ Principles the plan follows:
    - [x] A build without the Linux VM (`make LINUX_VM=no`: a kernel without VT-x, no VMM,
          no /dev/linux; 9pd idles): 31 tests pass. GitHub Actions builds and tests it on every
          push (`.github/workflows/test.yml`)
+   - [ ] The first GitHub run builds but blk_driver faults at boot (works locally): the BAR and
+         virtio queue addresses fixed in meta.py vs the runner's QEMU/firmware (or its AMD CPU);
+         the serial log is the run's artefact
    - [ ] The full `make test` on a self-hosted runner with VT-x (the workflow's "full" job, by
          hand); a cache for the CI build (from scratch: ~11 minutes)
-3. [ ] **File system robustness I** (M). Needs: nothing. The disk takes more and more data and
+3. [x] **File system robustness I** (M). Needs: nothing. The disk takes more and more data and
        its only protection is the recount of free blocks
-   - [ ] e2fsprogs ported: e2fsck run when the disk mounts dirty (and native mke2fs/resize2fs)
-   - [ ] Write ordering within an operation where it matters (data before the inode that points
-         to it), so a power cut leaves less to repair
+   - [x] e2fsprogs 1.47.4 ported (e2fsck, mke2fs, tune2fs, dumpe2fs, resize2fs in /sbin), on
+         /dev/root: the partition as a raw device through fs_ext2's cache (root only; writes only
+         while / is read-only). A dirty disk mounts read-only; /etc/rc runs e2fsck -p and then
+         `mount -o remount,rw /` (FS_OP_REMOUNT reads the superblock again). make test marks its
+         disk dirty, so every run goes through it; e2fsck -fn on the whole disk finds nothing
+   - [x] Write ordering: the blocks allocated in an operation are written (and completed) before
+         the inodes, bitmaps and blocks that point to them. Measured: QEMU killed in the middle of
+         ~600 file writes leaves only lazy free counts and one leaked block, which e2fsck -p
+         repairs on its own
 4. [ ] **Terminals, sessions and job control** (M). Needs: nothing. What makes daily use and ssh real
    - [ ] Pseudo-terminals: `/dev/ptmx`, `/dev/pts/N`, openpty, grantpt/unlockpt, TIOCSWINSZ
    - [ ] Sessions and controlling terminals: setsid, TIOCSCTTY, tcsetpgrp/tcgetpgrp, SIGHUP;
@@ -277,6 +286,8 @@ Principles the plan follows:
          them again; an A/B watchdog that rolls back if `make test` fails
    - [ ] Native toolchain (clang/LLVM, make, git) and native Claude Code (Node.js)
 16. [ ] **File system robustness II: a journal** (L). Needs: 3. Towards ext3/ext4
+   - [ ] A block freed and allocated again within one operation is not ordered (none does that
+         today); virtio-blk flush (FLUSH requests) for power cuts of the host itself
 17. [ ] **The real laptop, stage 3: replacing Debian** (L, probably more than a year at this pace).
         Needs: 9
    - [ ] Touchpad and touchscreen (I²C-HID); the internal keyboard and touchpad stay native

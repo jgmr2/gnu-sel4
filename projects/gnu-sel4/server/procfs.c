@@ -264,7 +264,7 @@ static size_t generate(int id, struct proc *p)
         break;
     }
     case F_VERSION:   OUT("Linux version " OSRELEASE " (GNU/seL4 posix_server) #1\n"); break;
-    case F_MOUNTS:    OUT("/dev/disk1 / ext2 rw 0 0\nproc /proc proc rw 0 0\n"); break;
+    case F_MOUNTS:    OUT("/dev/root / ext2 %s 0 0\nproc /proc proc rw 0 0\n", vfs_root_ro() ? "ro" : "rw"); break;
     case F_OSRELEASE: OUT(OSRELEASE "\n"); break;
     case F_PIDMAX:    OUT("32768\n"); break;
     case F_HOSTNAME:  OUT("gnu-sel4\n"); break;

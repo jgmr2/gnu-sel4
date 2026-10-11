@@ -201,6 +201,7 @@ long procfs_read(const char *abs, uint64_t off, char *dst, size_t len);
 long procfs_getdents(const char *abs, uint64_t *pos, char *dst, size_t len);
 long procfs_stat(const char *abs, void *kstat);                       /* Linux struct stat */
 long procfs_readlink(const char *abs, char *dst, size_t len);
+bool vfs_root_ro(void);                                              /* / mounted read-only? */
 void procfs_account(struct proc *p);
 void procfs_load_tick(void);                                         /* load average sampling */
 size_t mem_maps_text(int s, const char *exe, char *out, size_t max); /* /proc/<pid>/maps */

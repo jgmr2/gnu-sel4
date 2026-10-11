@@ -131,7 +131,10 @@ over IPC and sDDF queues.
   `make microkit-tool`) that gives posix_server what it needs to create processes: untypeds,
   its root CNode, an ASID pool, scheduling contexts and its endpoint.
 - **Files.** `fs_ext2` (our own ext2, 4 KiB blocks) on top of the sDDF block subsystem.
-  VFS↔FS protocol: `include/sel4posix/fs_protocol.h`.
+  VFS↔FS protocol: `include/sel4posix/fs_protocol.h`. After an unclean shutdown it mounts `/`
+  read-only; `/etc/rc` runs `e2fsck -p /dev/root` (e2fsprogs, ported) and then
+  `mount -o remount,rw /`. Within an operation newly allocated blocks reach the disk before
+  whatever points to them.
 - **Transparent Linux.** `docker ...` and `linux command ...` run in the VM from the native
   shell, with stdin/stdout/stderr, exit code and a pty when interactive. `/bin/linux` ↔
   `/dev/linux` ↔ queues shared with the VMM ↔ a virtio-vsock connection in the VM ↔ `sel4-agent`.

@@ -20,6 +20,8 @@
 extern uintptr_t fs_buf, net_buf;
 
 #define AT_FDCWD             (-100)
+#define MS_RDONLY            1           /* mount(2) flags */
+#define MS_REMOUNT           32
 #define AT_SYMLINK_NOFOLLOW  0x100
 #define AT_REMOVEDIR         0x200
 #define AT_EMPTY_PATH        0x1000
@@ -41,6 +43,7 @@ extern uintptr_t fs_buf, net_buf;
 #define S_IFREG  0100000
 #define S_IFDIR  0040000
 #define S_IFCHR  0020000
+#define S_IFBLK  0060000
 #define S_IFLNK  0120000
 #define S_IFIFO  0010000
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
@@ -74,7 +77,8 @@ enum { OF_FREE, OF_TTY, OF_NULL, OF_FILE, OF_DIR, OF_PIPE_R, OF_PIPE_W, OF_LINUX
        OF_SHM,                         /* memfd: shared memory (mem.c) */
        OF_KMSG,                        /* /dev/kmsg: to the serial port (logs, make test) */
        OF_RANDOM,                      /* /dev/urandom, /dev/random (RDRAND) */
-       OF_ZERO };                      /* /dev/zero */
+       OF_ZERO,                        /* /dev/zero */
+       OF_BLK };                       /* /dev/root: the ext2 partition, raw (e2fsprogs) */
 
 /* Is the path under /proc? */
 static inline bool is_proc(const char *abs)

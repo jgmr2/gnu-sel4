@@ -131,6 +131,16 @@ check ssh-key     sh -c 'rm -f /tmp/k && dropbearkey -t ed25519 -f /tmp/k >/dev/
 check net-static  sh -c 'netcfg static 10.0.2.40/24 gateway 10.0.2.2 dns 10.0.2.3 && case "$(netcfg)" in *static*10.0.2.40/24*) ;; *) netcfg; exit 1;; esac && nettest >/dev/null'
 [ -n "$LIVE" ] ||   # live on real hardware: no network card driver yet
 check net-dhcp    sh -c 'netcfg dhcp && sleep 1 && case "$(netcfg)" in *bound*) ;; *) netcfg; exit 1;; esac'
+check fsck-boot   sh -c 'cat /run/fsck-boot.log; read -r w r </run/fsck-boot.log && [ "$r" -le 3 ] &&
+                         case " $(mount) " in *"/dev/root on / type ext2 (rw)"*) ;; *) mount; exit 1;; esac'
+check e2fsprogs   sh -c 'dumpe2fs -h /dev/root 2>/dev/null | grep -q "^Filesystem magic number: *0xEF53" || exit 1
+                         # read-only for the check: the free counts are written out (they are lazy
+                         # while read-write) and nothing changes under e2fsck; its output waits in memory
+                         mount -o remount,ro / || exit 1; out=$(e2fsck -fn /dev/root 2>&1); r=$?; mount -o remount,rw /
+                         echo "$out"; echo "INFO e2fsck -fn on the whole disk: exit $r"; [ $r = 0 ]'
+check remount     sh -c 'printf x | dd of=/dev/root bs=1 count=1 conv=notrunc 2>/dev/null && { echo "a raw write went through while read-write"; exit 1; }
+                         mount -o remount,ro / && touch /tmp/ro-test 2>/dev/null && { echo "wrote while read-only"; mount -o remount,rw /; exit 1; }
+                         mount -o remount,rw / && touch /tmp/ro-test && rm /tmp/ro-test'
 check s6          sh -c 'svstat() { s6-svstat -p /run/service/9pd; }; i=0; while [ "$(svstat)" -le 0 ] 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
                          p1=$(svstat); kill "$p1"; i=0; while { p2=$(svstat); [ "$p2" = "$p1" ] || [ "$p2" -le 0 ]; } && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
                          echo "9pd: $p1 -> $p2"; [ "$p1" -gt 0 ] && [ "$p2" -gt 0 ] && [ "$p1" != "$p2" ] || exit 1

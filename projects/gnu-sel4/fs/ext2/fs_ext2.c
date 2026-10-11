@@ -30,6 +30,8 @@
 #define ENOENT        2
 #define EIO           5
 #define EPERM         1
+#define EBUSY        16
+#define EUCLEAN     117
 #define EACCES       13
 #define EEXIST        17
 #define ENOTDIR       20
@@ -158,6 +160,8 @@ static uint64_t disk_blocks;           /* partition capacity in 4 KiB blocks */
 uintptr_t fs_buf;
 
 static bool mounted, read_only;
+static bool ro_features;               /* unknown read-only-compatible features: never read-write */
+static bool fs_dirty;                  /* not cleanly unmounted: read-only until e2fsck checks it */
 static uint8_t sb_raw[1024];           /* copy of the superblock (bytes 1024..2047 of the disk) */
 static struct ext2_super *sb = (struct ext2_super *)sb_raw;
 static uint32_t ngroups, inode_size;
@@ -179,7 +183,12 @@ static bool counts_dirty;
  * consecutive blocks in one request and every request in flight together. So an operation is
  * still on the disk when it returns, but a block written several times in it (a bitmap, an
  * indirect block, a new block zeroed then filled) goes out once. The last STAGE_BLOCKS of the
- * data region are not cache: they stage multi-block transfers (contiguous in memory). */
+ * data region are not cache: they stage multi-block transfers (contiguous in memory).
+ * Order: the blocks allocated in the operation ("fresh": data, new indirect and directory
+ * blocks) are written and completed first, everything else (inodes, bitmaps, blocks that
+ * already existed, superblock, descriptors) after. Cut in between, the new blocks are only
+ * unreferenced free space; nothing on the disk points to contents that were never written
+ * (another file's old data). What a cut in the second half leaves, e2fsck repairs at boot. */
 #define MAX_SLOTS    8192
 #define STAGE_BLOCKS 64
 #define NO_SLOT      0xffffffffu
@@ -188,6 +197,7 @@ static struct cslot {
     uint32_t prev, next;               /* LRU list (head = most recently used) */
     uint32_t hnext;                    /* hash chain */
     bool valid, dirty, hashed;
+    bool fresh;                        /* allocated in this operation: written first */
 } slots[MAX_SLOTS];
 #define HASH_SIZE (2 * MAX_SLOTS)
 static uint32_t hash_head[HASH_SIZE];
@@ -332,28 +342,40 @@ static void sort_by_block(uint32_t *v, uint32_t n)
 }
 
 /* Writes every dirty block: sorted, consecutive blocks in one request through the staging area */
-static int flush_dirty(void)
+/* Writes the slots of v[] (sorted by block) and waits for all of them */
+static int write_slots(const uint32_t *v, uint32_t n)
 {
-    if (!ndirty) return 0;
-    sort_by_block(dirty_list, ndirty);
     batch_begin(&st_disk_write);
     uint32_t i = 0;
-    while (i < ndirty) {
+    while (i < n) {
         uint32_t j = i + 1;
-        while (j < ndirty && j - i < STAGE_BLOCKS &&
-               slots[dirty_list[j]].blk == slots[dirty_list[j - 1]].blk + 1) j++;
+        while (j < n && j - i < STAGE_BLOCKS && slots[v[j]].blk == slots[v[j - 1]].blk + 1) j++;
         if (j - i == 1) {
-            batch_add(BLK_REQ_WRITE, (uintptr_t)dirty_list[i] * BS, slots[dirty_list[i]].blk, 1);
+            batch_add(BLK_REQ_WRITE, (uintptr_t)v[i] * BS, slots[v[i]].blk, 1);
         } else {
             batch_wait_all();                                  /* the staging area is free */
-            for (uint32_t k = i; k < j; k++) memcpy(stage_data(k - i), slot_data(dirty_list[k]), BS);
-            batch_add(BLK_REQ_WRITE, (uintptr_t)stage_first * BS, slots[dirty_list[i]].blk, j - i);
+            for (uint32_t k = i; k < j; k++) memcpy(stage_data(k - i), slot_data(v[k]), BS);
+            batch_add(BLK_REQ_WRITE, (uintptr_t)stage_first * BS, slots[v[i]].blk, j - i);
             batch_wait_all();                                  /* before the staging is reused */
         }
         i = j;
     }
-    int r = batch_end();
-    for (uint32_t k = 0; k < ndirty; k++) slots[dirty_list[k]].dirty = false;
+    return batch_end();
+}
+
+static int flush_dirty(void)
+{
+    if (!ndirty) return 0;
+    /* fresh blocks to the front (stable: each half stays sorted), written before the rest */
+    static uint32_t ordered[MAX_SLOTS];
+    uint32_t nf = 0, n = 0;
+    sort_by_block(dirty_list, ndirty);
+    for (uint32_t k = 0; k < ndirty; k++) if (slots[dirty_list[k]].fresh) ordered[n++] = dirty_list[k];
+    nf = n;
+    for (uint32_t k = 0; k < ndirty; k++) if (!slots[dirty_list[k]].fresh) ordered[n++] = dirty_list[k];
+    int r = nf ? write_slots(ordered, nf) : 0;
+    if (!r && n > nf) r = write_slots(ordered + nf, n - nf);
+    for (uint32_t k = 0; k < ndirty; k++) slots[dirty_list[k]].dirty = slots[dirty_list[k]].fresh = false;
     ndirty = 0;
     return r;
 }
@@ -376,6 +398,7 @@ static int cache_slot_find(uint64_t blk, bool *hit)
     lru_unlink(v);
     lru_push_front(v);
     slots[v].valid = false;
+    slots[v].fresh = false;
     slots[v].blk = blk;
     slots[v].hnext = hash_head[hash_of(blk)];
     hash_head[hash_of(blk)] = v;
@@ -613,6 +636,7 @@ static int64_t alloc_zeroed_block(uint32_t goal_group)
     int64_t b = alloc_block(goal_group);
     if (b < 0) return b;
     int s = bzero_get(b);
+    slots[s].fresh = true;                 /* on the disk before whatever points to it */
     if (bwrite(s)) return -EIO;
     return b;
 }
@@ -1462,10 +1486,63 @@ static long op_statfs(void)
     f[6] = sb->s_free_inodes_count;                 /* f_ffree */
     f[8] = 255;                                     /* f_namelen */
     f[9] = BS;                                      /* f_frsize */
+    f[10] = read_only ? 1 : 0;                      /* f_flags: ST_RDONLY */
     return 0;
 }
 
 static long op_sync(bool unmount);
+static int load_meta(void);
+static int recount_free(void);
+#define EXT2_VALID_FS 1                /* s_state: cleanly unmounted */
+
+/* FS_OP_RAW: the partition as bytes, through the block cache (what e2fsck writes is what the
+ * file system then reads). Writes only while read-only: nothing of ours is in flight then */
+static long op_raw(uint64_t what, uint64_t off, uint64_t len, uint8_t *buf)
+{
+    uint64_t size = disk_blocks * BS;
+    if (what == FS_RAW_SIZE) return (long)size;
+    if (what > FS_RAW_WRITE || len > FS_BUF_SIZE) return -EINVAL;
+    if (what == FS_RAW_WRITE && !read_only) return -EBUSY;
+    if (off >= size) return 0;
+    if (len > size - off) len = size - off;
+    if (what == FS_RAW_READ) {              /* the blocks it spans, read together */
+        uint32_t v[FS_BUF_SIZE / BS + 1], n = 0;
+        for (uint64_t b = off / BS; b <= (off + len - 1) / BS; b++) v[n++] = b;
+        if (bread_many(v, n)) return -EIO;
+    }
+    uint64_t done = 0;
+    while (done < len) {
+        uint64_t blk = (off + done) / BS;
+        uint32_t in = (off + done) % BS;
+        uint32_t n = BS - in < len - done ? BS - in : (uint32_t)(len - done);
+        int s = what == FS_RAW_WRITE && in == 0 && n == BS ? bget(blk) : bread(blk);
+        if (s < 0) return -EIO;
+        if (what == FS_RAW_READ) {
+            memcpy(buf + done, slot_data(s) + in, n);
+        } else {
+            memcpy(slot_data(s) + in, buf + done, n);
+            bwrite(s);                      /* written out after the operation (flush_meta) */
+        }
+        done += n;
+    }
+    return (long)done;
+}
+
+/* FS_OP_REMOUNT */
+static long op_remount(bool rw)
+{
+    if (!rw) return read_only ? 0 : op_sync(true);
+    if (!read_only) return 0;
+    if (ro_features) return -EROFS;
+    if (flush_dirty() || load_meta()) return -EIO;     /* e2fsck may have changed them */
+    if (!(sb->s_state & EXT2_VALID_FS)) return -EUCLEAN;    /* e2fsck did not finish the job */
+    fs_dirty = false;
+    read_only = false;
+    sb->s_state &= ~EXT2_VALID_FS;            /* in use: clean again only after FS_OP_SYNC(1) */
+    sb_dirty = true;
+    microkit_dbg_puts("fs_ext2: mounted read-write\n");
+    return 0;
+}
 
 static size_t put_ctr(char *b, size_t n, size_t max, const char *name, uint64_t cnt, uint64_t cyc)
 {
@@ -1615,6 +1692,13 @@ static long dispatch(long op, uint64_t a1, uint64_t a2, uint64_t a3)
         return 0;
     case FS_OP_STATS:
         return op_stats(buf, FS_BUF_SIZE);
+    case FS_OP_RAW:
+        return op_raw(a1, a2, a3, (uint8_t *)buf);
+    case FS_OP_REMOUNT:
+        return op_remount(a1 == 1);
+    case FS_OP_STATE:
+        microkit_mr_set(1, (read_only ? FS_STATE_RO : 0) | (fs_dirty ? FS_STATE_DIRTY : 0));
+        return 0;
     }
     return -EINVAL;
 }
@@ -1657,8 +1741,6 @@ static void log_num(uint64_t v)
     while (i) microkit_dbg_putc(tmp[--i]);
 }
 
-#define EXT2_VALID_FS 1                /* s_state: cleanly unmounted */
-
 /* After an unclean shutdown (power cut, QEMU closed) the free counts in the group descriptors
  * and the superblock can disagree with the bitmaps, which are the truth (every write goes
  * straight to disk): recount them, as e2fsck's pass 5 does */
@@ -1696,39 +1778,47 @@ static long op_sync(bool unmount)
     return 0;
 }
 
-static void mount(void)
+/* The superblock and the group descriptors, read and checked (at mount, and again when going
+ * read-write after e2fsck). 0, or -EIO with the reason logged */
+static int load_meta(void)
 {
     int s = bread(0);
-    if (s < 0) { log_("fs_ext2: could not read the disk\n"); return; }
+    if (s < 0) { log_("fs_ext2: could not read the disk\n"); return -EIO; }
     memcpy(sb_raw, slot_data(s) + 1024, sizeof(sb_raw));
-    if (sb->s_magic != EXT2_MAGIC) { log_("fs_ext2: the partition is not ext2\n"); return; }
-    if ((1024u << sb->s_log_block_size) != BS) { log_("fs_ext2: only 4 KiB blocks are supported\n"); return; }
+    if (sb->s_magic != EXT2_MAGIC) { log_("fs_ext2: the partition is not ext2\n"); return -EIO; }
+    if ((1024u << sb->s_log_block_size) != BS) { log_("fs_ext2: only 4 KiB blocks are supported\n"); return -EIO; }
     if (sb->s_feature_incompat & ~INCOMPAT_FILETYPE) {
         log_("fs_ext2: incompatible features (ext3/ext4?), not mounting\n");
-        return;
+        return -EIO;
     }
-    if (sb->s_feature_ro_compat & ~(RO_COMPAT_SPARSE | RO_COMPAT_LARGE_FILE | RO_COMPAT_BTREE_DIR)) {
-        log_("fs_ext2: unknown features: mounting read-only\n");
-        read_only = true;
-    }
+    ro_features = sb->s_feature_ro_compat & ~(RO_COMPAT_SPARSE | RO_COMPAT_LARGE_FILE | RO_COMPAT_BTREE_DIR);
     inode_size = sb->s_rev_level >= 1 ? sb->s_inode_size : 128;
     ngroups = (sb->s_blocks_count - sb->s_first_data_block + sb->s_blocks_per_group - 1) / sb->s_blocks_per_group;
-    if (ngroups > MAX_GROUPS) { log_("fs_ext2: too many block groups\n"); return; }
+    if (ngroups > MAX_GROUPS) { log_("fs_ext2: too many block groups\n"); return -EIO; }
 
     uint32_t nbytes = ngroups * sizeof(struct ext2_gd);
     for (uint32_t off = 0; off < nbytes; off += BS) {
         s = bread(sb->s_first_data_block + 1 + off / BS);
-        if (s < 0) { log_("fs_ext2: error reading group descriptors\n"); return; }
+        if (s < 0) { log_("fs_ext2: error reading group descriptors\n"); return -EIO; }
         memcpy((uint8_t *)gd + off, slot_data(s), nbytes - off < BS ? nbytes - off : BS);
     }
-    if (!read_only) {
-        if (!(sb->s_state & EXT2_VALID_FS)) {
-            log_("fs_ext2: the disk was not cleanly unmounted: recounting free blocks and inodes\n");
-            if (recount_free()) { log_("fs_ext2: recount failed: mounting read-only\n"); read_only = true; }
-        }
+    return 0;
+}
+
+static void mount(void)
+{
+    if (load_meta()) return;
+    if (ro_features) {
+        log_("fs_ext2: unknown features: mounting read-only\n");
+        read_only = true;
+    } else if (!(sb->s_state & EXT2_VALID_FS)) {
+        /* /etc/rc runs e2fsck on /dev/root and then goes read-write (FS_OP_REMOUNT) */
+        log_("fs_ext2: the disk was not cleanly unmounted: read-only until e2fsck has checked it\n");
+        read_only = fs_dirty = true;
+    } else {
         sb->s_state &= ~EXT2_VALID_FS;            /* in use: clean again only after FS_OP_SYNC(1) */
         sb_dirty = true;
-        if (!read_only && flush_meta()) { log_("fs_ext2: cannot write the superblock: read-only\n"); read_only = true; }
+        if (flush_meta()) { log_("fs_ext2: cannot write the superblock: read-only\n"); read_only = true; }
     }
     mounted = true;
     log_("fs_ext2: mounted \"");

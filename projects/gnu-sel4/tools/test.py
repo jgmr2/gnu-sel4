@@ -8,6 +8,7 @@ reads the "TEST ..." lines from the serial port. Exits with 0 only if all of the
 
   usage: tools/test.py [--no-net] [--slow] [--timeout SECONDS]
          tools/test.py --script FILE    runs only FILE (sh) in the guest and prints its output
+         tools/test.py --keep-disk ...  leaves the disk copy in build/test-disk.img
                                         (measurements, quick experiments: no test suite)
 """
 import argparse, fcntl, os, select, shutil, subprocess, sys, time
@@ -26,6 +27,8 @@ def main():
     ap.add_argument("--no-net", action="store_true", help="skip the tests that need the internet")
     ap.add_argument("--script", help="run only this shell script in the guest and print its output")
     ap.add_argument("--slow", action="store_true", help="add the expensive tests (bigdisk: ~3 minutes more)")
+    ap.add_argument("--keep-disk", action="store_true",
+                    help="keep the disk copy (build/test-disk.img) afterwards, e.g. to look at what a cut left")
     ap.add_argument("--timeout", type=int, default=0, help="limit in seconds (default 240, 480 with --slow)")
     a = ap.parse_args()
     a.timeout = a.timeout or (480 if a.slow else 240)
@@ -51,7 +54,9 @@ def main():
     top = os.path.dirname(os.path.dirname(PROJ))
     rel = lambda p: os.path.relpath(p, top).replace(os.sep, "/")
     debugfs = ["debugfs"] if shutil.which("debugfs") else [os.path.join(top, "dev.sh"), "debugfs"]
-    cmds = ["write %s /etc/test" % rel(MARKER)]
+    # The copy is marked "not cleanly unmounted": every run goes through the boot check
+    # (read-only mount, e2fsck -p /dev/root in /etc/rc, then read-write; test fsck-boot)
+    cmds = ["write %s /etc/test" % rel(MARKER), "ssv state 0"]
     if a.script:
         shutil.copy(a.script, SCRIPT)
         cmds.append("write %s /etc/test.script" % rel(SCRIPT))
@@ -152,7 +157,7 @@ def main():
         if p.poll() is None:
             p.kill()
         p.wait()
-        for f in (COPY, MARKER, SCRIPT, CMDS):
+        for f in ((MARKER, SCRIPT, CMDS) if a.keep_disk else (COPY, MARKER, SCRIPT, CMDS)):
             if os.path.exists(f): os.remove(f)
 
     if end is None:

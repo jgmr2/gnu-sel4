@@ -8,6 +8,25 @@
 # (a oneshot) and 9pd (supervised: started again if it dies). /run starts clean at every boot.
 # The live system on real hardware tells what it is doing (nothing else to look at there)
 case " $(cat /etc/test 2>/dev/null) " in *" live "*) status() { echo "  ... $*"; } ;; *) status() { :; } ;; esac
+
+# After an unclean shutdown fs_ext2 mounts / read-only: e2fsck checks (and repairs) /dev/root
+# first, then / goes read-write. Nothing may write to the disk before this
+read -r dev dir type opts rest </proc/mounts
+case ",$opts," in *,ro,*)
+    echo "rc: the disk was not cleanly unmounted: checking it (e2fsck -p /dev/root)"
+    out=$(e2fsck -p /dev/root 2>&1); r=$?
+    printf '%s\n' "$out"
+    # 0: clean; 1: errors fixed; 2 (with 1: 3): "reboot", which Linux needs because its caches may
+    # hold the old metadata. Not here: what e2fsck writes goes through fs_ext2's cache, and the
+    # remount reads the superblock and group descriptors again
+    if [ $r -lt 4 ] && mount -o remount,rw /; then
+        echo "rc: e2fsck finished ($r): / is read-write"
+        printf 'exit %s\n%s\n' "$r" "$out" > /run/fsck-boot.log
+    else
+        echo "rc: e2fsck could not repair everything ($r): / stays READ-ONLY." >&2
+        echo "rc: as root: e2fsck -f /dev/root, then mount -o remount,rw /" >&2
+    fi ;;
+esac
 status "rc: starting the services (s6-svscan, s6-rc: network, 9pd)"
 rm -rf /run/service /run/s6-rc /run/s6-rc:* /run/s6-rc-db
 mkdir -p /run/service

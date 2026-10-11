@@ -353,6 +353,7 @@ static int dev_type(const char *abs)
     if (!strcmp(abs, "/dev/tty") || !strcmp(abs, "/dev/console")) return OF_TTY;
     if (!strcmp(abs, "/dev/null")) return OF_NULL;
     if (!strcmp(abs, "/dev/zero")) return OF_ZERO;
+    if (!strcmp(abs, "/dev/root")) return OF_BLK;      /* the ext2 partition, raw */
 #ifndef NO_LINUX_VM                                    /* make LINUX_VM=no: no VM, no device */
     if (!strcmp(abs, "/dev/linux")) return OF_LINUX;   /* session with the Linux VM */
 #endif
@@ -367,10 +368,12 @@ static void dev_stat(int type)
     uint64_t *st = (uint64_t *)client_buf;
     memset(st, 0, K_STAT_SIZE);
     st[0] = 5;                                                 /* st_dev */
-    st[1] = type == OF_TTY ? 1 : 2;                            /* st_ino */
+    st[1] = type == OF_TTY ? 1 : type == OF_BLK ? 3 : 2;       /* st_ino */
     st[2] = 1;                                                 /* st_nlink */
-    ((uint32_t *)client_buf)[6] = S_IFCHR | (type == OF_TTY ? 0620 : 0666);   /* st_mode */
-    st[5] = type == OF_TTY ? 0x0500 : type == OF_ZERO ? 0x0105 : 0x0103;   /* st_rdev */
+    ((uint32_t *)client_buf)[6] = type == OF_BLK ? S_IFBLK | 0600 : S_IFCHR | (type == OF_TTY ? 0620 : 0666);
+    /* st_rdev; /dev/root's is the st_dev of the files on it (fs_ext2: 0x0801), which is how
+     * e2fsprogs knows it is the root file system */
+    st[5] = type == OF_TTY ? 0x0500 : type == OF_ZERO ? 0x0105 : type == OF_BLK ? 0x0801 : 0x0103;
     st[7] = 1024;                                              /* st_blksize */
 }
 
@@ -384,6 +387,17 @@ static long do_open(long dirfd, uint32_t flags, uint32_t mode)
 
     int type = dev_type(abs);
     uint32_t ino = 0;
+    /* A symbolic link to /proc or to a device (/etc/mtab -> /proc/mounts): fs_ext2 follows links
+     * by itself but those do not live on the disk, so it is followed here */
+    uint32_t lmode;
+    if (type == OF_FREE && !is_proc(abs) && !(flags & O_NOFOLLOW) &&
+        fs_lookup(abs, false, &lmode, NULL) >= 0 && S_ISLNK(lmode)) {
+        char target[FS_PATH_MAX];
+        if (realpath_abs(abs, target) == 0 && (is_proc(target) || dev_type(target) != OF_FREE)) {
+            memcpy(abs, target, strlen(target) + 1);
+            type = dev_type(abs);
+        }
+    }
     if (type == OF_FREE && is_proc(abs)) {
         int k = procfs_kind(abs);
         if (k == PROCFS_LINK) {                       /* /proc/self: open /proc/<pid> */
@@ -444,6 +458,8 @@ static long do_open(long dirfd, uint32_t flags, uint32_t mode)
     if (type == OF_LINUX && cur->euid != 0 && !cred_in_group(cur, WHEEL_GID)) return -EACCES;
     /* Writing to the system log (the serial port): root only, as in Linux */
     if (type == OF_KMSG && (flags & O_ACCMODE) != O_RDONLY && cur->euid != 0) return -EACCES;
+    /* The raw disk: root only (0600) */
+    if (type == OF_BLK && cur->euid != 0) return -EACCES;
     if (type == OF_LINUX) {
         long sid = bridge_open();
         if (sid < 0) return sid;
@@ -478,6 +494,16 @@ static long do_read(long fd, size_t len, bool positional, uint64_t pos)
     case OF_SOCKET: return positional ? -ESPIPE : sock_recv(f, len, 0);
     case OF_USOCK:   return positional ? -ESPIPE : usock_recv(f, len, 0, 0);
     case OF_KMSG:    return 0;
+    case OF_BLK: {
+        if ((f->flags & O_ACCMODE) == O_WRONLY) return -EBADF;
+        if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
+        long r = fs_call(FS_OP_RAW, FS_RAW_READ, positional ? pos : f->off, len);
+        if (r > 0) {
+            memcpy((void *)client_buf, (void *)fs_buf, r);
+            if (!positional) f->off += r;
+        }
+        return r;
+    }
     case OF_RANDOM: {
         if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
         for (size_t i = 0; i < len; i += 8) {
@@ -537,6 +563,14 @@ static long do_write(long fd, size_t len, bool positional, uint64_t pos)
     case OF_PROCDIR: case OF_PROCFILE: return -EBADF;
     case OF_USOCK:   return positional ? -ESPIPE : usock_send(f, len, 0, 0);
     case OF_RANDOM:  return len;                       /* writing "entropy": accepted */
+    case OF_BLK: {                                     /* only while / is read-only (fs_ext2) */
+        if ((f->flags & O_ACCMODE) == O_RDONLY) return -EBADF;
+        if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
+        memcpy((void *)fs_buf, (const void *)client_buf, len);
+        long r = fs_call(FS_OP_RAW, FS_RAW_WRITE, positional ? pos : f->off, len);
+        if (r > 0 && !positional) f->off += r;
+        return r;
+    }
     case OF_KMSG: {                                    /* to the serial port (kernel debug output) */
         static char line[257];
         size_t n = len < 256 ? len : 256;
@@ -573,6 +607,11 @@ static long do_write(long fd, size_t len, bool positional, uint64_t pos)
     return r;
 }
 
+bool vfs_root_ro(void)
+{
+    return fs_call(FS_OP_STATE, 0, 0, 0) == 0 && (microkit_mr_get(1) & FS_STATE_RO);
+}
+
 static long do_lseek(long fd, int64_t off, int whence)
 {
     struct ofile *f = fd_get(fd);
@@ -587,6 +626,13 @@ static long do_lseek(long fd, int64_t off, int whence)
         if (whence == 0 && off >= 0) return f->off = off;
         if (whence == 1 && (int64_t)f->off + off >= 0) return f->off += off;
         return -EINVAL;
+    }
+    if (f->type == OF_BLK) {
+        long size = fs_call(FS_OP_RAW, FS_RAW_SIZE, 0, 0);
+        int64_t base = whence == 0 ? 0 : whence == 1 ? (int64_t)f->off : whence == 2 ? size : -1;
+        if (size < 0) return size;
+        if (base < 0 || base + off < 0) return -EINVAL;
+        return f->off = base + off;
     }
     if (f->type != OF_FILE && f->type != OF_DIR) return -ESPIPE;
     int64_t base;
@@ -638,8 +684,8 @@ static long do_fstat(long fd)
         ((uint32_t *)client_buf)[6] = 0140777;                     /* S_IFSOCK */
         return 0;
     }
-    if (f->type == OF_TTY || f->type == OF_NULL || f->type == OF_LINUX || f->type == OF_KMSG || f->type == OF_RANDOM || f->type == OF_ZERO) {
-        dev_stat(f->type == OF_TTY ? OF_TTY : f->type == OF_ZERO ? OF_ZERO : OF_NULL);
+    if (f->type == OF_TTY || f->type == OF_NULL || f->type == OF_LINUX || f->type == OF_KMSG || f->type == OF_RANDOM || f->type == OF_ZERO || f->type == OF_BLK) {
+        dev_stat(f->type == OF_TTY || f->type == OF_ZERO || f->type == OF_BLK ? f->type : OF_NULL);
         return 0;
     }
     if (f->type == OF_PIPE_R || f->type == OF_PIPE_W) {
@@ -1038,7 +1084,7 @@ bool vfs_handles(long nr)
     case __NR_chmod: case __NR_fchmod: case __NR_fchmodat: case __NR_umask:
     case __NR_statfs: case __NR_fstatfs: case __NR_fcntl: case __NR_ioctl:
     case __NR_dup: case __NR_dup2: case __NR_dup3:
-    case __NR_fsync: case __NR_fdatasync: case __NR_sync:
+    case __NR_fsync: case __NR_fdatasync: case __NR_sync: case __NR_mount:
     case __NR_pipe2: case __NR_poll: case __NR_utimensat:
     case __NR_chown: case __NR_lchown: case __NR_fchown: case __NR_fchownat:
     case __NR_socket: case __NR_bind: case __NR_connect: case __NR_listen:
@@ -1163,6 +1209,16 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
     case __NR_fsync:
     case __NR_fdatasync:  return fd_get(a1) ? 0 : -EBADF;   /* fs_ext2 writes immediately */
     case __NR_sync:       fs_call(FS_OP_SYNC, 0, 0, 0); return 0;
+    case __NR_mount: {    /* only "mount -o remount,ro|rw /": MS_REMOUNT [| MS_RDONLY]; root only */
+        if (cur->euid != 0) return -EPERM;
+        char abs[FS_PATH_MAX];
+        long r = normalize(AT_FDCWD, client_path(0), abs);
+        if (r) return r;
+        if (!(a3 & MS_REMOUNT) || strcmp(abs, "/")) return -EINVAL;
+        r = fs_call(FS_OP_REMOUNT, !(a3 & MS_RDONLY), 0, 0);
+        if (r == 0 && !(a3 & MS_RDONLY)) net_lease_changed();   /* resolv.conf, if DHCP came first */
+        return r;
+    }
     case __NR_pipe2:      return do_pipe(a1);
     case __NR_poll:       return do_poll(a1, a2);
     case __NR_utimensat:  return do_utimensat(a1, a3, a4);
