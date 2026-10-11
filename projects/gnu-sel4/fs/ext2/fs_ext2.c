@@ -128,6 +128,7 @@ struct ext2_dirent {
 #define FT_UNKNOWN 0
 #define FT_REG     1
 #define FT_DIR     2
+#define FT_FIFO    5
 #define FT_SYMLINK 7
 
 _Static_assert(sizeof(struct ext2_gd) == 32, "ext2_gd");
@@ -599,6 +600,7 @@ static uint8_t ftype_of_mode(uint16_t mode)
     if (S_ISREG(mode)) return FT_REG;
     if (S_ISDIR(mode)) return FT_DIR;
     if (S_ISLNK(mode)) return FT_SYMLINK;
+    if ((mode & S_IFMT) == 0010000) return FT_FIFO;             /* named pipe (mkfifo) */
     return FT_UNKNOWN;
 }
 

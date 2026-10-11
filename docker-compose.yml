@@ -20,6 +20,8 @@ x-gnu-sel4: &gnu-sel4
   volumes:
     - .:/work
   working_dir: /work/projects/gnu-sel4
+  environment:
+    BUILD_DIR: /work/projects/gnu-sel4/build-docker   # not build/: that one has the host's paths
 
 services:
   build:

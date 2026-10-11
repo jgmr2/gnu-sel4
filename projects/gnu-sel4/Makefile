@@ -23,7 +23,8 @@ export MICROKIT_TOOL   := $(DEPS)/third_party/microkit/target/release/microkit
 export LIBVMM          := $(DEPS)/libvmm
 export SDDF            := $(LIBVMM)/dep/sddf
 export POSIX           := $(abspath .)
-export BUILD_DIR       := $(abspath build)
+# docker compose uses its own (build-docker/): its dependency paths differ (/deps)
+export BUILD_DIR       ?= $(abspath build)
 
 IMAGE := $(BUILD_DIR)/loader.img
 # Host port forwards: host:8080 -> VM:80, host:2222 -> VM:22,
@@ -71,9 +72,9 @@ test:
 	tools/test.py $(if $(NO_NET),--no-net)
 
 disk-reset:
-	rm -f disk.img build/install.stamp
+	rm -f disk.img $(BUILD_DIR)/install.stamp
 
 clean:
-	rm -rf build
+	rm -rf $(BUILD_DIR)
 
 .PHONY: all run test clean disk-reset vm-rootfs microkit-tool

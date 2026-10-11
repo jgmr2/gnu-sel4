@@ -9,6 +9,8 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/wait.h>
+#include <poll.h>
 
 static int fails;
 #define CHECK(cond, what) do { \
@@ -121,6 +123,48 @@ int main(void)
         statvfs("/", &b);
         CHECK(b.f_bfree - a.f_bfree >= 1536, "its blocks were freed (data + indirect)");
         printf("       blocks freed: %lu\n", (unsigned long)(b.f_bfree - a.f_bfree));
+    }
+
+    printf("== named pipes (mkfifo) ==\n");
+    {
+        unlink("/tmp/fifo");
+        CHECK(mkfifo("/tmp/fifo", 0600) == 0, "mkfifo");
+        CHECK(lstat("/tmp/fifo", &st) == 0 && S_ISFIFO(st.st_mode), "stat sees S_IFIFO");
+        DIR *d = opendir("/tmp");
+        int dt = 0;
+        struct dirent *e;
+        while (d && (e = readdir(d))) if (!strcmp(e->d_name, "fifo")) dt = e->d_type;
+        if (d) closedir(d);
+        CHECK(dt == DT_FIFO, "readdir: d_type DT_FIFO");
+        CHECK(open("/tmp/fifo", O_WRONLY | O_NONBLOCK) < 0 && errno == ENXIO, "write end without a reader -> ENXIO");
+        int r = open("/tmp/fifo", O_RDONLY | O_NONBLOCK);
+        CHECK(r >= 0, "read end with O_NONBLOCK opens at once");
+        int w = open("/tmp/fifo", O_WRONLY | O_NONBLOCK);
+        CHECK(w >= 0 && write(w, "abc", 3) == 3, "write end once there is a reader");
+        char b[16] = { 0 };
+        CHECK(read(r, b, sizeof b) == 3 && !memcmp(b, "abc", 3), "data from one end to the other");
+        close(w);
+        CHECK(read(r, b, sizeof b) == 0, "EOF when the last writer closes");
+        close(r);
+        pid_t pid = fork();                                 /* blocking opens meet each other */
+        if (pid == 0) {
+            int cw = open("/tmp/fifo", O_WRONLY);
+            _exit(cw >= 0 && write(cw, "hello", 5) == 5 ? 0 : 1);
+        }
+        r = open("/tmp/fifo", O_RDONLY);
+        memset(b, 0, sizeof b);
+        ssize_t n = r >= 0 ? read(r, b, sizeof b) : -1;
+        int status;
+        waitpid(pid, &status, 0);
+        CHECK(n == 5 && !memcmp(b, "hello", 5) && WIFEXITED(status) && !WEXITSTATUS(status),
+              "blocking open(O_RDONLY) waits for the writer");
+        if (r >= 0) close(r);
+        int rw = open("/tmp/fifo", O_RDWR | O_NONBLOCK);
+        struct pollfd pf = { .fd = rw, .events = POLLIN | POLLOUT };
+        CHECK(rw >= 0 && poll(&pf, 1, 0) == 1 && (pf.revents & POLLOUT) && write(rw, "x", 1) == 1 &&
+              poll(&pf, 1, 0) == 1 && (pf.revents & POLLIN) && read(rw, b, 1) == 1, "O_RDWR reads and writes (s6's trick)");
+        if (rw >= 0) close(rw);
+        CHECK(unlink("/tmp/fifo") == 0, "unlink the FIFO");
     }
 
     struct statvfs sv;

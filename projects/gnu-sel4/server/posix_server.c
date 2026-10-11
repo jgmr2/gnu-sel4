@@ -69,6 +69,9 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
     long a1 = microkit_mr_get(1), a2 = microkit_mr_get(2), a3 = microkit_mr_get(3);
     long a4 = microkit_mr_get(4), a5 = microkit_mr_get(5), a6 = microkit_mr_get(6);
 
+    /* A FIFO open that waited and was abandoned (a signal, then something else): drop its count */
+    if (cur->fifo_wait && n != __NR_open && n != __NR_openat) fifo_cancel_wait(cur);
+
     if (proc_handles(n)) {
         r = proc_syscall(n, a1, a2, a3, a4, a5);
     } else if (vfs_handles(n)) {

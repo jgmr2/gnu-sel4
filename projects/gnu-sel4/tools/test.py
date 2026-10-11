@@ -13,7 +13,7 @@ import argparse, fcntl, os, select, shutil, subprocess, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJ = os.path.dirname(HERE)
 DISK = os.path.join(PROJ, "disk.img")
-BUILD = os.path.join(PROJ, "build")
+BUILD = os.environ.get("BUILD_DIR") or os.path.join(PROJ, "build")   # docker compose: build-docker/
 COPY = os.path.join(BUILD, "test-disk.img")
 MARKER = os.path.join(BUILD, "test-marker")
 PART1_END = (1 + 64) << 20                 # MBR + ext2 partition (EXT2_MB in system.mk)

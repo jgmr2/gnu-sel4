@@ -96,6 +96,9 @@ struct proc {
     uint64_t sig_pending, sig_caught, sig_ignored;
 
     bool wait_child;                /* blocked in wait4 */
+    int fifo_wait;                  /* blocked opening a FIFO: pipe index + 1 (0 = none) */
+    bool fifo_wait_write;           /* ...for writing */
+    uint32_t fifo_wait_opens;       /* opens of the other end when it started waiting */
     uint64_t deadline;              /* poll/sleep deadline (timer ns; 0 = none) */
     int nice;                       /* -20..19 (informational for now: it does not change the seL4 priority) */
     uint64_t itimer_next;           /* ITIMER_REAL: next SIGALRM (timer ns; 0 = off) */
@@ -212,6 +215,7 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6);
 void vfs_proc_tty(struct proc *p);         /* 0, 1 and 2 to the terminal */
 void vfs_fork(struct proc *child, struct proc *parent);
 void vfs_close_all(struct proc *p);
+void fifo_cancel_wait(struct proc *p);    /* it stopped waiting to open a FIFO */
 void vfs_close_cloexec(struct proc *p);
 long vfs_normalize(struct proc *p, const char *path, char *out);
 long vfs_lookup(const char *abs, bool follow, uint32_t *mode, uint64_t *size);

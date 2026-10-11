@@ -34,6 +34,7 @@ uintptr_t fs_buf;
 #define O_ACCMODE    03
 #define O_RDONLY     00
 #define O_WRONLY     01
+#define O_RDWR       02
 #define O_CREAT      0100
 #define O_EXCL       0200
 #define O_TRUNC      01000
@@ -48,6 +49,7 @@ uintptr_t fs_buf;
 #define S_IFDIR  0040000
 #define S_IFCHR  0020000
 #define S_IFLNK  0120000
+#define S_IFIFO  0010000
 #define S_ISDIR(m) (((m) & S_IFMT) == S_IFDIR)
 #define S_ISREG(m) (((m) & S_IFMT) == S_IFREG)
 #define S_ISLNK(m) (((m) & S_IFMT) == S_IFLNK)
@@ -95,21 +97,45 @@ struct ofile {
     char path[FS_PATH_MAX];     /* absolute path (for fchdir and the *at calls) */
 };
 
-#define NOFILE 128
+#define NOFILE 256
 static struct ofile ofiles[NOFILE];
 
-/* Pipes: circular buffer; whoever blocks goes into rwait/wwait (bits = process index) */
-#define NPIPE     32
+/* Pipes: circular buffer; whoever blocks goes into rwait/wwait (bits = process index).
+ * A named pipe (mkfifo) is the same object, found by its inode while someone has it open or
+ * is blocked opening it; its data goes away with the last close, as in Linux. */
+#define NPIPE     64
 #define PIPE_SIZE 16384
 static struct pipe {
     bool used;
     int readers, writers;
     uint32_t head, tail;        /* tail - head = bytes in the buffer */
     uint32_t rwait, wwait;
+    uint32_t fifo;              /* named pipe: its inode (0 = anonymous pipe) */
+    uint32_t owait;             /* processes blocked in open() waiting for the other end */
+    uint32_t r_opens, w_opens;  /* opens of each end so far: a waiter returns once the other moved */
     char buf[PIPE_SIZE];
 } pipes[NPIPE];
 
+static void pipe_maybe_free(struct pipe *pp)
+{
+    if (!pp->readers && !pp->writers) pp->used = false;
+}
+
+/* A process blocked opening a FIFO already counts as a reader or writer (as in Linux); if it
+ * gives up (signal, exit, another open) that count goes away */
+void fifo_cancel_wait(struct proc *p)
+{
+    if (!p->fifo_wait) return;
+    struct pipe *pp = &pipes[p->fifo_wait - 1];
+    if (p->fifo_wait_write) pp->writers--; else pp->readers--;
+    p->fifo_wait = 0;
+    proc_wake_mask(pp->rwait | pp->wwait | pp->owait);
+    pp->rwait = pp->wwait = pp->owait = 0;
+    pipe_maybe_free(pp);
+}
+
 static long net_call(long op, long a1, long a2, long a3, long a4);
+static long fifo_open(uint32_t ino, uint32_t flags, const char *abs);
 
 /* Local sockets (AF_UNIX): implemented further down, next to poll */
 #define AF_UNIX_      1
@@ -177,9 +203,10 @@ static void ofile_release(int of)
     if (f->type == OF_PIPE_R || f->type == OF_PIPE_W) {
         struct pipe *pp = &pipes[f->ino];
         if (f->type == OF_PIPE_R) pp->readers--; else pp->writers--;
-        proc_wake_mask(pp->rwait | pp->wwait);
-        pp->rwait = pp->wwait = 0;
-        if (!pp->readers && !pp->writers) pp->used = false;
+        if (f->type == OF_PIPE_R && (f->flags & O_ACCMODE) == O_RDWR) pp->writers--;   /* FIFO opened O_RDWR */
+        proc_wake_mask(pp->rwait | pp->wwait | pp->owait);
+        pp->rwait = pp->wwait = pp->owait = 0;
+        pipe_maybe_free(pp);
     }
     if (f->type == OF_LINUX) bridge_close(f->ino);
     if (f->type == OF_SOCKET) net_call(NET_OP_CLOSE, f->ino, 0, 0, 0);
@@ -361,6 +388,7 @@ static long do_open(long dirfd, uint32_t flags, uint32_t mode)
         if (res < 0) return res;
         ino = res;
         if (S_ISLNK(fmode)) return -ELOOP;
+        if ((fmode & S_IFMT) == S_IFIFO) return fifo_open(ino, flags, abs);
         if (S_ISDIR(fmode)) {
             if ((flags & O_ACCMODE) != O_RDONLY) return -EISDIR;
             type = OF_DIR;
@@ -452,13 +480,77 @@ static long do_pipe(long flags)
     pp->used = true;
     pp->readers = pp->writers = 1;
     pp->head = pp->tail = 0;
-    pp->rwait = pp->wwait = 0;
+    pp->rwait = pp->wwait = pp->owait = 0;
+    pp->fifo = 0;
     ofiles[r].ino = ofiles[w].ino = pi;
     ofiles[r].flags = flags & O_NONBLOCK;
     ofiles[w].flags = 1 | (flags & O_NONBLOCK);       /* O_WRONLY */
     microkit_mr_set(1, fr);
     microkit_mr_set(2, fw);
     return 0;
+}
+
+/* open() of a named pipe, with Linux's semantics: for reading or writing alone, open waits for
+ * the other end; with O_NONBLOCK reading opens at once and writing fails with ENXIO; O_RDWR
+ * never waits. As in Linux, an opener counts as a reader or writer from the moment it enters,
+ * even while it waits, so two blocked opens on both ends meet each other. */
+static long fifo_open(uint32_t ino, uint32_t flags, const char *abs)
+{
+    int pi = -1, free_pi = -1;
+    for (int i = 0; i < NPIPE; i++) {
+        if (pipes[i].used && pipes[i].fifo == ino) { pi = i; break; }
+        if (!pipes[i].used && free_pi < 0) free_pi = i;
+    }
+    if (cur->fifo_wait && cur->fifo_wait != pi + 1) fifo_cancel_wait(cur);   /* gave up on another one */
+    if (pi < 0) {
+        if (free_pi < 0) return -ENFILE;
+        pi = free_pi;
+        struct pipe *np = &pipes[pi];
+        np->used = true;
+        np->fifo = ino;
+        np->readers = np->writers = 0;
+        np->head = np->tail = 0;
+        np->rwait = np->wwait = np->owait = 0;
+        np->r_opens = np->w_opens = 0;
+    }
+    struct pipe *pp = &pipes[pi];
+    uint32_t acc = flags & O_ACCMODE;
+    bool rd = acc == O_RDONLY;
+    if (cur->fifo_wait != pi + 1) {                     /* first time here (not a retry) */
+        if (acc == O_WRONLY && (flags & O_NONBLOCK) && !pp->readers) {
+            pipe_maybe_free(pp);
+            return -ENXIO;                              /* write end, nobody reading */
+        }
+        if (acc != O_WRONLY) { pp->readers++; pp->r_opens++; }
+        if (acc != O_RDONLY) { pp->writers++; pp->w_opens++; }
+        proc_wake_mask(pp->owait | pp->rwait | pp->wwait);   /* the other end may be waiting for us */
+        pp->owait = pp->rwait = pp->wwait = 0;
+    }
+    /* wait until the other end is open, or was opened since we started (it may be gone already) */
+    uint32_t other = rd ? pp->w_opens : pp->r_opens;
+    bool retry = cur->fifo_wait == pi + 1;
+    if (acc != O_RDWR && !(flags & O_NONBLOCK) && !(rd ? pp->writers : pp->readers) &&
+        !(retry && other != cur->fifo_wait_opens)) {
+        if (!retry) cur->fifo_wait_opens = other;
+        cur->fifo_wait = pi + 1;                        /* keeps its count while it waits */
+        cur->fifo_wait_write = !rd;
+        pp->owait |= 1u << PROC_INDEX(cur);
+        return POSIX_RETRY;
+    }
+    cur->fifo_wait = 0;
+    int of = ofile_alloc(acc == O_WRONLY ? OF_PIPE_W : OF_PIPE_R);
+    if (of < 0) {
+        if (acc != O_WRONLY) pp->readers--;
+        if (acc != O_RDONLY) pp->writers--;
+        pipe_maybe_free(pp);
+        return -ENFILE;
+    }
+    ofiles[of].ino = pi;
+    ofiles[of].flags = flags & (O_ACCMODE | O_NONBLOCK | O_APPEND);
+    memcpy(ofiles[of].path, abs, strlen(abs) + 1);
+    int fd = fd_alloc(of, 0, flags & O_CLOEXEC);
+    if (fd < 0) ofile_release(of);
+    return fd;
 }
 
 /* ---------------- eventfd and timerfd ---------------- */
@@ -873,7 +965,9 @@ static long do_write(long fd, size_t len, bool positional, uint64_t pos)
     case OF_NULL:   return len;
     case OF_DIR:    return -EISDIR;
     case OF_PIPE_W: return positional ? -ESPIPE : pipe_write(f, len);
-    case OF_PIPE_R: return -EBADF;
+    case OF_PIPE_R:                                    /* a FIFO opened O_RDWR also writes */
+        if ((f->flags & O_ACCMODE) != O_RDWR) return -EBADF;
+        return positional ? -ESPIPE : pipe_write(f, len);
     case OF_LINUX:  return bridge_write(f->ino, (const uint8_t *)client_buf, len);
     case OF_SOCKET: return positional ? -ESPIPE : sock_send(f, len, 0, 0);
     case OF_PROCDIR: case OF_PROCFILE: return -EBADF;
@@ -1072,6 +1166,14 @@ static long path_op(long nr, long dirfd, long a, long b)
     switch (nr) {
     case __NR_chdir:
         return do_chdir(abs);
+    case __NR_mknod:                                   /* only FIFOs (and plain files): no device nodes */
+        if ((a & S_IFMT) == S_IFIFO || (a & S_IFMT) == S_IFREG || !(a & S_IFMT)) {
+            if (dev_type(abs) != OF_FREE || is_proc(abs)) return -EEXIST;
+            fs_set_path(0, abs);
+            r = fs_call(FS_OP_CREATE, ((a & S_IFMT) ? (a & S_IFMT) : S_IFREG) | (a & 07777 & ~cur->umask), 0, 0);
+            return r < 0 ? r : 0;
+        }
+        return -EPERM;
     case __NR_mkdir:
         fs_set_path(0, abs);
         r = fs_call(FS_OP_CREATE, S_IFDIR | (a & 07777 & ~cur->umask), 0, 0);
@@ -1531,6 +1633,7 @@ static short fd_poll(int fd, short events, bool wait)
         struct pipe *pp = &pipes[f->ino];
         if (pp->tail != pp->head) r |= POLLIN;
         if (!pp->writers) r |= POLLHUP;
+        if ((f->flags & O_ACCMODE) == O_RDWR && pp->tail - pp->head < PIPE_SIZE) r |= POLLOUT;
         if (!r && wait && in) pp->rwait |= 1u << PROC_INDEX(cur);
         break;
     }
@@ -1689,6 +1792,7 @@ bool vfs_handles(long nr)
     case __NR_open: case __NR_openat: case __NR_close: case __NR_lseek:
     case __NR_stat: case __NR_lstat: case __NR_fstat: case __NR_newfstatat:
     case __NR_getdents64: case __NR_getcwd: case __NR_chdir: case __NR_fchdir:
+    case __NR_mknod: case __NR_mknodat:
     case __NR_mkdir: case __NR_mkdirat: case __NR_rmdir: case __NR_unlink: case __NR_unlinkat:
     case __NR_rename: case __NR_renameat: case __NR_renameat2:
     case __NR_symlink: case __NR_symlinkat: case __NR_readlink: case __NR_readlinkat:
@@ -1744,6 +1848,8 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
         if (f->type != OF_DIR && f->type != OF_PROCDIR) return -ENOTDIR;
         memcpy(cur->cwd, f->path, strlen(f->path) + 1);
         return 0;
+    case __NR_mknod:      return path_op(__NR_mknod, AT_FDCWD, a2, 0);
+    case __NR_mknodat:    return path_op(__NR_mknod, a1, a3, 0);
     case __NR_mkdir:      return path_op(__NR_mkdir, AT_FDCWD, a2, 0);
     case __NR_mkdirat:    return path_op(__NR_mkdir, a1, a3, 0);
     case __NR_rmdir:      return path_op(__NR_unlink, AT_FDCWD, 1, 0);
@@ -1971,6 +2077,7 @@ void vfs_fork(struct proc *child, struct proc *parent)
 
 void vfs_close_all(struct proc *p)
 {
+    fifo_cancel_wait(p);
     for (int i = 0; i < NFD; i++) {
         if (p->fdt[i].of >= 0) {
             ofile_release(p->fdt[i].of);

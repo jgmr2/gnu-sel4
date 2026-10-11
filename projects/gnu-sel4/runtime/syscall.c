@@ -450,6 +450,12 @@ static long put_path(int second, const char *path)
     _e ? _e : server_call(n, __VA_ARGS__);                  \
 })
 
+/* Call with one path that may block (open of a FIFO waits for the other end) */
+#define PATH_CALL_BLOCKING(path, n, a1, a2, a3, a4, a5) ({   \
+    long _e = put_path(0, (const char *)(path));            \
+    _e ? _e : server_call_blocking5(n, a1, a2, a3, a4, a5); \
+})
+
 /* Call with two paths */
 #define PATH2_CALL(p1, p2, n, ...) ({                       \
     long _e = put_path(0, (const char *)(p1));              \
@@ -1216,8 +1222,8 @@ long __sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6
     case SYS_preadv2:        return sys_prwv(0, a1, (const struct iovec *)a2, a3, a4, a6);
     case SYS_pwritev2:       return sys_prwv(1, a1, (const struct iovec *)a2, a3, a4, a6);
     /* files: paths to the server, structures back */
-    case SYS_open:           return PATH_CALL(a1, n, 0, a2, a3, 0, 0, 0);
-    case SYS_openat:         return PATH_CALL(a2, n, a1, 0, a3, a4, 0, 0);
+    case SYS_open:           return PATH_CALL_BLOCKING(a1, n, 0, a2, a3, 0, 0);
+    case SYS_openat:         return PATH_CALL_BLOCKING(a2, n, a1, 0, a3, a4, 0);
     case SYS_stat:
     case SYS_lstat:          { long r = PATH_CALL(a1, n, 0, 0, 0, 0, 0, 0); return copy_out(r, (void *)a2, K_STAT_SIZE); }
     case SYS_newfstatat:     { long r = PATH_CALL(a2, n, a1, 0, 0, a4, 0, 0); return copy_out(r, (void *)a3, K_STAT_SIZE); }
@@ -1233,6 +1239,8 @@ long __sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6
     case SYS_chdir:
     case SYS_rmdir:
     case SYS_unlink:         return PATH_CALL(a1, n, 0, 0, 0, 0, 0, 0);
+    case SYS_mknod:          return PATH_CALL(a1, n, 0, a2, a3, 0, 0, 0);
+    case SYS_mknodat:        return PATH_CALL(a2, n, a1, 0, a3, a4, 0, 0);
     case SYS_mkdir:
     case SYS_truncate:
     case SYS_access:
