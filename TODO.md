@@ -112,6 +112,10 @@ Real hardware stays last on purpose: first the system has to be worth booting.
 7. [ ] **Pseudo-terminals** (M): `/dev/ptmx`, openpty. Unlocks the ssh server (dropbear),
        tmux/screen and later foot
 8. [ ] **Room to grow** (M)
+   - [ ] Split `server/vfs.c` (2000+ lines) into modules: pipes and FIFOs, AF_UNIX sockets,
+         eventfd/timerfd, network sockets, paths. Cheap, and it makes everything below easier
+   - [ ] Dynamic server tables (today fixed: 32 processes, 256 open files, 64 pipes, 64 sockets)
+         and real wait queues instead of the 32-bit masks of waiting processes
    - [ ] A bigger ext2 partition (64 MB is not enough for the desktop libraries)
    - [ ] Installing software without rebuilding the image: **dpkg + apt** with our own `.deb`
          repository (Debian's binaries are built for glibc and Linux and do not run here: the
@@ -214,8 +218,10 @@ Real hardware stays last on purpose: first the system has to be worth booting.
 
 - [ ] io_uring as an interface for programs: not planned (a Linux-only ABI that almost nothing
       uses directly; seL4 PPCs are cheap). Our own ring ABI instead (item 12), also between servers (item 13)
-- [ ] **posix_server is a single point of failure**: if it goes down, all of native goes down;
-      split it into servers (processes/memory, files, network, tty)
+- [ ] **posix_server is a single point of failure**: if it goes down, all of native goes down.
+      Split it into servers (processes/memory, files, network, tty) once the rings exist (item 12:
+      with rings between components the split costs little), and make each one restartable by
+      keeping the important state outside it, so the monitor (item 15) can bring it back
 - [ ] Our own triple (`x86_64-sel4-musl`) instead of `x86_64-linux-musl` (today programs see `__linux__`)
 - [ ] Port to ARM64 / Raspberry Pi 4 (sDDF lacks an SD driver)
 
