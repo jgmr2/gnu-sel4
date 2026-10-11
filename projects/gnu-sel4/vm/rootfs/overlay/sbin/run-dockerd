@@ -1,3 +1,5 @@
 #!/bin/sh
 # Started (and restarted if it dies) by init. Log in /var/log/dockerd.log
+#
+# SPDX-License-Identifier: BSD-2-Clause
 exec /usr/bin/dockerd --config-file /etc/docker/daemon.json >>/var/log/dockerd.log 2>&1

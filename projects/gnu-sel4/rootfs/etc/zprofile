@@ -1,2 +1,4 @@
 # /etc/zprofile: login zsh. Loads /etc/profile (PATH, TERM, welcome) in sh mode
+#
+# SPDX-License-Identifier: BSD-2-Clause
 emulate sh -c 'source /etc/profile'

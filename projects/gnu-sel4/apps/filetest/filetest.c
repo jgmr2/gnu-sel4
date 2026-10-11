@@ -1,4 +1,5 @@
 /* File system test using plain POSIX functions. */
+/* SPDX-License-Identifier: BSD-2-Clause */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

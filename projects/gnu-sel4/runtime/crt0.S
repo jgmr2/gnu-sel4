@@ -1,6 +1,8 @@
 /*
  * Entry point of a GNU/seL4 program. posix_server lays out the stack
  * just like Linux: argc, argv[], NULL, envp[], NULL, auxv[] (see server/proc.c).
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
     .text
     .global _start

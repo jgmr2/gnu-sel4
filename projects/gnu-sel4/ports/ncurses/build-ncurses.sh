@@ -4,6 +4,8 @@
 #   usage: build-ncurses.sh <ncurses-source> <build-dir> <sysroot>
 # Output: library and headers in the sysroot; programs (clear, tput, tic...) and the
 #         terminfo database in <build-dir>/inst
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 

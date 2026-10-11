@@ -10,6 +10,8 @@
 #   ../../dev.sh make disk-reset  deletes disk.img: it is recreated (empty) by the next make
 #
 # Console: Ctrl-\ 1 Enter -> VM (Docker); Ctrl-\ 0 Enter -> GNU/seL4
+#
+# SPDX-License-Identifier: BSD-2-Clause
 
 export MICROKIT_SDK    ?= $(abspath ../../sdk/microkit-sdk-2.3.1)
 export MICROKIT_BOARD  := x86_64_generic_vtx

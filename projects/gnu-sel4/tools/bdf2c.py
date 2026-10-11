@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-2-Clause
 """Converts an 8 px wide BDF font (Spleen 8x16) into a C table for the console.
    usage: bdf2c.py font.bdf output.h
 Generates font_cp[] (code points, sorted) and font_bits[][16] (one row per byte)."""

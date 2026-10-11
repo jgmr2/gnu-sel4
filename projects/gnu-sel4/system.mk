@@ -2,6 +2,7 @@
 # GNU/seL4 build rules (copied to build/Makefile and run there, in Docker).
 # Input variables: MICROKIT_SDK MICROKIT_BOARD MICROKIT_CONFIG SDDF LIBVMM POSIX BUILD_DIR
 #
+# SPDX-License-Identifier: BSD-2-Clause
 SUPPORTED_BOARDS := x86_64_generic_vtx
 TOOLCHAIN ?= clang
 SDDF_CUSTOM_LIBC := 1
@@ -224,8 +225,32 @@ EXTRA_BINS := dash/src/dash:dash coreutils.bin:coreutils zsh/Src/zsh:zsh vim.bin
 	      socat.bin:socat dropbear.bin:dropbearmulti $(GNU_BINS) \
 	      $(foreach p,$(NC_PROGS),ncurses/inst/usr/bin/$(p):$(p)) \
 	      $(foreach p,$(PROCPS_PROGS),procps/bin/$(p):$(p))
+# License texts of everything on the disk -> /usr/share/licenses/<project>/ (see THIRD_PARTY.md)
+TP := $(POSIX)/../../third_party
+gnu_dir = $(firstword $(subst -, ,$(1)))
+LICENSE_FILES := gnu-sel4:$(POSIX)/../../LICENSE gnu-sel4:$(POSIX)/../../THIRD_PARTY.md \
+	sel4:$(MICROKIT_SDK)/LICENSES/GPL-2.0-only.txt sel4:$(MICROKIT_SDK)/LICENSES/BSD-2-Clause.txt \
+	microkit:$(MICROKIT_SDK)/LICENSES/BSD-2-Clause.txt sddf:$(SDDF)/LICENSES/BSD-2-Clause.txt \
+	libvmm:$(LIBVMM)/LICENSES/BSD-2-Clause.txt musl:$(TP)/musl-1.2.6/COPYRIGHT \
+	f-stack:$(TP)/f-stack/LICENSE dash:$(TP)/dash-0.5.13.5/COPYING zsh:$(TP)/zsh-5.9.2/LICENCE \
+	vim:$(TP)/vim-9.2.1172/LICENSE ncurses:$(TP)/ncurses-6.6/COPYING \
+	coreutils:$(TP)/coreutils-9.12/COPYING $(foreach p,$(GNU_PKGS),$(call gnu_dir,$(p)):$(TP)/$(p)/COPYING) \
+	less:$(TP)/less-710/LICENSE procps-ng:$(TP)/procps-ng-4.0.7/COPYING procps-ng:$(TP)/procps-ng-4.0.7/COPYING.LIB \
+	curl:$(TP)/curl-8.22.0/COPYING mbedtls:$(TP)/mbedtls-3.6.7/LICENSE \
+	socat:$(TP)/socat-1.8.1.3/COPYING socat:$(TP)/socat-1.8.1.3/COPYING.OpenSSL \
+	dropbear:$(TP)/dropbear-2026.94/LICENSE spleen:$(TP)/spleen/LICENSE \
+	llvm-compiler-rt:$(SDDF)/LICENSES/Apache-2.0.txt llvm-compiler-rt:$(SDDF)/LICENSES/LLVM-exception.txt
+licenses/.built: $(foreach l,$(LICENSE_FILES),$(lastword $(subst :, ,$(l))))
+	rm -rf licenses && mkdir licenses
+	for l in $(LICENSE_FILES); do d=licenses/$${l%%:*}; mkdir -p $$d; cp $${l#*:} $$d/; done
+	mkdir -p licenses/freebsd licenses/ca-certificates
+	sed -n '1,/\*\//p' $(TP)/f-stack/freebsd/sys/queue.h > licenses/freebsd/BSD-3-Clause
+	echo "Mozilla CA certificates (from https://curl.se/ca/cacert.pem): MPL-2.0, https://mozilla.org/MPL/2.0/" \
+		> licenses/ca-certificates/LICENSE
+	touch $@
 # Data trees copied to the disk: "source:destination"
-DATA_TREES := zsh/inst/usr/share/zsh:/usr/share/zsh vim/runtime-min:/usr/share/vim/vim92 curl/ssl:/etc/ssl/certs
+DATA_TREES := zsh/inst/usr/share/zsh:/usr/share/zsh vim/runtime-min:/usr/share/vim/vim92 curl/ssl:/etc/ssl/certs \
+	      licenses:/usr/share/licenses
 # Symlinks: "name:target". The coreutils ones come from coreutils/programs.txt
 # Linux VM commands available as native ones (bridge, like WSL interop)
 LINUX_CMDS := docker
@@ -305,7 +330,7 @@ SYSFILES := etc/motd etc/profile etc/rc etc/mtab etc/zshrc etc/zprofile etc/shel
 # EXTRA_BINS: ported programs (dash...), as "local/path:name"; LINKS: "name:target"
 EXTRA_BINS ?=
 LINKS ?=
-install.stamp: $(DISK) $(BINS) $(foreach b,$(EXTRA_BINS),$(firstword $(subst :, ,$(b)))) zsh/Src/zsh vim/src/vim procps/.built \
+install.stamp: $(DISK) licenses/.built $(BINS) $(foreach b,$(EXTRA_BINS),$(firstword $(subst :, ,$(b)))) zsh/Src/zsh vim/src/vim procps/.built \
 	       $(addprefix $(POSIX)/rootfs/,$(SYSFILES))
 	set -e; \
 	python3 -c 'import fcntl,sys; fcntl.lockf(open(sys.argv[1],"r+b"), fcntl.LOCK_EX | fcntl.LOCK_NB)' $(DISK) 2>/dev/null \

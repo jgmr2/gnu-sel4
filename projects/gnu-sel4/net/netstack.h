@@ -1,4 +1,5 @@
 /* netstack: the FreeBSD TCP/IP stack (F-Stack) as a seL4 component */
+/* SPDX-License-Identifier: BSD-2-Clause */
 #pragma once
 #include <stdint.h>
 

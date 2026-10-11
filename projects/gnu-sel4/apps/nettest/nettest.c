@@ -3,6 +3,8 @@
  *   nettest [host]      loopback + DNS (UDP) + HTTP request (TCP) to host (default example.com)
  *   nettest local       only what needs no internet (loopback)
  *   nettest serve [p]   TCP server on port p (8080): replies once and exits
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <errno.h>
 #include <netdb.h>

@@ -2,6 +2,8 @@
  * posix_server's terminal: a client of the sDDF serial subsystem (queues in
  * memory shared with serial_virt_rx/tx) with a "line discipline" like the
  * Linux TTY's: echo, line editing, Ctrl-D and raw mode via termios.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <os/sddf.h>
 #include <sddf/serial/queue.h>

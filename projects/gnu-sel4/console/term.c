@@ -9,6 +9,8 @@
  *   insert mode, deferred line wrap like xterm, tab stops
  *   alternate screen (vim, top, less), DECCKM, DEC Special Graphics (borders)
  *   replies: DA, secondary DA, DSR, cursor position (used by `resize`)
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <string.h>
 #include "term.h"

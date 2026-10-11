@@ -5,6 +5,8 @@
  *   netcfg static IP/PREFIX [gateway IP] [dns IP [IP]]   static address
  *   netcfg apply                                    whatever /etc/netcfg.conf says (/etc/rc does it at boot)
  * /etc/netcfg.conf: lines "mode dhcp|static", "address IP/PREFIX", "gateway IP", "dns IP [IP]".
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <arpa/inet.h>
 #include <stdio.h>

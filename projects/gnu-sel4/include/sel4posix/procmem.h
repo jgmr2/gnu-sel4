@@ -16,6 +16,8 @@
  *   0x4000_0000  heap (brk)
  *   0x6000_0000  stack (grows down from PROC_STACK_BASE + PROC_STACK_SIZE)
  *   0x8000_0000  anonymous mmap
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #pragma once
 

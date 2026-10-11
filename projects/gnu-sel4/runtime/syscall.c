@@ -11,6 +11,8 @@
  * delivers them in every reply (message register POSIX_MR_SIGNALS). The
  * handlers and the mask are kept here, and the handler is called before
  * returning from the syscall.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #define _GNU_SOURCE          /* struct statx, sched_* in musl */
 #include <stdint.h>

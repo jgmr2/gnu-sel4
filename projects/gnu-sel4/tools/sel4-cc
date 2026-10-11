@@ -7,6 +7,8 @@
 #
 # Use it to port programs with their own build system:
 #   ./configure --host=x86_64-linux-musl CC=/path/to/sysroot/bin/sel4-cc
+#
+# SPDX-License-Identifier: BSD-2-Clause
 SYSROOT=$(cd "$(dirname "$0")/.." && pwd)
 CC="clang --target=x86_64-linux-musl"
 FLAGS="-nostdinc -isystem $SYSROOT/include -fno-pic -fno-stack-protector"

@@ -1,4 +1,5 @@
 /* Terminal emulator of the graphical console (a subset of xterm: TERM=xterm-256color) */
+/* SPDX-License-Identifier: BSD-2-Clause */
 #pragma once
 #include <stdbool.h>
 #include <stddef.h>

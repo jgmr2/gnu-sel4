@@ -8,6 +8,8 @@
  *
  * Every unknown call is reported by name: that is the list of what is still
  * missing.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <os/sddf.h>
 #include "server.h"

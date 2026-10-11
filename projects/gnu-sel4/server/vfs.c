@@ -12,6 +12,8 @@
  *
  * For now there is a single file system mounted at "/" and paths are
  * normalised lexically ("a/../b" -> "b") before being sent.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <os/sddf.h>
 #include <string.h>

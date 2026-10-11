@@ -15,6 +15,8 @@
  *
  * Signals are decided here (ignore, terminate or mark as pending); the
  * handlers run in the process's runtime (runtime/syscall.c).
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <os/sddf.h>
 #include <string.h>

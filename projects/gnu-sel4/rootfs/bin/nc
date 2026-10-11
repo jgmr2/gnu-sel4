@@ -1,5 +1,7 @@
 #!/bin/sh
 # Minimal nc on top of socat:  nc HOST PORT  |  nc -l PORT  |  nc -u HOST PORT
+#
+# SPDX-License-Identifier: BSD-2-Clause
 case "$1" in
     -l) [ -n "$2" ] || { echo "usage: nc -l PORT" >&2; exit 2; }
         exec socat - "TCP-LISTEN:$2,reuseaddr" ;;

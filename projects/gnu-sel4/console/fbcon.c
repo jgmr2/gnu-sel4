@@ -9,6 +9,8 @@
  *
  * Screen: QEMU bochs-display (VBE "dispi" registers over MMIO, 32-bit linear
  * framebuffer). Font: Spleen 8x16. Keyboard: US layout.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdbool.h>
 #include <stdint.h>

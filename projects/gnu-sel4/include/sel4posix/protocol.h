@@ -16,6 +16,8 @@
  * server cannot sleep in the middle of a PPC, so it replies POSIX_RETRY.
  * The runtime then waits for a seL4 notification on the same channel
  * (the server sends it once there is data or room) and retries.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #pragma once
 

@@ -13,6 +13,8 @@
  *   - read and write: files, directories, symbolic links, hard links,
  *     create, delete, rename, truncate, chmod, chown, statfs
  *   - block cache with immediate writes (write-through), no journal
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdint.h>
 #include <stddef.h>

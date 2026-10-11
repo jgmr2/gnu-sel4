@@ -144,3 +144,10 @@ Third-party ports: `ports/<program>/`.
 | `rootfs/` | initial contents of the ext2 partition (`/etc/rc`, `/etc/profile`, ...) |
 
 Check the disk from the host: `../../dev.sh e2fsck -fn "disk.img?offset=1048576"`.
+
+## License
+
+The code written for GNU/seL4 is under the [BSD-2-Clause](LICENSE) license: anyone may use,
+change and redistribute it, keeping the copyright notice. Everything else is the work of other
+projects, each under its own license; [`THIRD_PARTY.md`](THIRD_PARTY.md) credits all of them, and
+the installed system carries their license texts in `/usr/share/licenses/`.

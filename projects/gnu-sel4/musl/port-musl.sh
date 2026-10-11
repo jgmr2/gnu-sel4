@@ -8,6 +8,8 @@
 #      __sel4_syscall(), implemented by the runtime (projects/gnu-sel4/runtime).
 #   2. Deleting the x86_64 assembly that uses `syscall` directly; musl has
 #      generic C versions of all of it that go through __syscall().
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 SRC=$1; WORK=$2; PREFIX=$3
 

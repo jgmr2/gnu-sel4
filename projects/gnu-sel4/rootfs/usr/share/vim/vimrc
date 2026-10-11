@@ -1,4 +1,5 @@
 " System vimrc (GNU/seL4): what defaults.vim does (vim only loads it when there is no vimrc)
+" SPDX-License-Identifier: BSD-2-Clause
 " plus syntax highlighting and file types
 source $VIMRUNTIME/defaults.vim
 syntax on

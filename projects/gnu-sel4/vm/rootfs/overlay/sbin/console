@@ -1,5 +1,7 @@
 #!/bin/sh
 # VM console: shows nothing until someone presses Enter on it
 # (so it does not clutter the GNU/seL4 screen, which shares the serial port)
+#
+# SPDX-License-Identifier: BSD-2-Clause
 read -r _
 exec /bin/login -f root

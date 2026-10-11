@@ -4,6 +4,8 @@
 # relocatable object with only the ff_* API visible. F-Stack's "host" part (DPDK, Linux)
 # is not used: the netstack component replaces it (projects/gnu-sel4/net/).
 #   Usage: build-fstack.sh <output dir>      Output: <dir>/fstack.o
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 OUT=$(realpath "$1")
 SRC=$(realpath "$(dirname "$0")/../../../../third_party/f-stack")

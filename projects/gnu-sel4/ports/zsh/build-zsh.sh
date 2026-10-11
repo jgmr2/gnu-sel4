@@ -2,6 +2,8 @@
 # Builds zsh for GNU/seL4 with sel4-cc (static: the modules go inside the binary).
 #   usage: build-zsh.sh <zsh-source> <build-dir> <sysroot>
 # Output: <build-dir>/Src/zsh and the functions in <build-dir>/inst/usr/share/zsh
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 

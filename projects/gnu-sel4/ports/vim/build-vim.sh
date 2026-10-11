@@ -2,6 +2,8 @@
 # Builds vim for GNU/seL4 with sel4-cc (text mode, with ncurses).
 #   usage: build-vim.sh <vim-source> <build-dir> <sysroot>
 # Output: <build-dir>/src/vim and a trimmed runtime in <build-dir>/runtime-min
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 

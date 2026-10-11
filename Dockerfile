@@ -1,6 +1,8 @@
 # Development environment for seL4 Microkit
 # Contains: compiler (clang/LLVM), make, gdb. (QEMU runs on the host.)
 # The Microkit SDK lives on the host (./sdk) and is mounted at /work/sdk.
+#
+# SPDX-License-Identifier: BSD-2-Clause
 FROM debian:trixie
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

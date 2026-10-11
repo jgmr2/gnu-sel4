@@ -2,6 +2,8 @@
  * Start-up of a GNU/seL4 program: finds this slot's seL4 IPC buffer in the
  * auxiliary vector and enters musl (__libc_start_main), which calls the
  * program's main().
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stddef.h>
 #include <stdint.h>

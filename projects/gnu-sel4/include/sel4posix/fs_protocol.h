@@ -10,6 +10,8 @@
  * Paths and data travel through a shared buffer of FS_BUF_SIZE bytes. Paths
  * are absolute and already normalised by the VFS (no "." or "..").
  * When an operation takes two paths, the second one starts at FS_BUF_PATH2.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #pragma once
 

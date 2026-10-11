@@ -14,6 +14,8 @@
  *
  * Address: via DHCP (dhcp.c, in front of the stack); the FreeBSD interface is
  * created with the first lease. NETSTACK_PREFERRED_IP (QEMU: 10.0.2.16) is requested first.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <errno.h>
 #include <poll.h>

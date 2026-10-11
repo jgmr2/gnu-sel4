@@ -2,6 +2,8 @@
 # Stage 1 (initramfs): copies the system into a tmpfs and switches to it.
 # Docker needs "/" to be a real file system: pivot_root does not work on
 # the initramfs rootfs.
+#
+# SPDX-License-Identifier: BSD-2-Clause
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 mount -t proc proc /proc
 mkdir -p /newroot

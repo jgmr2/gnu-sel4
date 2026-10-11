@@ -5,6 +5,8 @@
  * It runs at login; if you resize the window, run it again.
  *   resize       sets the size and prints COLUMNS/LINES like xterm's resize
  *   resize -s    sets the size without printing anything
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <poll.h>
 #include <stdio.h>

@@ -10,6 +10,8 @@
  *
  * Retries every 2 s (messages get lost silently). Addresses are in network byte
  * order, as in the packet.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <stdbool.h>
 #include <stdint.h>

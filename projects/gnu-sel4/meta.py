@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
 # Generates the GNU/seL4 system description (gnu-sel4.system) and the sDDF configuration.
 #
 #                       ┌─ posix_server ── processes (created on demand from its untyped)

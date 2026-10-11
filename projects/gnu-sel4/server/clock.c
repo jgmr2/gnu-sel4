@@ -3,6 +3,8 @@
  * (ports 0x70/0x71) and the TSC frequency. Programs receive that data in
  * the auxiliary vector and work out the time without IPC (runtime/syscall.c);
  * fs_ext2 receives it to timestamp files.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <os/sddf.h>
 #include <sddf/timer/client.h>

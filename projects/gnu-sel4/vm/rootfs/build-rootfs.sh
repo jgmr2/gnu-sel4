@@ -3,6 +3,8 @@
 # It runs INSIDE an alpine container that is only used as a tool
 # (see ../../Makefile, target "vm-rootfs").
 #   Salida: out/vmlinuz  out/initramfs.cpio.gz
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 cd "$(dirname "$0")"
 DOCKER_VERSION=29.9.0

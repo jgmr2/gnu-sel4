@@ -2,6 +2,8 @@
 # Microkit 2.3.1 tool with our patches (<cap_untyped>, <cap_cnode>... in <cspace>).
 # Runs on the host: clones the source if missing, applies the patches and builds with Rust in Docker.
 #   Output: third_party/microkit/target/release/microkit
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 cd "$(dirname "$0")"
 PATCHES=$(pwd)

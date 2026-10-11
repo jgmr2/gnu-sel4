@@ -1,4 +1,5 @@
 /* Process test: fork, exec, wait, pipes, dup2, signals and faults. */
+/* SPDX-License-Identifier: BSD-2-Clause */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

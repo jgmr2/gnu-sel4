@@ -17,6 +17,8 @@
  * and places in its root CNode (entries SRV_FREE_ROOT_SLOT..63). A CNode with
  * 2^r entries at root[n] has guard 58 - r, so the cptr (n << 58) | i names its
  * entry i, and (SRV_ROOT_CNODE_SLOT << 58) | n names the CNode itself.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <microkit.h>
 #include <string.h>

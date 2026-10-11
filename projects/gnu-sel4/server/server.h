@@ -4,6 +4,8 @@
  *   proc.c          processes: slots, exec, fork, exit, wait, signals, groups
  *   tty.c           terminal over sDDF serial (line discipline, termios)
  *   vfs.c           descriptors, paths, pipes and files (on top of fs_ext2)
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #pragma once
 #include <stdint.h>

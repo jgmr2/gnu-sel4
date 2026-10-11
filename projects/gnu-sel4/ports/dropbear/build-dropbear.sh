@@ -2,6 +2,8 @@
 # dropbear's ssh client for GNU/seL4: dbclient (ssh), dropbearkey and scp, in a single
 # multi-call binary. The server (dropbear) needs pseudo-terminals: not yet.
 #   usage: build-dropbear.sh <source> <build-dir> <sysroot>     Output: <dir>/dropbearmulti
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"

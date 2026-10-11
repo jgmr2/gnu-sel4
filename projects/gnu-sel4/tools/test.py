@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: BSD-2-Clause
 """make test: automated GNU/seL4 tests in headless QEMU.
 
 Copies the system partition of disk.img to a temporary disk (the real disk is never

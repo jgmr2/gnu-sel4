@@ -1,6 +1,8 @@
 #!/bin/sh
 # socat (serves as nc and much more) for GNU/seL4: no OpenSSL, readline or libwrap.
 #   usage: build-socat.sh <socat-source> <build-dir> <sysroot>     Output: <dir>/socat
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"

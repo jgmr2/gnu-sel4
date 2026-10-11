@@ -1,4 +1,5 @@
 /* Included before everything else in netstack: what the F-Stack headers expect from glibc */
+/* SPDX-License-Identifier: BSD-2-Clause */
 #pragma once
 #include <stdint.h>
 #include <sys/types.h>

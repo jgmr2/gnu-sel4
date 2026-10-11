@@ -1,5 +1,7 @@
 #!/bin/sh
 # System boot: mounts, cgroups, modules, persistent disk and network.
+#
+# SPDX-License-Identifier: BSD-2-Clause
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys

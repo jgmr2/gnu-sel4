@@ -1,5 +1,7 @@
 #!/bin/sh
 # /etc/rc: run by init at boot, before the login shell.
+#
+# SPDX-License-Identifier: BSD-2-Clause
 
 # Native networking: DHCP or a static address, per /etc/netcfg.conf
 netcfg apply

@@ -9,6 +9,8 @@
  *
  * Memory: posix_server's process memory (mem.c). CPU: the time seL4 accounts
  * in each process's scheduling context. No threads, no swap.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <os/sddf.h>
 #include <string.h>

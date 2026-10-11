@@ -3,6 +3,8 @@
 # GNU/seL4 with sel4-cc, static. They read posix_server's virtual /proc (server/procfs.c).
 #   usage: build-procps.sh <procps-source> <build-dir> <sysroot>
 # Output: <build-dir>/inst/usr/local/bin/*
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 

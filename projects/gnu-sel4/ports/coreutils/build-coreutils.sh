@@ -3,6 +3,8 @@
 # binary (src/coreutils; /bin/ls, /bin/cat... are symlinks to it).
 #   usage: build-coreutils.sh <coreutils-source> <build-dir> <sysroot>
 # Output: <build-dir>/src/coreutils and <build-dir>/programs.txt (names of the symlinks)
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 

@@ -8,6 +8,8 @@
  *
  * Each open of /dev/linux is a session. Frames arriving from the agent are
  * kept in the session's inbox until the program reads them.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <os/sddf.h>
 #include <string.h>

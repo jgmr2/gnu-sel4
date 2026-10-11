@@ -3,6 +3,8 @@
 # with sel4-cc, statically, the same way as coreutils.
 #   usage: build-gnu.sh <source> <build-dir> <sysroot> [extra configure arguments...]
 # Output: <build-dir>/inst/usr/bin/* (stripped)
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd); shift 3
 

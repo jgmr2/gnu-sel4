@@ -11,6 +11,8 @@
  * Parts derived from F-Stack's lib/ff_host_interface.c (BSD-2-Clause):
  *   Copyright (c) 2013 Patrick Kelsey. All rights reserved.
  *   Copyright (C) 2017-2021 THL A29 Limited, a Tencent company. All rights reserved.
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <errno.h>
 #include <stdarg.h>

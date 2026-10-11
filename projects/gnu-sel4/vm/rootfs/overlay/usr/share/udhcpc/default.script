@@ -1,5 +1,7 @@
 #!/bin/sh
 # udhcpc script: applies the IP, default route and DNS the DHCP server hands out
+#
+# SPDX-License-Identifier: BSD-2-Clause
 case "$1" in
     deconfig)
         ip addr flush dev "$interface"

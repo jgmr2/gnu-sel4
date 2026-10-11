@@ -3,6 +3,8 @@
 # too) and curl on top, static, without threads (synchronous name resolution).
 #   usage: build-curl.sh <mbedtls-source> <curl-source> <CA-bundle> <build-dir> <sysroot>
 # Output: <dir>/curl/src/curl and <dir>/ssl/ca-certificates.crt
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 MBED=$(cd "$1" && pwd); CURL=$(cd "$2" && pwd); CA=$(realpath "$3"); BUILD=$4; SYSROOT=$(cd "$5" && pwd)
 CC="$SYSROOT/bin/sel4-cc"

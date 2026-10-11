@@ -14,6 +14,8 @@
  * Layout of net_buf (and of the process's shared buffer in these calls):
  *   [0, NET_ADDR_OFF)          data (send/recv) or option (setsockopt/getsockopt)
  *   [NET_ADDR_OFF, +128)       address (bind, connect, accept, sendto, recvfrom...)
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #pragma once
 #include <stdint.h>

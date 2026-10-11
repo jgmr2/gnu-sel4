@@ -2,6 +2,8 @@
 # Builds dash for GNU/seL4 with sel4-cc.
 #   usage: build-dash.sh <dash-source> <build-dir> <sysroot>
 # Output: <build-dir>/src/dash
+#
+# SPDX-License-Identifier: BSD-2-Clause
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)

@@ -1,4 +1,6 @@
 # /etc/zshrc: zsh configuration for everyone on GNU/seL4
+#
+# SPDX-License-Identifier: BSD-2-Clause
 fpath=(/usr/share/zsh/$ZSH_VERSION/functions $fpath)
 autoload -Uz compinit colors
 compinit -u

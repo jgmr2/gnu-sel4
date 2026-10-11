@@ -2,6 +2,8 @@
  * phase1test: what Wayland needs from POSIX (TODO: graphical desktop, Phase 1).
  *   epoll, eventfd, timerfd; AF_UNIX sockets with descriptor passing (SCM_RIGHTS);
  *   shared memory (memfd_create + mmap MAP_SHARED) and file mmap
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
  */
 #define _GNU_SOURCE          /* struct ucred */
 #include <errno.h>
