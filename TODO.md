@@ -98,8 +98,10 @@ Real hardware stays last on purpose: first the system has to be worth booting.
    - [ ] uid/gid per process (real, effective, saved), setuid/setgid, supplementary groups; the
          process owner on created files (today always root)
    - [ ] Permission checks in the VFS and fs_ext2 (owner/group/other bits, sticky /tmp, umask)
-   - [ ] `login` against `/etc/shadow` (musl has `crypt`), `su`/`doas`, a real user account by
-         default; init starts a login prompt instead of root's shell
+   - [ ] `login` against `/etc/shadow` (musl has `crypt`) and a normal user account by default;
+         init starts a login prompt instead of root's shell
+   - [ ] `sudo` (port of sudo 1.9, works with musl and without PAM, via `/etc/shadow`) for root
+         work from the normal account; `/etc/sudoers` with the `wheel` group; `su` as well
    - [ ] Users from the network later on: musl asks an nscd-protocol daemon for users it does not
          find in /etc/passwd (or skarnet's nsss): the hook for item 17
 7. [ ] **Pseudo-terminals** (M): `/dev/ptmx`, openpty. Unlocks the ssh server (dropbear),
