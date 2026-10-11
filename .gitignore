@@ -13,3 +13,5 @@
 
 # Downloads of fetch-deps.sh
 /.cache/
+projects/gnu-sel4/disk.img.*
+__pycache__/

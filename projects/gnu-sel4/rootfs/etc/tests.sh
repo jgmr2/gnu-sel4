@@ -3,7 +3,8 @@
 # exists (make test creates it on a copy of the disk). The results go to /var/log/test-results,
 # which make test reads from the disk after the final power off, and to /dev/kmsg (QEMU's
 # serial port) to follow them live: the serial port is shared and can lose a line.
-#   /etc/test containing "no-net": skip the tests that need the internet.
+#   /etc/test holds words: "no-net" skips the tests that need the internet; "slow" adds the
+#   expensive ones (make test SLOW=1: bigdisk, which also measures the disk speed).
 #
 # SPDX-License-Identifier: BSD-2-Clause
 exec >/dev/kmsg 2>&1
@@ -11,14 +12,17 @@ RESULTS=/var/log/test-results
 : > $RESULTS
 say() { echo "$1"; echo "$1" >> $RESULTS; }
 say "== TESTS: BEGIN =="
+mode=" $(cat /etc/test) "
 failures=0
 total=0
 
-check() {          # check <name> <command...>
+check() {          # check <name> <command...>; output lines starting with "INFO " are always shown; output lines starting with "INFO " are always shown
     name=$1; shift
     total=$((total + 1))
     if "$@" >/tmp/test.log 2>&1; then
         say "TEST $name: ok"
+        while IFS= read -r l; do case $l in "INFO "*) say "    ${l#INFO }";; esac; done </tmp/test.log
+        while IFS= read -r l; do case $l in "INFO "*) say "    ${l#INFO }";; esac; done </tmp/test.log
     else
         say "TEST $name: FAIL ($?)"
         while IFS= read -r l; do say "    $l"; done </tmp/test.log
@@ -70,7 +74,17 @@ check s6-user     sh -c 'out=$(printf "s6-rc -a list | grep -qx 9pd && echo LIST
                          echo "$out" | grep -E "OK|DENIED"; [ "$(s6-svstat -p /run/service/9pd)" -gt 0 ] || { echo "user stopped 9pd"; exit 1; }
                          for w in LIST-OK RC-DENIED SVC-DENIED; do echo "$out" | grep -q $w || exit 1; done'
 check linux-vm    sh -c 'test "$(linux echo hello from the VM)" = "hello from the VM" && linux sh -c "exit 3"; test $? = 3'
-if [ "$(cat /etc/test)" = no-net ]; then
+case $mode in *" slow "*)
+check bigdisk     sh -c 'before=$(df -k / | tail -1 | xargs echo | cut -d" " -f4); echo "free: $before KiB"
+                         dd if=/dev/urandom of=/tmp/big.src bs=1M count=96 iflag=fullblock 2>/dev/null
+                         t0=$(date +%s); cp /tmp/big.src /tmp/big && sync; t1=$(date +%s); a=$(cksum < /tmp/big); t2=$(date +%s)
+                         echo "INFO 96 MiB: write $((t1 - t0)) s, read $((t2 - t1)) s (first group is 128 MiB: this crosses into the next)"
+                         n=$(wc -c < /tmp/big); [ "$n" = 100663296 ] || { echo "size $n"; exit 1; }
+                         b=$(cksum < /tmp/big.src); rm /tmp/big.src; [ "$a" = "$b" ] || { echo "read back differs: $a / $b"; exit 1; }
+                         rm /tmp/big
+                         after=$(df -k / | tail -1 | xargs echo | cut -d" " -f4); echo "free after rm: $after KiB"; [ "$after" -ge $((before - 64)) ]'
+;; esac
+if case $mode in *" no-net "*) true;; *) false;; esac; then
     check nettest-local nettest local
 else
     check nettest nettest

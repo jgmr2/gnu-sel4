@@ -6,7 +6,7 @@ Copies the system partition of disk.img to a temporary disk (the real disk is ne
 touched), creates /etc/test on the copy (so /etc/rc runs /etc/tests.sh), boots QEMU and
 reads the "TEST ..." lines from the serial port. Exits with 0 only if all of them pass.
 
-  usage: tools/test.py [--no-net] [--timeout SECONDS]
+  usage: tools/test.py [--no-net] [--slow] [--timeout SECONDS]
 """
 import argparse, fcntl, os, select, shutil, subprocess, sys, time
 
@@ -16,13 +16,14 @@ DISK = os.path.join(PROJ, "disk.img")
 BUILD = os.environ.get("BUILD_DIR") or os.path.join(PROJ, "build")   # docker compose: build-docker/
 COPY = os.path.join(BUILD, "test-disk.img")
 MARKER = os.path.join(BUILD, "test-marker")
-PART1_END = (1 + 64) << 20                 # MBR + ext2 partition (EXT2_MB in system.mk)
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-net", action="store_true", help="skip the tests that need the internet")
-    ap.add_argument("--timeout", type=int, default=240, help="limit in seconds")
+    ap.add_argument("--slow", action="store_true", help="add the expensive tests (bigdisk: ~3 minutes more)")
+    ap.add_argument("--timeout", type=int, default=0, help="limit in seconds (default 240, 480 with --slow)")
     a = ap.parse_args()
+    a.timeout = a.timeout or (480 if a.slow else 240)
 
     for f in ("sel4_32.elf", "loader.img"):
         if not os.path.exists(os.path.join(BUILD, f)):
@@ -33,12 +34,14 @@ def main():
         except OSError:
             sys.exit("disk.img is in use (QEMU running?): close it to run the tests")
         fcntl.lockf(d, fcntl.LOCK_UN)
+        mbr = d.read(512); d.seek(0)              # MBR + ext2 partition (its size from the MBR)
+        part1_end = (int.from_bytes(mbr[454:458], "little") + int.from_bytes(mbr[458:462], "little")) * 512
         with open(COPY, "wb") as c:
-            c.write(d.read(PART1_END))
+            c.write(d.read(part1_end))
             c.truncate(os.path.getsize(DISK))    # the rest (Docker partition) empty, sparse
 
     with open(MARKER, "w") as m:
-        m.write("no-net" if a.no_net else "full")
+        m.write(" ".join(["no-net" if a.no_net else "full"] + (["slow"] if a.slow else [])))
     # debugfs: directly if it is here (inside the Docker image), otherwise through dev.sh
     top = os.path.dirname(os.path.dirname(PROJ))
     rel = lambda p: os.path.relpath(p, top).replace(os.sep, "/")

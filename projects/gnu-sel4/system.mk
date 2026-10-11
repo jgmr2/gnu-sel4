@@ -336,7 +336,7 @@ $(IMAGE_FILE) $(REPORT_FILE): $(IMAGES) $(SYSTEM_FILE)
 #   2: the VM's /var/lib/docker (the VM formats it ext4)  -> CLIENT_VMM
 # Created only once (persistent). To recreate it: make disk-reset
 DISK := $(POSIX)/disk.img
-EXT2_MB := 64
+EXT2_MB := 512
 DOCKER_GB := 8
 $(DISK):
 	set -e; \
@@ -367,7 +367,9 @@ install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EX
 	set -e; \
 	python3 -c 'import fcntl,sys; fcntl.lockf(open(sys.argv[1],"r+b"), fcntl.LOCK_EX | fcntl.LOCK_NB)' $(DISK) 2>/dev/null \
 		|| { echo "ERROR: $(DISK) is in use (QEMU running?): close it and run make again"; exit 1; }; \
-	dd if=$(DISK) of=part.img bs=1M skip=1 count=$(EXT2_MB) status=none; \
+	part1=$$(python3 -c 'import sys; m=open(sys.argv[1],"rb").read(512); print(int.from_bytes(m[458:462],"little")//2048)' $(DISK)); \
+	[ $$part1 -ge $(EXT2_MB) ] || echo "NOTE: the ext2 partition of $(DISK) has $$part1 MiB (new disks: $(EXT2_MB)): make disk-grow"; \
+	dd if=$(DISK) of=part.img bs=1M skip=1 count=$$part1 conv=sparse status=none; \
 	{ echo "mkdir /sbin"; echo "mkdir /mnt"; echo "mkdir /run"; \
 	  for b in $(BINS) $(EXTRA_BINS); do \
 	    src=$${b%%:*}; name=$$(basename $${b##*:}); dir=/bin; \
