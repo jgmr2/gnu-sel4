@@ -140,7 +140,7 @@ Third-party ports: `ports/<program>/`.
 | `microkit/` | patch to the Microkit tool and `build-tool.sh` |
 | `vm/` | the VM's VMM, `vm/agent/` (sel4-agent), `vm/rootfs/` (busybox + Docker) |
 | `apps/` | init, 9pd, linux, netcfg, resize, nettest and tests (proctest, phase1test, filetest) |
-| `ports/` | dash, coreutils, ncurses, zsh, vim, procps, curl, socat, dropbear and `fstack` (builds F-Stack's FreeBSD part) |
+| `ports/` | dash, coreutils, ncurses, zsh, vim, procps, curl, socat, dropbear, `gnu` (grep, sed, findutils, diffutils, tar, gzip, less) and `fstack` (builds F-Stack's FreeBSD part) |
 | `rootfs/` | initial contents of the ext2 partition (`/etc/rc`, `/etc/profile`, ...) |
 
 Check the disk from the host: `../../dev.sh e2fsck -fn "disk.img?offset=1048576"`.

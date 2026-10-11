@@ -75,9 +75,9 @@ Cost: **S** = one session or less · **M** = a few sessions · **L** = weeks. Ea
 cheap and unlock a lot; later ones are expensive or only pay off once the earlier ones exist.
 Real hardware stays last on purpose: first the system has to be worth booting.
 
-1. [ ] **Everyday tools** (S): GNU grep, sed, findutils (find, xargs), diffutils, less, tar, gzip.
-       Same recipe as coreutils (`./configure` + gnulib with `sel4-cc`). Without them any real
-       session hits a wall; s6-rc scripts and the desktop builds need them too
+1. [x] **Everyday tools** (S): GNU grep 3.12, sed 4.10, findutils 4.11 (find, xargs), diffutils
+       3.12, tar 1.35, gzip 1.15 and less 710, built by one generic script (`ports/gnu/build-gnu.sh`,
+       same recipe as coreutils; gnulib test suites left out). Test `gnu-tools` in `make test`
 2. [ ] **Licensing** (S): choose a license for our own code, SPDX headers, `THIRD_PARTY.md`.
        The repository is public: without a license nobody may legally reuse or contribute
 3. [ ] **Fetch-dependencies script** (S): downloads and checks everything in `DEPENDENCIES.md`, so

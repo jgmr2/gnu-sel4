@@ -207,8 +207,21 @@ dropbear/dropbearmulti: $(SYSROOT_READY) $(POSIX)/ports/dropbear/build-dropbear.
 dropbear.bin: dropbear/dropbearmulti
 	llvm-strip -o $@ $<
 
+# Everyday GNU tools and less (ports/gnu/build-gnu.sh): sources and "package/program"
+GNU_PKGS := grep-3.12 sed-4.10 findutils-4.11.0 diffutils-3.12 tar-1.35 gzip-1.15 less-710
+GNU_PROGS := grep/grep grep/egrep grep/fgrep sed/sed findutils/find findutils/xargs \
+	     diffutils/cmp diffutils/diff diffutils/diff3 diffutils/sdiff tar/tar \
+	     gzip/gzip gzip/gunzip gzip/zcat gzip/zgrep gzip/zless gzip/zmore gzip/zdiff gzip/zcmp less/less
+GNU_ARGS_diffutils := gl_cv_func_strcasecmp_works=yes
+GNU_ARGS_less := --with-regex=posix LIBS=-lncursesw
+gnu-%/.built: $(SYSROOT_READY) $(NCURSES) $(POSIX)/ports/gnu/build-gnu.sh
+	$(POSIX)/ports/gnu/build-gnu.sh $(POSIX)/../../third_party/$(filter $*-%,$(GNU_PKGS)) gnu-$* $(SYSROOT) $(GNU_ARGS_$*)
+	touch $@
+$(foreach n,$(sort $(dir $(GNU_PROGS))),$(eval gnu-$(n)bin/%: gnu-$(n).built ; @test -f $$@))
+GNU_BINS := $(foreach p,$(GNU_PROGS),gnu-$(dir $(p))bin/$(notdir $(p)):$(notdir $(p)))
+
 EXTRA_BINS := dash/src/dash:dash coreutils.bin:coreutils zsh/Src/zsh:zsh vim.bin:vim curl.bin:curl \
-	      socat.bin:socat dropbear.bin:dropbearmulti \
+	      socat.bin:socat dropbear.bin:dropbearmulti $(GNU_BINS) \
 	      $(foreach p,$(NC_PROGS),ncurses/inst/usr/bin/$(p):$(p)) \
 	      $(foreach p,$(PROCPS_PROGS),procps/bin/$(p):$(p))
 # Data trees copied to the disk: "source:destination"

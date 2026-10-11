@@ -23,6 +23,11 @@ check phase1test  phase1test
 check filetest    filetest
 check hardlinks   sh -c 'rm -f /tmp/e1 /tmp/e2; echo x >/tmp/e1 && ln /tmp/e1 /tmp/e2 && [ "$(stat -c %h /tmp/e1)" = 2 ] && rm /tmp/e1 && [ "$(cat /tmp/e2)" = x ] && [ "$(stat -c %h /tmp/e2)" = 1 ] && rm /tmp/e2'
 check coreutils   sh -c '[ "$(ls /bin | wc -l)" -gt 100 ] && [ "$(echo hello | tr a-z A-Z)" = HELLO ]'
+check gnu-tools   sh -c 'set -e; rm -rf /tmp/gt; mkdir /tmp/gt; cd /tmp/gt; printf "a\nb\nc\n" > f
+                         test "$(grep -c b f)" = 1; test "$(sed s/b/B/ f | tr -d "\n")" = aBc
+                         test "$(find . -name f)" = ./f; cp f g; echo d >> g; ! diff f g >/dev/null
+                         tar czf x.tgz f g; mkdir o; tar xzf x.tgz -C o; cmp f o/f; cmp g o/g
+                         test "$(zcat x.tgz | tar tf - | xargs echo)" = "f g"; less -V >/dev/null; cd /; rm -rf /tmp/gt'
 check vim         vim -es -c 'qa!'
 check procps      sh -c 'ps -e | wc -l | test "$(cat)" -ge 3 && free >/dev/null && uptime >/dev/null'
 check dhcp        sh -c 'case "$(cat /proc/net/dhcp)" in *bound*10.0.2.16/24*) ;; *) cat /proc/net/dhcp; exit 1;; esac'

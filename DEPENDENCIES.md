@@ -18,6 +18,13 @@
 | `third_party/cacert/cacert.pem` | https://curl.se/ca/cacert.pem | Mozilla certificates from 2026-09-25 |
 | `third_party/socat-1.8.1.3` | http://www.dest-unreach.org/socat/download/ | 1.8.1.3 |
 | `third_party/dropbear-2026.94` | https://matt.ucc.asn.au/dropbear/releases/ | 2026.94 |
+| `third_party/grep-3.12` | https://ftp.gnu.org/gnu/grep/ | 3.12 |
+| `third_party/sed-4.10` | https://ftp.gnu.org/gnu/sed/ | 4.10 |
+| `third_party/findutils-4.11.0` | https://ftp.gnu.org/gnu/findutils/ | 4.11.0 |
+| `third_party/diffutils-3.12` | https://ftp.gnu.org/gnu/diffutils/ | 3.12 |
+| `third_party/tar-1.35` | https://ftp.gnu.org/gnu/tar/ | 1.35 |
+| `third_party/gzip-1.15` | https://ftp.gnu.org/gnu/gzip/ | 1.15 |
+| `third_party/less-710` | https://www.greenwoodsoftware.com/less/ | 710 |
 | `third_party/spleen` | https://github.com/fcambus/spleen | 2.2.0 (`spleen-8x16.bdf`, LICENSE) |
 
 To do: a script that downloads them all.
