@@ -17,29 +17,35 @@
 # Dependencies (fetch-deps.sh): next to the repository, or elsewhere (the Docker image uses /deps)
 export DEPS            ?= $(abspath ../..)
 export MICROKIT_SDK    ?= $(DEPS)/sdk/microkit-sdk-2.3.1
+# make LINUX_VM=no (also run, test): no Linux VM, on a kernel without VT-x, for machines that
+# cannot give seL4 VT-x (CI runners, AMD hosts); in build-novm/ (system.mk)
+export LINUX_VM        ?= yes
+ifeq ($(LINUX_VM),no)
+export MICROKIT_BOARD  := x86_64_generic
+QEMU_VMX               :=
+else
 export MICROKIT_BOARD  := x86_64_generic_vtx
+QEMU_VMX               := ,+vmx
+endif
 # make RELEASE=1 (also run, test): kernel and system without debugging, in build-release/.
 # Measured ~10 % faster on system-call-heavy work (fork, exec); it loses the components' debug
 # messages (faults, mount, DHCP) on the serial port, so debug stays the default
 ifneq ($(RELEASE),)
 export MICROKIT_CONFIG := release
-export BUILD_DIR       ?= $(abspath build-release)
 endif
 # make PLATFORM=latitude7390 [iso]: the live system for the real laptop, in its own directory
 # (see system.mk); the ISO boots from GRUB (UEFI or BIOS, e.g. from a Ventoy USB stick) and runs
 # entirely in RAM: no disk driver is included, so no disk is ever touched
 export PLATFORM        ?= qemu
-ifneq ($(PLATFORM),qemu)
-export BUILD_DIR       ?= $(abspath build-$(PLATFORM))
-endif
+# One build directory per variant: build[-PLATFORM][-release][-novm] (docker compose sets its own,
+# build-docker/: its dependency paths differ, /deps)
+export BUILD_DIR       ?= $(abspath build$(if $(filter-out qemu,$(PLATFORM)),-$(PLATFORM))$(if $(RELEASE),-release)$(if $(filter no,$(LINUX_VM)),-novm))
 export MICROKIT_CONFIG ?= debug
 # Our own Microkit tool (third_party/microkit, branch gnu-sel4: <cap_untyped>, <cap_cnode>...)
 export MICROKIT_TOOL   := $(DEPS)/third_party/microkit/target/release/microkit
 export LIBVMM          := $(DEPS)/libvmm
 export SDDF            := $(LIBVMM)/dep/sddf
 export POSIX           := $(abspath .)
-# docker compose uses its own (build-docker/): its dependency paths differ (/deps)
-export BUILD_DIR       ?= $(abspath build)
 
 IMAGE := $(BUILD_DIR)/loader.img
 # Host port forwards: host:8080 -> VM:80, host:2222 -> VM:22,
@@ -85,7 +91,7 @@ endif
 run:
 	@test -f $(IMAGE) || { echo "Missing $(IMAGE): build with ../../dev.sh make"; exit 1; }
 	qemu-system-x86_64 -machine q35 -accel kvm \
-		-cpu host,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave,+vmx,+vme,+invtsc \
+		-cpu host,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave$(QEMU_VMX),+vme,+invtsc \
 		-kernel $(BUILD_DIR)/sel4_32.elf -initrd $(IMAGE) -m 6G $(DISPLAY_OPTS) -serial mon:stdio \
 		-drive file=disk.img,format=raw,if=none,id=hd -device virtio-blk-pci,drive=hd,addr=0x3.0 \
 		-netdev user,id=net0,$(HOSTFWD) -device virtio-net-pci,netdev=net0,addr=0x4.0

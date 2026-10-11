@@ -3,7 +3,7 @@
 # Input variables: MICROKIT_SDK MICROKIT_BOARD MICROKIT_CONFIG SDDF LIBVMM POSIX BUILD_DIR DEPS
 #
 # SPDX-License-Identifier: BSD-2-Clause
-SUPPORTED_BOARDS := x86_64_generic_vtx
+SUPPORTED_BOARDS := x86_64_generic_vtx x86_64_generic
 # Third-party sources (fetch-deps.sh puts them in $(DEPS)/third_party)
 TP := $(DEPS)/third_party
 TOOLCHAIN ?= clang
@@ -55,10 +55,24 @@ FS_FLAGS := -DFS_RAMDISK
 else
 $(error unknown PLATFORM $(PLATFORM): qemu or latitude7390)
 endif
+# --- the Linux VM (meta.py has the same choice) ---
+#   LINUX_VM=yes  (default) the VM with Docker, on a kernel with VT-x
+#   LINUX_VM=no   none: a kernel without VT-x (x86_64_generic), no VMM; /dev/linux does not exist.
+#                 For machines without VT-x for seL4, such as CI runners (make test LINUX_VM=no)
+LINUX_VM ?= yes
+export LINUX_VM
+ifeq ($(LINUX_VM),yes)
+VM_ELFS := client_vmm.elf network_copy.elf
+else ifeq ($(LINUX_VM),no)
+VM_ELFS :=
+SERVER_FLAGS += -DNO_LINUX_VM
+else
+$(error LINUX_VM must be yes or no)
+endif
 
 IMAGES := serial_driver.elf serial_virt_tx.elf serial_virt_rx.elf $(BLK_ELFS) \
-	  $(ETH_ELF) network_virt_rx.elf network_virt_tx.elf network_copy.elf timer_driver.elf \
-	  fs_ext2.elf posix_server.elf client_vmm.elf netstack.elf netstack_copy.elf fbcon.elf timer_ticker.elf
+	  $(ETH_ELF) network_virt_rx.elf network_virt_tx.elf $(VM_ELFS) timer_driver.elf \
+	  fs_ext2.elf posix_server.elf netstack.elf netstack_copy.elf fbcon.elf timer_ticker.elf
 $(IMAGES): libsddf_util_debug.a
 
 # make TIMER_TICKER_ONLY=1: never arm the HPET alarm (to check the ticker alone, as on the laptop)
@@ -348,7 +362,7 @@ $(SYSTEM_FILE): $(POSIX)/meta.py $(IMAGES) console.$(CONSOLE)
 		--board $(MICROKIT_BOARD) --output . --sdf $@
 	# large regions (VM RAM, netstack memory) in 2 MiB pages (sdfgen has no option for it)
 	sed -i -E 's|(<memory_region name="(guest_ram\|netstack_heap)" size="0x[0-9a-f]+") />|\1 page_size="0x200000" />|' $@
-	grep -q 'name="guest_ram".*page_size' $@
+	[ "$(LINUX_VM)" = no ] || grep -q 'name="guest_ram".*page_size' $@
 	if [ "$(CONSOLE)" = serial ]; then \
 	  $(OBJCOPY) --update-section .device_resources=serial_driver_device_resources.data serial_driver.elf && \
 	  $(OBJCOPY) --update-section .serial_driver_config=serial_driver_config.data serial_driver.elf; \
@@ -364,18 +378,20 @@ $(SYSTEM_FILE): $(POSIX)/meta.py $(IMAGES) console.$(CONSOLE)
 	  $(OBJCOPY) --update-section .blk_driver_config=blk_driver.data blk_driver.elf && \
 	  $(OBJCOPY) --update-section .blk_virt_config=blk_virt.data blk_virt.elf && \
 	  $(OBJCOPY) --update-section .blk_client_config=blk_client_fs_ext2.data fs_ext2.elf && \
-	  $(OBJCOPY) --update-section .blk_client_config=blk_client_CLIENT_VMM.data client_vmm.elf && \
+	  { [ "$(LINUX_VM)" = no ] || $(OBJCOPY) --update-section .blk_client_config=blk_client_CLIENT_VMM.data client_vmm.elf; } && \
 	  $(OBJCOPY) --update-section .device_resources=eth_driver_device_resources.data $(ETH_ELF); \
 	fi
 	$(OBJCOPY) --update-section .net_driver_config=net_driver.data $(ETH_ELF)
 	$(OBJCOPY) --update-section .net_virt_rx_config=net_virt_rx.data network_virt_rx.elf
 	$(OBJCOPY) --update-section .net_virt_tx_config=net_virt_tx.data network_virt_tx.elf
-	$(OBJCOPY) --update-section .net_copy_config=net_copy_vm_net_copier.data network_copy.elf
 	$(OBJCOPY) --update-section .device_resources=timer_driver_device_resources.data timer_driver.elf
-	$(OBJCOPY) --update-section .timer_client_config=timer_client_CLIENT_VMM.data client_vmm.elf
-	$(OBJCOPY) --update-section .serial_client_config=serial_client_CLIENT_VMM.data client_vmm.elf
-	$(OBJCOPY) --update-section .net_client_config=net_client_CLIENT_VMM.data client_vmm.elf
-	$(OBJCOPY) --update-section .vmm_config=vmm_CLIENT_VMM.data client_vmm.elf
+	if [ "$(LINUX_VM)" = yes ]; then \
+	  $(OBJCOPY) --update-section .net_copy_config=net_copy_vm_net_copier.data network_copy.elf && \
+	  $(OBJCOPY) --update-section .timer_client_config=timer_client_CLIENT_VMM.data client_vmm.elf && \
+	  $(OBJCOPY) --update-section .serial_client_config=serial_client_CLIENT_VMM.data client_vmm.elf && \
+	  $(OBJCOPY) --update-section .net_client_config=net_client_CLIENT_VMM.data client_vmm.elf && \
+	  $(OBJCOPY) --update-section .vmm_config=vmm_CLIENT_VMM.data client_vmm.elf; \
+	fi
 	$(OBJCOPY) --update-section .net_client_config=net_client_netstack.data netstack.elf
 	$(OBJCOPY) --update-section .timer_client_config=timer_client_netstack.data netstack.elf
 	$(OBJCOPY) --update-section .net_copy_config=net_copy_netstack_net_copier.data netstack_copy.elf

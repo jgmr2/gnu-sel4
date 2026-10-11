@@ -2,7 +2,8 @@
 #   docker compose run --rm build        build everything and install it into disk.img
 #   docker compose run --rm test         automated tests in headless QEMU (needs /dev/kvm)
 #   docker compose run --rm shell        a shell in the build environment
-#   docker compose run --rm vm-rootfs    kernel + initramfs of the Linux VM (once, before build)
+#   docker compose run --rm vm-rootfs    kernel + initramfs of the Linux VM (once, before build:
+#                                        vm-deps fetches the pinned packages, then no network)
 #   docker compose run --rm --service-ports run
 #                                        boot it: screen over VNC on localhost:5900, serial console
 #                                        and QEMU monitor in this terminal (Ctrl-a x quits)
@@ -49,9 +50,20 @@ services:
   shell:
     <<: *gnu-sel4
     command: bash
-  vm-rootfs:
-    image: alpine:3.24
+  vm-deps:                           # the VM image's pinned pieces (deps.lock) -> third_party/
+    <<: *gnu-sel4
+    working_dir: /work
+    command: ./fetch-deps.sh --only-vm
+  vm-rootfs:                         # as make vm-rootfs (deps.lock, "VM image")
+    depends_on:
+      vm-deps:
+        condition: service_completed_successfully
+    image: alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6   # make vm-lock writes it
+    network_mode: none
     volumes:
       - .:/work
+    environment:
+      PKGS: /work/third_party/alpine-3.24
+      LOCK: /work/deps.lock
     working_dir: /work/projects/gnu-sel4/vm/rootfs
     command: sh -c './build-rootfs.sh && chown -R "$$(stat -c %u:%g /work)" out'

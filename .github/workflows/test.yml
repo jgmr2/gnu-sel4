@@ -1,0 +1,71 @@
+# Builds GNU/seL4 and runs its test suite on every push and pull request.
+#
+# GitHub's runners are virtual machines: they give QEMU KVM, but not VT-x for a guest of its own
+# (and many are AMD), which the Linux VM inside seL4 needs. So this job builds the system without
+# the VM (make LINUX_VM=no: a kernel without VT-x, no VMM; the VM's two tests are skipped) in the
+# development image (jgmr2/gnu-sel4-dev, .github/workflows/docker-image.yml) and runs make test.
+# The full make test, with the VM, needs a machine with VT-x: the "full" job, by hand
+# (Actions > Test > Run workflow), on a self-hosted runner labelled "vtx".
+#
+# SPDX-License-Identifier: BSD-2-Clause
+name: Test
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: "Also run the full make test (with the Linux VM) on the self-hosted runner labelled vtx"
+        type: boolean
+        default: false
+
+jobs:
+  novm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      IMAGE: jgmr2/gnu-sel4-dev:latest
+      # Inside the container (as root, so the checkout's owner does not matter)
+      IN: docker run --rm --user root -v ${{ github.workspace }}:/work -w /work/projects/gnu-sel4 -e BUILD_DIR=/work/projects/gnu-sel4/build-ci -e LINUX_VM=no
+    steps:
+      - uses: actions/checkout@v4
+      - name: KVM for QEMU
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+          grep -m1 -o -w -E 'vmx|svm' /proc/cpuinfo || echo "no vmx/svm flag"
+      - name: Development image
+        run: docker pull -q "$IMAGE"
+      - name: Build (make LINUX_VM=no)
+        run: $IN "$IMAGE" make
+      - name: Test (make test LINUX_VM=no NO_NET=1)
+        run: $IN --device /dev/kvm "$IMAGE" make test NO_NET=1
+      - name: Serial log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-serial-log
+          path: projects/gnu-sel4/build-ci/test-serial.log
+          if-no-files-found: ignore
+
+  full:
+    if: github.event_name == 'workflow_dispatch' && inputs.full
+    runs-on: [self-hosted, vtx]
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch the dependencies
+        run: ./fetch-deps.sh
+      - name: The VM image
+        working-directory: projects/gnu-sel4
+        run: make vm-rootfs
+      - name: Build and test
+        working-directory: projects/gnu-sel4
+        run: |
+          docker run --rm --user root -v "$PWD/../..":/work -w /work/projects/gnu-sel4 \
+              -e BUILD_DIR=/work/projects/gnu-sel4/build-ci-full jgmr2/gnu-sel4-dev:latest make
+          docker run --rm --user root --device /dev/kvm -v "$PWD/../..":/work -w /work/projects/gnu-sel4 \
+              -e BUILD_DIR=/work/projects/gnu-sel4/build-ci-full jgmr2/gnu-sel4-dev:latest make test

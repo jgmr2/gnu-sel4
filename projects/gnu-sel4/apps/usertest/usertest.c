@@ -80,7 +80,8 @@ int main(int argc, char **argv)
         if (chown("/tmp/ut/mine", 0, 0) == 0 || errno != EPERM) _exit(25);
         if (access("/tmp/ut/rootfile", R_OK) == 0 || access("/tmp/ut/mine", W_OK) != 0) _exit(26);
         if (open("/etc/passwd", O_RDONLY) < 0) _exit(27);                    /* 0644: readable */
-        if (open("/dev/linux", O_RDWR) >= 0 || errno != EACCES) _exit(28);    /* not in wheel */
+        /* not in wheel (ENOENT: a system built without the VM has no such device) */
+        if (open("/dev/linux", O_RDWR) >= 0 || (errno != EACCES && errno != ENOENT)) _exit(28);
         if (open("/dev/kmsg", O_WRONLY) >= 0 || errno != EACCES) _exit(29);   /* the system log */
         if (syscall(SYS_reboot, 0xfee1dead, 672274793, 0x4321fedc, 0) == 0 || errno != EPERM) _exit(30);
         pid_t q = fork();

@@ -5,6 +5,7 @@
 #   ./fetch-deps.sh --check      only report what is missing or does not match
 #   ./fetch-deps.sh --no-vm      leave out the VM image's pieces (entries marked "vm"; the Docker
 #                                image does: make vm-rootfs runs on the host)
+#   ./fetch-deps.sh --only-vm    only those (docker compose's vm-deps service)
 # Needs: sh, curl, tar (xz, bzip2, gzip), git, sha256sum. Downloads are cached in .cache/.
 #
 # SPDX-License-Identifier: BSD-2-Clause
@@ -12,9 +13,12 @@ set -eu
 cd "$(dirname "$0")"
 ROOT=$(pwd)
 CACHE=${CACHE:-$ROOT/.cache/downloads}
-CHECK=0 NOVM=0
+CHECK=0 NOVM=0 ONLYVM=0
 for a in "$@"; do
-    case "$a" in --check) CHECK=1 ;; --no-vm) NOVM=1 ;; *) echo "usage: $0 [--check] [--no-vm]" >&2; exit 2 ;; esac
+    case "$a" in
+    --check) CHECK=1 ;; --no-vm) NOVM=1 ;; --only-vm) ONLYVM=1 ;;
+    *) echo "usage: $0 [--check] [--no-vm | --only-vm]" >&2; exit 2 ;;
+    esac
 done
 missing=0
 
@@ -102,6 +106,7 @@ grep -v '^\s*#' deps.lock | grep -v '^\s*$' | while read -r kind dest src ref re
     # shellcheck disable=SC2086
     set -- $rest
     [ $NOVM = 1 ] && [ "$(opt vm "$@")" = yes ] && continue
+    [ $ONLYVM = 1 ] && [ "$(opt vm "$@")" != yes ] && continue
     if [ "$kind" = image ]; then say "$dest" "image $src@$ref (docker pulls it)"; continue; fi
     if [ -e "$dest" ]; then
         if present_ok "$kind" "$dest" "$ref" "$@"; then say "$dest" ok; else say "$dest" "DIFFERS from deps.lock"; fi

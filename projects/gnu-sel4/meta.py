@@ -72,6 +72,9 @@ VM_DISK_DATA_SIZE = 0x100_0000        # 16 MiB disk buffer for the VM
 # driver with no card; the firmware's framebuffer; no QEMU-only I/O ports)
 PLATFORM = os.environ.get("PLATFORM", "qemu")
 LIVE = PLATFORM != "qemu"
+# make LINUX_VM=no: no VM (no VMM, no bridge, no VM network client or console), for a kernel
+# without VT-x (board x86_64_generic), e.g. on CI runners
+LINUX_VM = os.environ.get("LINUX_VM", "yes") == "yes"
 
 # Console: "graphical" (screen + PS/2 keyboard, console/fbcon.c) or "serial" (UART COM1).
 # Both are the sDDF "serial driver": the rest of the system does not change. make CONSOLE=serial
@@ -141,7 +144,7 @@ def generate(sdf, sdf_file, output_dir):
                                   priority=195, budget=100, period=400)
     net_virt_tx = ProtectionDomain("net_virt_tx", "network_virt_tx.elf", priority=194, budget=20000)
     net_virt_rx = ProtectionDomain("net_virt_rx", "network_virt_rx.elf", priority=193)
-    vm_net_copier = ProtectionDomain("vm_net_copier", "network_copy.elf", priority=192, budget=20000)
+    vm_net_copier = ProtectionDomain("vm_net_copier", "network_copy.elf", priority=192, budget=20000) if LINUX_VM else None
     if not LIVE:
         add_region(sdf, eth_driver, "hw_net_rings", 0x10000, VIRTIO_NET_VQUEUES_PADDR, 0x7000_0000, False)
         add_region(sdf, eth_driver, "virtio_net_regs", 0x4000, NET_BAR, 0x6000_0000, False)
@@ -167,13 +170,15 @@ def generate(sdf, sdf_file, output_dir):
 
     # ------------------------------------------------------------ VM with Docker
     # Priority below native processes: the shell stays responsive even when the VM is busy
-    vmm = ProtectionDomain("CLIENT_VMM", "client_vmm.elf", priority=90, stack_size=0x4000)
-    vm = VirtualMachine("linux", [VirtualMachine.Vcpu(id=0)])
-    vmm_system = Vmm(sdf, vmm, vm, None)
-    guest_ram = MemoryRegion(sdf, "guest_ram", GUEST_RAM_SIZE)
-    sdf.add_mr(guest_ram)
-    vmm.add_map(Map(guest_ram, GUEST_RAM_VMM_VADDR, "rw"))
-    vm.add_map(Map(guest_ram, 0x0, "rwx"))
+    vmm = vmm_system = None
+    if LINUX_VM:
+        vmm = ProtectionDomain("CLIENT_VMM", "client_vmm.elf", priority=90, stack_size=0x4000)
+        vm = VirtualMachine("linux", [VirtualMachine.Vcpu(id=0)])
+        vmm_system = Vmm(sdf, vmm, vm, None)
+        guest_ram = MemoryRegion(sdf, "guest_ram", GUEST_RAM_SIZE)
+        sdf.add_mr(guest_ram)
+        vmm.add_map(Map(guest_ram, GUEST_RAM_VMM_VADDR, "rw"))
+        vm.add_map(Map(guest_ram, 0x0, "rwx"))
 
     # ------------------------------------------------------------ native networking: FreeBSD TCP/IP stack
     # Above posix_server (which calls it over PPC) and below the drivers
@@ -189,7 +194,8 @@ def generate(sdf, sdf_file, output_dir):
 
     timer_driver = ProtectionDomain("timer_driver", "timer_driver.elf", priority=254)
     timer_system = Sddf.Timer(sdf, None, timer_driver)
-    timer_system.add_client(vmm)
+    if LINUX_VM:
+        timer_system.add_client(vmm)
     timer_system.add_client(server)          # poll() and nanosleep() timeouts
     timer_system.add_client(netstack)        # TCP/IP stack clock
     add_x86_hpet(sdf, timer_driver)
@@ -203,7 +209,8 @@ def generate(sdf, sdf_file, output_dir):
 
     for pd in (serial_driver, serial_virt_tx, serial_virt_rx, eth_driver, net_virt_tx, net_virt_rx,
                vm_net_copier, fs, server, vmm, timer_driver, ticker, netstack, netstack_copier):
-        sdf.add_pd(pd)
+        if pd:
+            sdf.add_pd(pd)
     sdf.add_channel(Channel(ticker, timer_driver, a_id=0, b_id=60))     # TICK_CH in timer/hpet_timer.c
     if not LIVE:
         sdf.add_pd(blk_driver)
@@ -216,6 +223,7 @@ def generate(sdf, sdf_file, output_dir):
     # ------------------------------------------------------------ GNU/seL4 <-> VM bridge
     # Two byte queues (sDDF serial format) that the VM sees as /dev/hvc1:
     #   rx: posix_server -> VM     tx: VM -> posix_server
+    # Without the VM posix_server keeps its side mapped (bridge_init) but nobody is at the other end
     for name, server_var, vmm_var, vaddr in [
         ("bridge_rx_queue", "br_rx_queue", "bridge_rx_queue", 0x3200_0000),
         ("bridge_rx_data",  "br_rx_data",  "bridge_rx_data",  0x3201_0000),
@@ -225,26 +233,32 @@ def generate(sdf, sdf_file, output_dir):
         mr = MemoryRegion(sdf, name, BRIDGE_DATA_SIZE if name.endswith("data") else 0x1000)
         sdf.add_mr(mr)
         server.add_map(Map(mr, vaddr, "rw", setvar_vaddr=server_var))
-        vmm.add_map(Map(mr, 0x2_0000_0000 + vaddr, "rw", setvar_vaddr=vmm_var))
-    sdf.add_channel(Channel(server, vmm, a_id=SERVER_BRIDGE_CHANNEL_ID, b_id=VMM_BRIDGE_CHANNEL_ID))
+        if LINUX_VM:
+            vmm.add_map(Map(mr, 0x2_0000_0000 + vaddr, "rw", setvar_vaddr=vmm_var))
+    if LINUX_VM:
+        sdf.add_channel(Channel(server, vmm, a_id=SERVER_BRIDGE_CHANNEL_ID, b_id=VMM_BRIDGE_CHANNEL_ID))
 
     # ------------------------------------------------------------ sDDF subsystems
     serial = Sddf.Serial(sdf, None, serial_driver, serial_virt_tx, virt_rx=serial_virt_rx, enable_color=False,
-                         begin_str="GNU/seL4: Ctrl-\\ 1 Enter -> VM console (Docker); Ctrl-\\ 0 Enter -> GNU/seL4\r\n")
+                         begin_str="GNU/seL4: Ctrl-\\ 1 Enter -> VM console (Docker); Ctrl-\\ 0 Enter -> GNU/seL4\r\n"
+                         if LINUX_VM else "GNU/seL4 (no Linux VM in this build)\r\n")
     serial.add_client(server)        # 0: GNU/seL4
-    serial.add_client(vmm)           # 1: VM
+    if LINUX_VM:
+        serial.add_client(vmm)       # 1: VM
 
-    systems = [serial, timer_system, vmm_system]
+    systems = [serial, timer_system] + ([vmm_system] if LINUX_VM else [])
     if not LIVE:
         blk = Sddf.Blk(sdf, None, blk_driver, blk_virt)
         blk.add_client(fs, partition=0, data_size=FS_CACHE_SIZE)      # partition 1: GNU/seL4 ext2
-        blk.add_client(vmm, partition=1, data_size=VM_DISK_DATA_SIZE) # partition 2: the VM's /var/lib/docker
+        if LINUX_VM:
+            blk.add_client(vmm, partition=1, data_size=VM_DISK_DATA_SIZE) # partition 2: the VM's /var/lib/docker
         systems.append(blk)
 
     net = Sddf.Net(sdf, None, eth_driver, net_virt_tx, net_virt_rx)
     # Fixed MACs (otherwise sdfgen makes one up on every build and DHCP hands out a new lease);
     # 02:... = locally administered
-    net.add_client_with_copier(vmm, vm_net_copier, mac_addr="02:5e:14:00:00:0a")
+    if LINUX_VM:
+        net.add_client_with_copier(vmm, vm_net_copier, mac_addr="02:5e:14:00:00:0a")
     net.add_client_with_copier(netstack, netstack_copier, mac_addr="02:5e:14:00:00:10")
 
     systems.append(net)

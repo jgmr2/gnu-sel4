@@ -72,7 +72,9 @@ def main():
         c.seek(sb + 58); c.write((0).to_bytes(2, "little"))   # s_state: not clean
 
     qemu = ["qemu-system-x86_64", "-machine", "q35", "-accel", "kvm",
-            "-cpu", "host,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave,+vmx,+vme,+invtsc",
+            # VT-x for the Linux VM, unless the system was built without it (make LINUX_VM=no)
+            "-cpu", "host,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave%s,+vme,+invtsc"
+                    % ("" if os.environ.get("LINUX_VM") == "no" else ",+vmx"),
             "-kernel", os.path.join(BUILD, "sel4_32.elf"), "-initrd", os.path.join(BUILD, "loader.img"),
             "-m", "6G", "-display", "none", "-vga", "none", "-device", "bochs-display,addr=0x5",
             "-serial", "stdio", "-monitor", "none",

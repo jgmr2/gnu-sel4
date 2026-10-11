@@ -141,6 +141,8 @@ check s6-rc       sh -c 'cat /tmp/s6-rc.log; grep -v "^$" /tmp/s6-svscan.log | t
 check s6-user     sh -c 'out=$(printf "s6-rc -a list | grep -qx 9pd && echo LIST-OK\ns6-rc -d change 9pd 2>/dev/null || echo RC-DENIED\ns6-svc -d /run/service/9pd 2>/dev/null || echo SVC-DENIED\nexit\n" | login -f user 2>&1)
                          echo "$out" | grep -E "OK|DENIED"; [ "$(s6-svstat -p /run/service/9pd)" -gt 0 ] || { echo "user stopped 9pd"; exit 1; }
                          for w in LIST-OK RC-DENIED SVC-DENIED; do echo "$out" | grep -q $w || exit 1; done'
+[ -e /dev/linux ] && VM=1 || { VM=; say "(no Linux VM in this build: vm-bounds and linux-vm skipped)"; }
+[ -z "$VM" ] ||
 check vm-bounds   sh -c 'linux sh -c "i=0; until [ -e /mnt/sel4/etc/passwd ] || [ \$i -gt 100 ]; do sleep 0.2; i=\$((i+1)); done"
                          out=$(printf "linux id -u </dev/null\nlinux sh -c \"cat /mnt/sel4/etc/shadow >/dev/null 2>&1 && echo SHADOW-READ; echo SHADOW-TRIED\" </dev/null\nlinux sh -c \"echo x > /mnt/sel4/tmp/vm-user-file\" </dev/null\nexit\n" | login -f user 2>&1)
                          echo "$out" | grep -qx 1000 || { echo "the VM command did not run as uid 1000: $out"; exit 1; }
@@ -151,6 +153,7 @@ check vm-bounds   sh -c 'linux sh -c "i=0; until [ -e /mnt/sel4/etc/passwd ] || 
                          [ "$(linux id -u)" = 0 ] || exit 1
                          linux sh -c "cat /mnt/sel4/etc/shadow" </dev/null >/dev/null 2>&1 && { echo "the VM root read /etc/shadow (no squashing)"; exit 1; }
                          true'
+[ -z "$VM" ] ||
 check linux-vm    sh -c 'test "$(linux echo hello from the VM)" = "hello from the VM" && linux sh -c "exit 3"; test $? = 3'
 case $mode in *" slow "*)
 TEST_TIMEOUT=300

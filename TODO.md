@@ -137,9 +137,11 @@ Principles the plan follows:
    - [x] The VM image pinned: the base image by digest, every Alpine package (what goes in and
          what builds it) and Docker by SHA-256, in deps.lock (`make vm-lock` moves them on);
          built with no network, the same bytes every time (sorted cpio, fixed dates, gzip -n)
-   - [ ] CI that works: GitHub's runners are VMs themselves, and the full test needs QEMU with
-         KVM plus VT-x for the Linux VM inside seL4 (nested twice). A test mode without the Linux
-         VM for GitHub Actions on every push, and the full `make test` on a self-hosted runner
+   - [x] A build without the Linux VM (`make LINUX_VM=no`: a kernel without VT-x, no VMM,
+         no /dev/linux; 9pd idles): 31 tests pass. GitHub Actions builds and tests it on every
+         push (`.github/workflows/test.yml`)
+   - [ ] The full `make test` on a self-hosted runner with VT-x (the workflow's "full" job, by
+         hand); a cache for the CI build (from scratch: ~11 minutes)
 3. [ ] **File system robustness I** (M). Needs: nothing. The disk takes more and more data and
        its only protection is the recount of free blocks
    - [ ] e2fsprogs ported: e2fsck run when the disk mounts dirty (and native mke2fs/resize2fs)

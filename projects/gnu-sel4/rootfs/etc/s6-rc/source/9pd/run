@@ -3,4 +3,7 @@
 # A longrun: supervised by s6, started again if it dies.
 #
 # SPDX-License-Identifier: BSD-2-Clause
+# A system built without the VM (make LINUX_VM=no) has no /dev/linux: nothing to serve, so the
+# service only idles (still supervised, as the s6 tests expect)
+[ -e /dev/linux ] || { echo "9pd: no Linux VM in this system: idle"; exec sleep infinity; }
 exec /sbin/9pd /mnt/sel4 </dev/null

@@ -353,7 +353,9 @@ static int dev_type(const char *abs)
     if (!strcmp(abs, "/dev/tty") || !strcmp(abs, "/dev/console")) return OF_TTY;
     if (!strcmp(abs, "/dev/null")) return OF_NULL;
     if (!strcmp(abs, "/dev/zero")) return OF_ZERO;
+#ifndef NO_LINUX_VM                                    /* make LINUX_VM=no: no VM, no device */
     if (!strcmp(abs, "/dev/linux")) return OF_LINUX;   /* session with the Linux VM */
+#endif
     if (!strcmp(abs, "/dev/kmsg")) return OF_KMSG;     /* messages to the serial port */
     if (!strcmp(abs, "/dev/urandom") || !strcmp(abs, "/dev/random")) return OF_RANDOM;
     return OF_FREE;

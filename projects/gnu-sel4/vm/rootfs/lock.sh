@@ -56,5 +56,8 @@ awk -v f="$new" -v b="$begin" -v e="$end" '
     index($0, e) == 1 { skip = 0 }
     !skip' "$LOCK" > "$LOCK.new"
 mv "$LOCK.new" "$LOCK"
+# docker compose's vm-rootfs service names the same base image
+sed -i -E -e "s|alpine:[0-9.]+@sha256:[0-9a-f]+|$ALPINE@${digest#*@}|" -e "s|third_party/alpine-[0-9.]+|third_party/alpine-${ALPINE#alpine:}|" \
+    "$(dirname "$LOCK")/docker-compose.yml"
 rm -f "$new"
 echo "deps.lock: VM image pinned ($ALPINE ${digest#*@}, $(grep -c ' vm$' "$LOCK") entries)"

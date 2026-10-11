@@ -92,6 +92,11 @@ make run CONSOLE=serial         # everything over the serial port (also build wi
 make test                       # automated tests in headless QEMU (does not touch disk.img)
 ```
 
+Without VT-x for seL4 (an AMD host, a CI runner): `../../dev.sh make LINUX_VM=no` and
+`make test LINUX_VM=no` build and test everything but the Linux VM (a kernel without VT-x, in
+`build-novm/`; the VM's two tests are skipped). GitHub Actions runs exactly that on every push
+(`.github/workflows/test.yml`); the full test, with the VM, needs a machine with VT-x.
+
 `make` refuses to install while `disk.img` is in use (QEMU running). QEMU on the host:
 `sudo apt install qemu-system-x86` (needs KVM with nested virtualisation). `make run` gives
 QEMU 6 GiB (so the PCI BARs land at 0x7000000000), but the host only spends ~2.2 GB:
