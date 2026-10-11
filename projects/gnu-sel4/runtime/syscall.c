@@ -1150,6 +1150,26 @@ long __sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6
         *(unsigned long *)a3 = 1;
         return sizeof(long);
     case SYS_sched_setaffinity: return 0;
+    /* credentials: the IDs come back in MR1..MR3, the group lists cross through the buffer */
+    case SYS_getresuid:
+    case SYS_getresgid: {
+        long r = server_call(n, 0, 0, 0, 0, 0, 0);
+        if (r == 0) {
+            *(uint32_t *)a1 = server_result(1);
+            *(uint32_t *)a2 = server_result(2);
+            *(uint32_t *)a3 = server_result(3);
+        }
+        return r;
+    }
+    case SYS_getgroups: {
+        long r = server_call(n, a1, 0, 0, 0, 0, 0);
+        if (r > 0 && a1 > 0) memcpy((void *)a2, (void *)PROC_BUF_BASE, r * sizeof(uint32_t));
+        return r;
+    }
+    case SYS_setgroups:
+        if (a1 < 0 || (size_t)a1 * sizeof(uint32_t) > POSIX_BUF_SIZE) return -EINVAL;
+        if (a1) memcpy((void *)PROC_BUF_BASE, (void *)a2, a1 * sizeof(uint32_t));
+        return server_call(n, a1, 0, 0, 0, 0, 0);
     case SYS_sched_yield:    seL4_Yield(); return 0;
     case SYS_fadvise64:      return 0;                        /* only advice */
     /* Not implemented yet, with the error programs expect in order to use their fallback

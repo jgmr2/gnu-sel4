@@ -163,7 +163,9 @@ static long load_program(struct proc *p, const char *path, const char *args, uin
     long ino = vfs_lookup(abs, true, &mode, &size);
     if (ino < 0) return ino;
     if ((mode & S_IFMT) != S_IFREG) return -EACCES;
-    if (!(mode & 0111)) return -EACCES;
+    uint32_t fuid = 0, fgid = 0;
+    vfs_owner(ino, &fuid, &fgid);
+    if (!cred_may(p, mode, fuid, fgid, 1)) return -EACCES;      /* execute permission */
 
     Elf64_Ehdr eh;
     if (vfs_read_file(ino, 0, &eh, sizeof eh) != sizeof eh) return -ENOEXEC;
@@ -269,7 +271,8 @@ static long load_program(struct proc *p, const char *path, const char *args, uin
     uint64_t auxv[] = {
         AT_PHDR, phdr_vaddr, AT_PHENT, sizeof(Elf64_Phdr), AT_PHNUM, eh.e_phnum,
         AT_PAGESZ, 4096, AT_ENTRY, eh.e_entry, AT_RANDOM, at_random,
-        AT_UID, 0, AT_EUID, 0, AT_GID, 0, AT_EGID, 0, AT_SECURE, 0,
+        AT_UID, p->uid, AT_EUID, p->euid, AT_GID, p->gid, AT_EGID, p->egid,
+        AT_SECURE, p->euid != p->uid || p->egid != p->gid,       /* set-ID program: libc is careful */
         AT_SEL4_IPCBUF, PROC_IPCBUF,
         AT_SEL4_EPOCH, clock_epoch, AT_SEL4_TSC0, clock_tsc0, AT_SEL4_TSCHZ, clock_tsc_hz,
         AT_NULL, 0,
@@ -307,6 +310,7 @@ static long load_program(struct proc *p, const char *path, const char *args, uin
     }
 
     vfs_close_cloexec(p);
+    cred_exec(p, mode, fuid, fgid);   /* set-user-ID / set-group-ID programs */
     p->sig_caught = 0;                 /* handlers do not survive exec */
     p->sig_pending &= p->sig_ignored ? ~p->sig_ignored : ~0ULL;
     set_name(p, abs);
@@ -357,6 +361,7 @@ static long sys_fork(uintptr_t brk_cur, uintptr_t mmap_cur, uintptr_t sp, uintpt
     c->sig_caught = cur->sig_caught;
     c->sig_ignored = cur->sig_ignored;
     c->nice = cur->nice;
+    cred_copy(c, cur);
     memcpy(c->name, cur->name, sizeof c->name);
     memcpy(c->exe, cur->exe, sizeof c->exe);
     memcpy(c->cmdline, cur->cmdline, cur->cmdline_len);
@@ -499,7 +504,7 @@ void proc_signal_pgrp(int pgid, int sig)
 static long sys_kill(long pid, long sig)
 {
     if (sig < 0 || sig > 64) return -EINVAL;
-    int found = 0;
+    int found = 0, allowed = 0;
     for (int i = 0; i < NPROC; i++) {
         struct proc *q = &procs[i];
         if (q->state != P_RUN) continue;
@@ -507,9 +512,11 @@ static long sys_kill(long pid, long sig)
                      pid == -1 ? q->pid != 1 && q != cur : q->pgid == -pid;   /* -1: all but init and itself */
         if (!match) continue;
         found++;
+        if (!cred_may_signal(cur, q)) continue;
+        allowed++;
         proc_signal(q, sig);
     }
-    return found ? 0 : -ESRCH;
+    return !found ? -ESRCH : !allowed ? -EPERM : 0;
 }
 
 /* getpriority/setpriority. which: 0 = process, 1 = group, 2 = user (everyone is root).
@@ -728,6 +735,7 @@ void proc_start_init(void)
     p->pid = 1;
     p->ppid = 0;
     p->pgid = p->sid = 1;
+    cred_init_root(p);
     vfs_proc_tty(p);
     tty_set_fg(1);
 

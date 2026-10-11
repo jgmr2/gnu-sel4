@@ -74,6 +74,7 @@
 
 #define NPROC 32           /* process records (including zombies) */
 #define NFD   64           /* descriptors per process */
+#define NGROUPS_ 32        /* supplementary groups per process */
 
 enum { P_FREE, P_RUN, P_ZOMBIE };
 
@@ -85,6 +86,11 @@ struct proc {
     bool orphan;                    /* its parent exited: nobody will wait() */
     uint64_t img_end;               /* end of the loaded image (for fork) */
     char name[32];
+
+    /* credentials (cred.c) */
+    uint32_t uid, euid, suid, gid, egid, sgid;
+    uint32_t groups[NGROUPS_];
+    int ngroups;
 
     /* files */
     struct { int of; bool cloexec; } fdt[NFD];
@@ -136,6 +142,16 @@ void proc_signal(struct proc *p, int sig);
 void proc_signal_pgrp(int pgid, int sig);
 void proc_exit(struct proc *p, int status);
 bool proc_fault(int slot, long label);
+
+/* cred.c: user and group IDs, permission checks */
+void cred_init_root(struct proc *p);
+void cred_copy(struct proc *to, const struct proc *from);
+void cred_exec(struct proc *p, uint32_t mode, uint32_t file_uid, uint32_t file_gid);
+bool cred_in_group(const struct proc *p, uint32_t gid);
+bool cred_may(const struct proc *p, uint32_t mode, uint32_t uid, uint32_t gid, int want);
+bool cred_may_signal(const struct proc *p, const struct proc *q);
+bool cred_handles(long nr);
+long cred_syscall(long nr, long a1, long a2, long a3);
 
 /* mem.c: slots and their memory, on demand */
 extern unsigned long mem_pages_used;
@@ -221,3 +237,4 @@ void vfs_close_cloexec(struct proc *p);
 long vfs_normalize(struct proc *p, const char *path, char *out);
 long vfs_lookup(const char *abs, bool follow, uint32_t *mode, uint64_t *size);
 long vfs_read_file(uint32_t ino, uint64_t off, void *dst, size_t len);
+long vfs_owner(uint32_t ino, uint32_t *uid, uint32_t *gid);

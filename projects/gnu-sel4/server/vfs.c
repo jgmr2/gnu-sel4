@@ -437,7 +437,7 @@ static long do_open(long dirfd, uint32_t flags, uint32_t mode)
         long res = fs_lookup(abs, !(flags & O_NOFOLLOW), &fmode, &size);
         if (res == -ENOENT && (flags & O_CREAT)) {
             fs_set_path(0, abs);
-            res = fs_call(FS_OP_CREATE, S_IFREG | (mode & 07777 & ~cur->umask), 0, 0);
+            res = fs_call(FS_OP_CREATE, S_IFREG | (mode & 07777 & ~cur->umask), cur->euid, cur->egid);
             fmode = S_IFREG;
             size = 0;
             created = true;
@@ -1223,13 +1223,13 @@ static long path_op(long nr, long dirfd, long a, long b)
         if ((a & S_IFMT) == S_IFIFO || (a & S_IFMT) == S_IFREG || !(a & S_IFMT)) {
             if (dev_type(abs) != OF_FREE || is_proc(abs)) return -EEXIST;
             fs_set_path(0, abs);
-            r = fs_call(FS_OP_CREATE, ((a & S_IFMT) ? (a & S_IFMT) : S_IFREG) | (a & 07777 & ~cur->umask), 0, 0);
+            r = fs_call(FS_OP_CREATE, ((a & S_IFMT) ? (a & S_IFMT) : S_IFREG) | (a & 07777 & ~cur->umask), cur->euid, cur->egid);
             return r < 0 ? r : 0;
         }
         return -EPERM;
     case __NR_mkdir:
         fs_set_path(0, abs);
-        r = fs_call(FS_OP_CREATE, S_IFDIR | (a & 07777 & ~cur->umask), 0, 0);
+        r = fs_call(FS_OP_CREATE, S_IFDIR | (a & 07777 & ~cur->umask), cur->euid, cur->egid);
         return r < 0 ? r : 0;
     case __NR_unlink:
         if (dev_type(abs) != OF_FREE) return -EBUSY;
@@ -1310,7 +1310,7 @@ static long do_symlink(long newdirfd)
     if (r) return r;
     fs_set_path(0, target);
     fs_set_path(FS_BUF_PATH2, link);
-    return fs_call(FS_OP_SYMLINK, 0, 0, 0);
+    return fs_call(FS_OP_SYMLINK, cur->euid, cur->egid, 0);
 }
 
 /* poll(): struct pollfd[] in the buffer; timeout_ns < 0 = no timeout */
@@ -1486,7 +1486,7 @@ static long usock_bind(struct ofile *f, long alen)
             if (usocks[i].state != US_FREE && !strcmp(usocks[i].name, name)) return -EADDRINUSE;
     } else {                                            /* a socket file: fails if the path exists */
         fs_set_path(0, name);
-        long ino = fs_call(FS_OP_CREATE, S_IFSOCK_ | (0777 & ~cur->umask), 0, 0);
+        long ino = fs_call(FS_OP_CREATE, S_IFSOCK_ | (0777 & ~cur->umask), cur->euid, cur->egid);
         if (ino == -EEXIST) return -EADDRINUSE;
         if (ino < 0) return ino;
         u->ino = ino;
@@ -2161,6 +2161,16 @@ long vfs_normalize(struct proc *p, const char *path, char *out)
 long vfs_lookup(const char *abs, bool follow, uint32_t *mode, uint64_t *size)
 {
     return fs_lookup(abs, follow, mode, size);
+}
+
+/* Owner of an inode (struct stat: st_uid at 28, st_gid at 32) */
+long vfs_owner(uint32_t ino, uint32_t *uid, uint32_t *gid)
+{
+    long r = fs_call(FS_OP_STAT, ino, 0, 0);
+    if (r < 0) return r;
+    memcpy(uid, (char *)fs_buf + 28, 4);
+    memcpy(gid, (char *)fs_buf + 32, 4);
+    return 0;
 }
 
 /* Reads from a file into server memory (for the program loader) */

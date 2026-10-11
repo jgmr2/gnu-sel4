@@ -36,13 +36,13 @@ enum fs_op {
     FS_OP_GETDENTS,
     /* MR1: inode -> buf: link target (no '\0'); result: length */
     FS_OP_READLINK,
-    /* buf: path, MR1: mode (S_IFREG or S_IFDIR | permissions) -> created inode */
+    /* buf: path, MR1: mode (file type | permissions), MR2: owner uid, MR3: gid -> created inode */
     FS_OP_CREATE,
     /* buf: path, MR1: 1 = it is rmdir */
     FS_OP_UNLINK,
     /* buf: old path, buf+FS_BUF_PATH2: new path */
     FS_OP_RENAME,
-    /* buf: link target, buf+FS_BUF_PATH2: path of the new link */
+    /* buf: link target, buf+FS_BUF_PATH2: path of the new link; MR1: owner uid, MR2: gid */
     FS_OP_SYMLINK,
     /* MR1: inode, MR2: new mode (permissions only) */
     FS_OP_CHMOD,

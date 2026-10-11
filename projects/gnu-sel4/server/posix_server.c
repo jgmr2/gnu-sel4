@@ -72,19 +72,15 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
     /* A FIFO open that waited and was abandoned (a signal, then something else): drop its count */
     if (cur->fifo_wait && n != __NR_open && n != __NR_openat) fifo_cancel_wait(cur);
 
-    if (proc_handles(n)) {
+    if (cred_handles(n)) {
+        r = cred_syscall(n, a1, a2, a3);
+    } else if (proc_handles(n)) {
         r = proc_syscall(n, a1, a2, a3, a4, a5);
     } else if (vfs_handles(n)) {
         r = vfs_syscall(n, a1, a2, a3, a4, a5, a6);
     } else {
         switch (n) {
         case __NR_uname:   r = sys_uname(); break;
-        case __NR_getuid: case __NR_geteuid:
-        case __NR_getgid: case __NR_getegid:
-                           r = 0; break;
-        case __NR_setuid: case __NR_setgid:
-                           r = a1 == 0 ? 0 : -EPERM; break;
-        case __NR_getgroups: r = 0; break;
         /* sleep: the runtime passes the remaining ns; the timer wakes it up */
         case __NR_nanosleep:
             if (a1 <= 0) { r = 0; break; }

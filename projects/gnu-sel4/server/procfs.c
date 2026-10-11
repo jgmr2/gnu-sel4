@@ -248,9 +248,12 @@ static size_t generate(int id, struct proc *p)
         uint64_t kb = (p->slot >= 0 ? mem_slot_pages(p->slot) : 0) * 4;
         char st = state_of(p);
         OUT("Name:\t%s\nUmask:\t%04o\nState:\t%c (%s)\nTgid:\t%d\nNgid:\t0\nPid:\t%d\nPPid:\t%d\n"
-            "TracerPid:\t0\nUid:\t0\t0\t0\t0\nGid:\t0\t0\t0\t0\nFDSize:\t%d\nGroups:\t\n",
+            "TracerPid:\t0\nUid:\t%u\t%u\t%u\t%u\nGid:\t%u\t%u\t%u\t%u\nFDSize:\t%d\nGroups:\t",
             p->name, p->umask, st, st == 'Z' ? "zombie" : st == 'S' ? "sleeping" : "running",
-            p->pid, p->pid, p->orphan ? 1 : p->ppid, NFD);
+            p->pid, p->pid, p->orphan ? 1 : p->ppid, p->uid, p->euid, p->suid, p->euid,
+            p->gid, p->egid, p->sgid, p->egid, NFD);
+        for (int g = 0; g < p->ngroups; g++) OUT("%u ", p->groups[g]);
+        OUT("\n");
         OUT("VmPeak:\t%8lu kB\nVmSize:\t%8lu kB\nVmRSS:\t%8lu kB\nRssAnon:\t%8lu kB\n"
             "RssFile:\t       0 kB\nRssShmem:\t       0 kB\nVmSwap:\t       0 kB\nThreads:\t1\n",
             kb, kb, kb, kb);
@@ -310,6 +313,10 @@ long procfs_stat(const char *abs, void *kstat)
     *(uint64_t *)(st + 16) = kind == PROCFS_DIR ? 2 : 1;            /* st_nlink */
     *(uint32_t *)(st + 24) = kind == PROCFS_DIR ? S_IFDIR | 0555
                            : kind == PROCFS_LINK ? S_IFLNK | 0777 : S_IFREG | 0444;
+    if (p) {                                                        /* /proc/<pid>: its owner (ps) */
+        *(uint32_t *)(st + 28) = p->euid;
+        *(uint32_t *)(st + 32) = p->egid;
+    }
     *(uint64_t *)(st + 56) = 1024;                                  /* st_blksize */
     uint64_t t = clock_epoch + (p ? p->start_ns : 0) / 1000000000ULL;
     *(uint64_t *)(st + 72) = t;                                     /* atime, mtime, ctime */

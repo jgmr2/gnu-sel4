@@ -928,7 +928,7 @@ static long op_getdents(uint32_t ino, uint64_t pos, uint32_t max)
     return used;
 }
 
-static long op_create(const char *path, uint32_t mode)
+static long op_create(const char *path, uint32_t mode, uint32_t uid, uint32_t gid)
 {
     const char *name;
     uint32_t nlen;
@@ -948,6 +948,8 @@ static long op_create(const char *path, uint32_t mode)
     struct ext2_inode in;
     memset(&in, 0, sizeof(in));
     in.i_mode = mode;
+    in.i_uid = uid & 0xffff; in.i_uid_high = uid >> 16;            /* the creator (posix_server says who) */
+    in.i_gid = gid & 0xffff; in.i_gid_high = gid >> 16;
     in.i_links_count = is_dir ? 2 : 1;
     in.i_atime = in.i_ctime = in.i_mtime = now();
     if (is_dir) {
@@ -1108,11 +1110,11 @@ static long op_rename(const char *from, const char *to)
     return write_inode(ino, &in);
 }
 
-static long op_symlink(const char *target, const char *path)
+static long op_symlink(const char *target, const char *path, uint32_t uid, uint32_t gid)
 {
     size_t tlen = strlen(target);
     if (tlen >= BS) return -ENAMETOOLONG;
-    int64_t ino = op_create(path, S_IFLNK | 0777);
+    int64_t ino = op_create(path, S_IFLNK | 0777, uid, gid);
     if (ino < 0) return ino;
     struct ext2_inode in;
     if (read_inode(ino, &in)) return -EIO;
@@ -1213,7 +1215,7 @@ static long dispatch(long op, uint64_t a1, uint64_t a2, uint64_t a3)
         return read_link(a1, &in, buf, FS_BUF_SIZE);
     case FS_OP_CREATE:
         buf[FS_PATH_MAX - 1] = 0;
-        return op_create(buf, a1);
+        return op_create(buf, a1, a2, a3);
     case FS_OP_UNLINK:
         buf[FS_PATH_MAX - 1] = 0;
         return op_unlink(buf, a1);
@@ -1224,7 +1226,7 @@ static long dispatch(long op, uint64_t a1, uint64_t a2, uint64_t a3)
     case FS_OP_SYMLINK:
         buf[FS_PATH_MAX - 1] = 0;
         buf[FS_BUF_PATH2 + FS_PATH_MAX - 1] = 0;
-        return op_symlink(buf, buf + FS_BUF_PATH2);
+        return op_symlink(buf, buf + FS_BUF_PATH2, a1, a2);
     case FS_OP_LINK:
         buf[FS_PATH_MAX - 1] = 0;
         buf[FS_BUF_PATH2 + FS_PATH_MAX - 1] = 0;
