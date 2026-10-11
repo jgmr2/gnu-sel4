@@ -4,7 +4,7 @@
 export PATH=/bin:/sbin:/usr/bin
 [ -n "$HOME" ] || export HOME=/root
 export TERM=xterm-256color
-if [ "$(id -u)" = 0 ]; then PS1="$(id -un)@$(hostname):\$PWD# "; else PS1="$(id -un)@$(hostname):\$PWD\$ "; fi
+if [ "$(id -u)" = 0 ]; then PS1="$(id -un)@$(uname -n):\$PWD# "; else PS1="$(id -un)@$(uname -n):\$PWD\$ "; fi
 cd "$HOME"
 # real window size (it does not arrive by itself over the serial port; `resize` measures it again)
 [ -t 0 ] && resize -s

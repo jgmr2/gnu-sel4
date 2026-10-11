@@ -107,8 +107,12 @@ int main(int argc, char **argv)
     const char *target = argc > 1 + lock ? argv[1 + lock] : NULL;
     struct passwd *me = getpwuid(getuid());
     if (!me) { fputs("passwd: who are you?\n", stderr); return 1; }
-    if (!target) target = me->pw_name;
-    if (getuid() != 0 && (lock || strcmp(target, me->pw_name))) {
+    static char tbuf[64];                               /* getpw* reuse one static buffer: copy */
+    snprintf(tbuf, sizeof tbuf, "%s", target ? target : me->pw_name);
+    target = tbuf;
+    static char mine[64];
+    snprintf(mine, sizeof mine, "%s", me->pw_name);
+    if (getuid() != 0 && (lock || strcmp(target, mine))) {
         fputs("passwd: only root can change another user's password or lock an account\n", stderr);
         return 1;
     }

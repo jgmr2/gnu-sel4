@@ -107,7 +107,7 @@ Real hardware stays last on purpose: first the system has to be worth booting.
    - [x] `make test` starts from a disk marked dirty with a wrong free count, ends with `poweroff`
          and checks that QEMU exits on its own, that the disk is clean and that e2fsck passes
    - [ ] A full fsck (port e2fsprogs) for deeper damage; the journal (item 16) avoids most of it
-6. [ ] **Users and permissions** (M): today everything runs as root and nothing is checked
+6. [~] **Users and permissions** (M)
    - [x] uid/gid per process (real, effective, saved), setuid/setgid, supplementary groups;
          set-ID programs; new files belong to their creator; kill checks permission (cred.c)
    - [x] Permission checks: fs_ext2 checks the search permission of every directory on a path
@@ -115,11 +115,12 @@ Real hardware stays last on purpose: first the system has to be worth booting.
          directory to create, remove or rename, the sticky bit, owner-or-root for chmod/chown/
          utimes, write to connect to a socket; access() uses the real IDs; installation makes
          everything root-owned with standard modes (/tmp 1777, /root 700, /home/user 700)
-   - [ ] `login` against `/etc/shadow` (musl has `crypt`) and a normal user account by default;
-         the login session becomes an s6-rc longrun (a getty-like service) instead of init's
-         respawn loop
-   - [ ] `sudo` (port of sudo 1.9, works with musl and without PAM, via `/etc/shadow`) for root
-         work from the normal account; `/etc/sudoers` with the `wheel` group; `su` as well
+   - [x] `login` (/etc/shadow, SHA-512 crypt; a password must be chosen on the first login),
+         `passwd` (set-user-ID root) and `chpasswd`; root is locked, `user` is in wheel; init
+         runs login on the console. Accounts and network settings are never overwritten
+   - [ ] The login session as an s6-rc longrun (a getty-like service) instead of init's loop
+   - [x] sudo 1.9.17p2 (static, no PAM, no plugins), wheel may run anything, its own log;
+         `!use_pty` until there are pseudo-terminals (item 7). `su` is not ported: `sudo -s`
    - [ ] Memory limits per process and per user (a page budget in mem.c, like RLIMIT_AS):
          today one process can take the whole 768 MiB pool (a native denial of service)
    - [ ] Users from the network later on: musl asks an nscd-protocol daemon for users it does not

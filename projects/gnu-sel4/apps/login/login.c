@@ -4,7 +4,8 @@
  * /etc/group, gid, uid), goes to its home and starts its shell as a login shell.
  *   login              ask on the terminal (/sbin/init runs it on the console)
  *   login -f USER      no password (root only), as getty-like programs use it
- * An empty password field logs in without a password; "!" or "*" means locked.
+ * An empty password field logs in without a password, and on a terminal the user must choose
+ * one before the session starts; "!" or "*" means locked.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -18,6 +19,7 @@
 #include <string.h>
 #include <termios.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 static int read_line(const char *prompt, char *buf, size_t len, int echo)
 {
@@ -63,11 +65,24 @@ static int password_ok(const struct passwd *pw, const char *given)
 
 static void become(const struct passwd *pw)
 {
+    int needs_password = pw->pw_uid != 0 && !*hash_of(pw);    /* while still root: shadow is 0600 */
     if (initgroups(pw->pw_name, pw->pw_gid) || setgid(pw->pw_gid) || setuid(pw->pw_uid)) {
         perror("login");
         exit(1);
     }
     if (chdir(pw->pw_dir)) chdir("/");
+    /* No password yet (first boot) and a real terminal: set one before the session starts,
+     * since wheel members get root through sudo with that same password */
+    while (needs_password && isatty(0)) {
+        printf("%s has no password yet: choose one now.\n", pw->pw_name);
+        fflush(stdout);
+        pid_t pid = fork();
+        if (pid == 0) { execl("/bin/passwd", "passwd", (char *)0); _exit(127); }
+        int st;
+        if (pid < 0 || waitpid(pid, &st, 0) < 0) break;
+        if (WIFEXITED(st) && WEXITSTATUS(st) == 127) break;     /* no passwd program */
+        if (WIFEXITED(st) && WEXITSTATUS(st) == 0) needs_password = 0;
+    }
     const char *shell = pw->pw_shell && *pw->pw_shell ? pw->pw_shell : "/bin/sh";
     clearenv();
     setenv("HOME", pw->pw_dir, 1);

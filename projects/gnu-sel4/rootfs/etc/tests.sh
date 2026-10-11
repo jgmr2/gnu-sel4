@@ -30,6 +30,8 @@ check proctest    proctest
 check phase1test  phase1test
 check filetest    filetest
 check usertest    usertest
+check passwd      sh -c 'printf "printf \"n3w-pass\\\\nn3w-pass\\\\n\" | passwd\nexit\n" | login -f user 2>&1 | tail -2
+                         grep -q "^user:[$]6[$]" /etc/shadow || { echo "the password was not set"; exit 1; }'
 check login       sh -c 'echo "user:s3cret" | chpasswd || { echo "chpasswd failed"; exit 1; }
                          out=$(printf "user\ns3cret\nid -un; id -G; pwd; exit\n" | login 2>&1); echo "$out" | tail -4
                          case "$out" in *user*1000*10*/home/user*) ;; *) echo "login as user failed"; exit 1;; esac
