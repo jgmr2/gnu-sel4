@@ -7,8 +7,8 @@
  * addresses (so fork() copies memory as is from one slot to another), but
  * their sizes are only virtual limits: pages are created when the process
  * touches them (page fault) and go back to the server on exit, exec and
- * munmap. posix_server sees each slot's memory through a 4 GiB window of its
- * own (PROC_WIN_*), to load programs and copy processes.
+ * munmap. posix_server sees each page through its direct map (server/mem.c),
+ * and each slot's shared buffer through a window of its own (PROC_WIN_*).
  *
  *   0x1000_0000  program image (static ELF linked here), rwx
  *   0x3000_0000  buffer shared with posix_server (syscall data)
@@ -34,8 +34,8 @@
 #define PROC_MMAP_BASE    0x80000000UL
 #define PROC_MMAP_SIZE    0x40000000UL      /* 1 GiB */
 
-/* Each slot's window inside posix_server: address v of the process in
- * slot s is seen at PROC_WIN_BASE + (s << 32) + v */
+/* Each slot's window inside posix_server, for the shared and IPC buffers only:
+ * address v of the process in slot s is seen at PROC_WIN_BASE + (s << 32) + v */
 #define PROC_WIN_BASE     0x10000000000UL
 
 /* Our own entries in the auxiliary vector */

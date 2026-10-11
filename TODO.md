@@ -136,15 +136,26 @@ Pending:
        forward (only the regions with data, the disk stays sparse) and runs resize2fs. The install
        and `make test` read the partition size from the MBR. `make test SLOW=1` adds `bigdisk`
        (writes across block groups and measures the disk speed)
-8. [ ] **Performance I: measure, then the cheap big wins** (M). The priority now
-   - [ ] Measurements first: TSC counters for fork, exec, exit, page faults, PPCs and copies,
-         visible in /proc (numbers before any optimisation)
-   - [ ] Disk throughput: today ~1-3 MB/s (`make test SLOW=1` measures it). One 4 KiB request at
-         a time with a busy wait for each reply: requests for contiguous runs of blocks, read-ahead
-         for sequential reads, batched writes, a larger fs_ext2 cache. The cheap part, before
-         the asynchronous ring (item 10)
-   - [ ] Copy-on-write fork: today `mem_fork` copies every page, and fork + exec (every command
-         the shell starts) copies the whole shell only to throw it away at the exec
+8. [~] **Performance I: measure, then the cheap big wins** (M). The priority now
+   - [x] Measurements: `/proc/perf` (count and TSC cycles of every system call, page faults,
+         fork copies, address-space teardown, calls to fs_ext2 and fs_ext2's own operations,
+         cache and disk requests) and `perfstat COMMAND` (what changed while it ran);
+         `tools/test.py --script FILE` runs one script in the guest (~20 s, no test suite)
+   - [x] Disk throughput: fs_ext2's cache is a hash table + LRU (16 MiB); the writes of an
+         operation are collected and written at its end (sorted, consecutive blocks in one
+         request, all requests in flight together), still durable when it returns; reads gather
+         the missing blocks plus 128 KiB of read-ahead; free counts written at sync/unmount.
+         24 MiB read from disk 22 -> 260 MB/s, written 1.7 -> 12 MB/s (the rest is QEMU
+         allocating the sparse disk file)
+   - [x] Process memory: a direct map of every frame in posix_server (one mapping per page
+         instead of two); programs load lazily, 64 KiB of the file at a time when touched (a
+         file that is written, truncated, removed or replaced first gets fully loaded into the
+         processes running it). exec 4.1 -> 0.12 ms; 20 x fork+exec of /bin/true 100 -> 27 ms
+   - [ ] Copy-on-write fork: measured, not worth it on seL4 as things are. fork costs ~1.5 us
+         per page and the copy itself is the small part: it is the mapping system call. COW needs
+         a capability copy, a child mapping and a read-only remap of the parent per page, plus a
+         fault on every first write: as much or more. Revisit with large pages or if fork of big
+         processes shows up in the numbers
    - [ ] Large pages (2 MiB) for large regions; free unused page tables
    - [ ] Make `nice` change the real seL4 priority (today the value is only stored)
    - [ ] Release build (kernel and system without debugging, assertions and debug printing),
@@ -186,6 +197,11 @@ Pending:
          to the VM's EPT
    - [ ] The VM's system on disk instead of an initramfs in RAM (252 MB fixed today)
 12. [ ] **Reliability and CI** (S–M): every later change gets checked on its own
+   - [x] A watchdog per test in /etc/tests.sh: a test that takes over 60 s fails as hung and
+         dumps every process (`ps`), instead of the whole run ending as "did not finish"
+   - [x] The VM agent deadlocked when 9pd was restarted after the VM had mounted /mnt/sel4: it
+         unmounted (waiting for 9P replies) before closing the transport it forwards itself.
+         Only showed up once make test got fast enough for the VM to be up before the `s6` test
    - [ ] The rare (about 1 boot in 12) SIGABRT of s6rc-oneshot-runner while s6-rc starts it (the
          `net` oneshot does not run; the `s6-rc` test prints /tmp/s6-svscan.log when it happens)
    - [ ] GitHub Actions runs `make test NO_NET=1` (KVM on the runner) on every push, with the

@@ -97,7 +97,7 @@ void init(void)
 void notified(microkit_channel ch)
 {
     if (ch == BRIDGE_CH) {
-        virtio_console_queue_notify(&bridge_console);
+        if (!virtio_console_queue_notify(&bridge_console)) LOG_VMM_ERR("bridge: interrupt injection failed\n");
     } else if (ch == serial_config.rx.id) {
         virtio_console_queue_notify(&virtio_console);
     } else if (ch == serial_config.tx.id || ch == net_config.tx.id) {

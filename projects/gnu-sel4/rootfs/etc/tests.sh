@@ -23,12 +23,26 @@ mode=" $(cat /etc/test) "
 failures=0
 total=0
 
-check() {          # check <name> <command...>; output lines starting with "INFO " are always shown; output lines starting with "INFO " are always shown
+# A test that takes longer than this (seconds) fails as hung, with the state of every process
+TEST_TIMEOUT=60
+
+check() {          # check <name> <command...>; output lines starting with "INFO " are always shown
     name=$1; shift
     total=$((total + 1))
-    if "$@" >/tmp/test.log 2>&1; then
+    "$@" >/tmp/test.log 2>&1 </dev/null &
+    tpid=$!
+    ticks=0
+    while kill -0 $tpid 2>/dev/null && [ $ticks -lt $((TEST_TIMEOUT * 10)) ]; do sleep 0.1; ticks=$((ticks + 1)); done
+    if kill -0 $tpid 2>/dev/null; then
+        say "TEST $name: FAIL (hung for $TEST_TIMEOUT s)"
+        while IFS= read -r l; do say "    $l"; done </tmp/test.log
+        ps -eo pid,ppid,stat,comm,args 2>&1 | while IFS= read -r l; do say "    ps: $l"; done
+        pkill -9 -P $tpid 2>/dev/null; kill -9 $tpid 2>/dev/null
+        failures=$((failures + 1))
+        return
+    fi
+    if wait $tpid; then
         say "TEST $name: ok"
-        while IFS= read -r l; do case $l in "INFO "*) say "    ${l#INFO }";; esac; done </tmp/test.log
         while IFS= read -r l; do case $l in "INFO "*) say "    ${l#INFO }";; esac; done </tmp/test.log
     else
         say "TEST $name: FAIL ($?)"
@@ -53,6 +67,16 @@ check sudo        sh -c 'out=$(printf "echo s3cret | sudo -k -S -p \"\" id -u | 
                          out=$(printf "echo wrong | sudo -k -S -p \"\" id -u | sed s/^/UID=/\nexit\n" | login -f user 2>&1)
                          case "$out" in *UID=0*) echo "a wrong password worked"; exit 1;; esac
                          grep -q "user.*COMMAND=/bin/id" /var/log/sudo.log || { echo "nothing in /var/log/sudo.log"; exit 1; }'
+check lazy-exec   sh -c 'cp /bin/dash /tmp/d1 && cp /bin/dash /tmp/d2 || exit 1
+                         /tmp/d1 -c "sleep 1; case x in x) echo alive1;; esac; ulimit -a >/dev/null; exit 3" > /tmp/d1.out & p1=$!
+                         /tmp/d2 -c "sleep 1; case x in x) echo alive2;; esac; ulimit -a >/dev/null; exit 4" > /tmp/d2.out & p2=$!
+                         sleep 0.3
+                         echo garbage > /tmp/garbage; cp /tmp/garbage /tmp/d1
+                         rm /tmp/d2; dd if=/dev/zero of=/tmp/fill bs=64k count=64 2>/dev/null
+                         wait $p1; r1=$?; wait $p2; r2=$?
+                         echo "rewritten: $r1 $(cat /tmp/d1.out); removed: $r2 $(cat /tmp/d2.out)"
+                         rm -f /tmp/d1 /tmp/fill /tmp/garbage /tmp/d1.out /tmp/d2.out
+                         [ $r1 = 3 ] && [ $r2 = 4 ]'
 check hardlinks   sh -c 'rm -f /tmp/e1 /tmp/e2; echo x >/tmp/e1 && ln /tmp/e1 /tmp/e2 && [ "$(stat -c %h /tmp/e1)" = 2 ] && rm /tmp/e1 && [ "$(cat /tmp/e2)" = x ] && [ "$(stat -c %h /tmp/e2)" = 1 ] && rm /tmp/e2'
 check coreutils   sh -c '[ "$(ls /bin | wc -l)" -gt 100 ] && [ "$(echo hello | tr a-z A-Z)" = HELLO ]'
 check gnu-tools   sh -c 'set -e; rm -rf /tmp/gt; mkdir /tmp/gt; cd /tmp/gt; printf "a\nb\nc\n" > f
@@ -82,6 +106,7 @@ check s6-user     sh -c 'out=$(printf "s6-rc -a list | grep -qx 9pd && echo LIST
                          for w in LIST-OK RC-DENIED SVC-DENIED; do echo "$out" | grep -q $w || exit 1; done'
 check linux-vm    sh -c 'test "$(linux echo hello from the VM)" = "hello from the VM" && linux sh -c "exit 3"; test $? = 3'
 case $mode in *" slow "*)
+TEST_TIMEOUT=300
 check bigdisk     sh -c 'before=$(df -k / | tail -1 | xargs echo | cut -d" " -f4); echo "free: $before KiB"
                          dd if=/dev/urandom of=/tmp/big.src bs=1M count=96 iflag=fullblock 2>/dev/null
                          t0=$(date +%s); cp /tmp/big.src /tmp/big && sync; t1=$(date +%s); a=$(cksum < /tmp/big); t2=$(date +%s)

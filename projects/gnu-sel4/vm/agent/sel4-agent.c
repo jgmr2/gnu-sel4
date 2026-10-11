@@ -237,9 +237,18 @@ static void handle_frame(int type, int id, const char *data, uint32_t len)
         break;
     case BR_CLOSE:
         if (s->used) {
-            if (s->mount) umount2(s->mnt, MNT_DETACH);
-            else if (!s->exited) kill(-s->pid, SIGHUP);
-            close_sess(id);
+            if (s->mount) {
+                /* 9pd went away (it is restarted by s6). Close the 9P transport first, so the
+                 * kernel's pending requests fail at once; unmounting may still wait for replies
+                 * that only this agent would forward, so it happens in a child */
+                char mnt[sizeof s->mnt];
+                memcpy(mnt, s->mnt, sizeof mnt);
+                close_sess(id);
+                if (fork() == 0) { umount2(mnt, MNT_DETACH); _exit(0); }
+            } else {
+                if (!s->exited) kill(-s->pid, SIGHUP);
+                close_sess(id);
+            }
         }
         break;
     }

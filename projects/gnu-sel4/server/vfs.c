@@ -546,6 +546,7 @@ static long do_open(long dirfd, uint32_t flags, uint32_t mode)
             if (flags & O_DIRECTORY) return -ENOTDIR;
             type = OF_FILE;
             if ((flags & O_TRUNC) && S_ISREG(fmode) && (flags & O_ACCMODE) != O_RDONLY && !created && size) {
+                proc_image_release(ino);
                 res = fs_call(FS_OP_TRUNCATE, ino, 0, 0);
                 if (res < 0) return res;
             }
@@ -901,6 +902,7 @@ static long write_file(const char *abs, const char *data, size_t len)
         fs_set_path(0, abs);
         ino = fs_call(FS_OP_CREATE, S_IFREG | 0644, 0, 0);
     }
+    if (ino > 0) proc_image_release(ino);
     long r = ino < 0 ? ino : fs_call(FS_OP_TRUNCATE, ino, 0, 0);
     if (r >= 0) {
         memcpy((void *)fs_buf, data, len);
@@ -1155,6 +1157,7 @@ static long do_write(long fd, size_t len, bool positional, uint64_t pos)
         long r = fs_size(f->ino, &off);
         if (r < 0) return r;
     }
+    proc_image_release(f->ino);                   /* before fs_buf gets the data */
     memcpy((void *)fs_buf, (void *)client_buf, len);
     long r = fs_call(FS_OP_WRITE, f->ino, off, len);
     if (r > 0 && !positional) f->off = off + r;
@@ -1330,6 +1333,10 @@ static long path_op(long nr, long dirfd, long a, long b)
     case __NR_unlink:
         if (dev_type(abs) != OF_FREE) return -EBUSY;
         if ((r = may_remove(abs))) return r;
+        if (!a) {                                      /* a program running from it keeps its pages */
+            long ino = fs_lookup(abs, false, NULL, NULL);
+            if (ino > 0) proc_image_release(ino);
+        }
         fs_set_path(0, abs);
         return fs_call(FS_OP_UNLINK, a, 0, 0);       /* a: 1 = rmdir */
     case __NR_readlink: {
@@ -1348,6 +1355,7 @@ static long path_op(long nr, long dirfd, long a, long b)
         if (ino < 0) return ino;
         if (S_ISDIR(mode)) return -EISDIR;
         if (!cred_may(cur, mode, last_uid, last_gid, 2)) return -EACCES;
+        proc_image_release(ino);
         return fs_call(FS_OP_TRUNCATE, ino, a, 0);
     }
     case __NR_access: {
@@ -1381,8 +1389,10 @@ static long do_rename(long olddirfd, long newdirfd)
     r = normalize(newdirfd, client_path(POSIX_BUF_PATH2), to);
     if (r) return r;
     if ((r = may_remove(from))) return r;
-    r = fs_lookup(to, false, NULL, NULL) >= 0 ? may_remove(to) : may_change_dir(to);
+    long tino = fs_lookup(to, false, NULL, NULL);
+    r = tino >= 0 ? may_remove(to) : may_change_dir(to);
     if (r) return r;
+    if (tino > 0) proc_image_release(tino);         /* the file it replaces */
     fs_set_path(0, from);
     fs_set_path(FS_BUF_PATH2, to);
     return fs_call(FS_OP_RENAME, 0, 0, 0);
@@ -2052,6 +2062,7 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
         if (!f) return -EBADF;
         if (f->type == OF_SHM) return a2 < 0 ? -EINVAL : mem_shm_truncate(f->ino, a2);
         if (f->type != OF_FILE || (f->flags & O_ACCMODE) == O_RDONLY) return -EINVAL;
+        proc_image_release(f->ino);
         return fs_call(FS_OP_TRUNCATE, f->ino, a2, 0);
     case __NR_access:     return path_op(__NR_access, AT_FDCWD, a2, 0);
     case __NR_faccessat:
@@ -2319,6 +2330,21 @@ long vfs_owner(uint32_t ino, uint32_t *uid, uint32_t *gid)
 }
 
 /* Reads from a file into server memory (for the program loader) */
+/* Reads a file straight into a process's memory (exec), from fs_ext2's buffer */
+long vfs_read_to_proc(uint32_t ino, uint64_t off, int slot, uintptr_t vaddr, size_t len)
+{
+    size_t done = 0;
+    while (done < len) {
+        size_t chunk = len - done < FS_BUF_SIZE ? len - done : FS_BUF_SIZE;
+        long r = fs_call(FS_OP_READ, ino, off + done, chunk);
+        if (r < 0) return r;
+        if (r == 0) break;
+        if (!mem_copy_in(slot, vaddr + done, (void *)fs_buf, r)) return -ENOMEM;
+        done += r;
+    }
+    return done;
+}
+
 long vfs_read_file(uint32_t ino, uint64_t off, void *dst, size_t len)
 {
     size_t done = 0;

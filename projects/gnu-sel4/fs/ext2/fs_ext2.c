@@ -254,6 +254,7 @@ static int blk_io(blk_req_code_t code, int s, uint64_t blk)
 }
 
 /* A batch of requests in flight together: queued until the queue is full, then all waited for */
+#define MAX_INFLIGHT 32
 static uint32_t batch_inflight;
 static int batch_err;
 static struct ctr *batch_ctr;
@@ -279,7 +280,8 @@ static void batch_begin(struct ctr *c) { batch_err = 0; batch_ctr = c; batch_t0 
 static void batch_add(blk_req_code_t code, uintptr_t offset, uint64_t blk, uint16_t count)
 {
     if (blk + count > disk_blocks) { batch_err = -EIO; return; }
-    if (blk_queue_full_req(&blkq) || batch_inflight >= blk_config.virt.num_buffers / 2) batch_wait_all();
+    /* At most MAX_INFLIGHT requests: the driver's queue is shared with the Linux VM's disk */
+    if (blk_queue_full_req(&blkq) || batch_inflight >= MAX_INFLIGHT) batch_wait_all();
     if (blk_enqueue_req(&blkq, code, offset, blk, count, 0)) { batch_err = -EIO; return; }
     batch_inflight++;
     batch_ctr->n++;

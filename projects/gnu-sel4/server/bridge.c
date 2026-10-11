@@ -123,6 +123,7 @@ static void pump(void)
         }
         if (serial_queue_length_consumer(&txq) < sizeof f + f.len) break;
         if (f.type == BR_HELLO) {
+            microkit_dbg_puts(agent_ready ? "posix_server: bridge: the VM agent restarted\n" : "posix_server: bridge: the VM agent is ready\n");
             kill_started_sessions();
             agent_ready = true;
             proc_wake_mask(hello_waiters);

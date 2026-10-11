@@ -81,6 +81,7 @@ def main():
     p = subprocess.Popen(qemu, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
     os.set_blocking(p.stdout.fileno(), False)
     end, results, buf, t0, done = None, [], b"", time.time(), None   # done: when the end was seen
+    serial_log = open(os.path.join(BUILD, "test-serial.log"), "wb")   # everything, for debugging
     try:
         # Follow the serial port live until the guest powers off (the results themselves are
         # read from the disk afterwards: the serial port is shared and can lose a line)
@@ -93,6 +94,7 @@ def main():
             if chunk == b"":                             # EOF: QEMU exited (powered off)
                 break
             buf += chunk or b""
+            serial_log.write(chunk or b"")
             *lines, buf = buf.split(b"\n")
             for l in lines:
                 t = l.decode("utf-8", "replace").rstrip("\r")

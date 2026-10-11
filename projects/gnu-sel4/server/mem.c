@@ -8,10 +8,14 @@
  * the next one.
  *
  * Process page: two capabilities to the same frame, one mapped in the process
- * and the other in the slot's window in the server (PROC_WIN_BASE). A
- * directory per slot (vaddr < 4 GiB -> 1024 leaves of 1024 entries) records
- * which frame backs each page. Freed frames are kept on a stack and zeroed
- * when reused; new ones already come zeroed.
+ * and the other in the server. The server's one is mapped once, when the frame
+ * is created, in a direct map indexed by the frame (DMAP_BASE), and stays there
+ * while the frame is recycled: creating or freeing a page costs one mapping
+ * operation, not two. Only the buffer shared with the process (and its IPC
+ * buffer) is seen through the slot's window (PROC_WIN_BASE), contiguous; those
+ * frames stay with the slot. A directory per slot (vaddr < 4 GiB -> 1024 leaves
+ * of 1024 entries) records which frame backs each page. Freed frames are kept
+ * on a stack and zeroed when reused; new ones already come zeroed.
  *
  * CSpace: new capabilities go into 2^14-entry CNodes that the manager creates
  * and places in its root CNode (entries SRV_FREE_ROOT_SLOT..63). A CNode with
@@ -139,6 +143,10 @@ static void *meta_page(void)
 
 /* ---------------- frames ---------------- */
 
+/* The direct map: frame x (an even CSpace index; x + 1 is its server capability) at */
+#define DMAP_BASE 0x20000000000UL
+static inline uint8_t *dptr(uint32_t x) { return (uint8_t *)(DMAP_BASE + (uintptr_t)(x >> 1) * 4096); }
+
 #define MAX_FRAMES (1u << 18)           /* 1 GiB of 4 KiB frames */
 static uint32_t free_frames[MAX_FRAMES];
 static uint32_t nfree;
@@ -160,13 +168,24 @@ static uint32_t frame_get(bool *recycled)
         return 0;
     }
     if (seL4_CNode_Copy(CN(c + 1), CN(c), seL4_AllRights)) return 0;
+    if (!map_frame(c + 1, SELF_VSPACE, (uintptr_t)dptr(CAP_IDX(c)), seL4_ReadWrite)) return 0;
+    return CAP_IDX(c);
+}
+
+/* A new frame whose server capability is NOT in the direct map (for the slot's window) */
+static uint32_t frame_new_unmapped(void)
+{
+    if (cur_used & 1) cur_used++;
+    seL4_CPtr c = cslots(2);
+    if (!c) return 0;
+    if (ut_retype(seL4_X86_4K, 0, c >> 58, ROOT_DEPTH, c & ((1u << CNODE_BITS) - 1))) return 0;
+    if (seL4_CNode_Copy(CN(c + 1), CN(c), seL4_AllRights)) return 0;
     return CAP_IDX(c);
 }
 
 static void frame_put(uint32_t x)
 {
-    seL4_X86_Page_Unmap(CAP_PTR(x));
-    seL4_X86_Page_Unmap(CAP_PTR(x) + 1);
+    seL4_X86_Page_Unmap(CAP_PTR(x));        /* the server's mapping stays (direct map) */
     free_frames[nfree++] = x;
 }
 
@@ -209,16 +228,16 @@ static bool keep(uintptr_t v) { return v >= PROC_BUF_BASE && v < PROC_IPCBUF + 4
 /* ---------------- shared memory (memfd) ----------------
  *
  * A memfd is an object with its own pages (frame x of each one is not mapped
- * anywhere: it is the original). Each time a page is mapped into a process,
- * two copies of its capability are made (process and server window), in a
- * pair of CSpace entries; in the slot's directory the entry holds
- * SHARED | pair, and pair_meta[pair] says which memfd and page it is. */
+ * in any process: it is the original; the server reaches it through the direct
+ * map). Each time a page is mapped into a process, a copy of its capability is
+ * made, in a pair of CSpace entries (the second one unused); in the slot's
+ * directory the entry holds SHARED | pair, and pair_meta[pair] says which
+ * memfd and page it is. */
 #define SHARED       0x80000000u
 #define SHARED_RO    0x40000000u
 #define ENTRY_IDX    0x000fffffu
 #define SHM_MAX      128
 #define SHM_DIR      64                       /* x 1024 pages: up to 256 MiB per memfd */
-#define SHM_SCRATCH  0x700000000000UL         /* server page used to read/write/clear */
 
 static struct shm {
     bool used;
@@ -246,16 +265,13 @@ static uint32_t *shm_slot(struct shm *m, uint32_t pg, bool create)
     return *d ? &(*d)[pg & 1023] : NULL;
 }
 
-/* Copies or clears a memfd page through SHM_SCRATCH */
+/* Copies or clears a memfd page (through the direct map) */
 static bool shm_touch(uint32_t x, void *buf, size_t off, size_t len, int op)   /* 0 clear, 1 read, 2 write */
 {
-    seL4_CPtr w = CAP_PTR(x) + 1;
-    if (!map_frame(w, SELF_VSPACE, SHM_SCRATCH, seL4_ReadWrite)) return false;
-    char *pg = (char *)SHM_SCRATCH;
+    uint8_t *pg = dptr(x);
     if (op == 0) memset(pg, 0, 4096);
     else if (op == 1) memcpy(buf, pg + off, len);
     else memcpy(pg + off, buf, len);
-    seL4_X86_Page_Unmap(w);
     return true;
 }
 
@@ -351,11 +367,8 @@ static bool shared_map(int s, uintptr_t v, int id, uint32_t pg, bool ro)
     }
     seL4_CPtr master = CAP_PTR(*src);
     if (seL4_CNode_Copy(CN(c), CN(master), seL4_AllRights) ||
-        seL4_CNode_Copy(CN(c + 1), CN(master), seL4_AllRights) ||
-        !map_frame(c + 1, SELF_VSPACE, proc_win(s, v), seL4_ReadWrite) ||
         !map_frame(c, sl->vspace, v, ro ? seL4_CanRead : seL4_ReadWrite)) {
         seL4_CNode_Delete(CN(c));
-        seL4_CNode_Delete(CN(c + 1));
         free_pairs[nfree_pairs++] = CAP_IDX(c);
         return false;
     }
@@ -370,9 +383,7 @@ static void shared_unmap(uint32_t entry)
     uint32_t pair = entry & ENTRY_IDX;
     seL4_CPtr c = CAP_PTR(pair);
     seL4_X86_Page_Unmap(c);
-    seL4_X86_Page_Unmap(c + 1);
     seL4_CNode_Delete(CN(c));
-    seL4_CNode_Delete(CN(c + 1));
     if (nfree_pairs < sizeof free_pairs / sizeof *free_pairs) free_pairs[nfree_pairs++] = pair;
     int id = pair_meta[pair >> 1] >> 20;
     shms[id].maps--;
@@ -414,16 +425,20 @@ static bool page(int s, uintptr_t v, bool zero)
     if (!l) return false;
     uint32_t *e = &l[(v >> 12) & 1023];
     if (*e) return true;
-    bool recycled;
-    uint32_t x = frame_get(&recycled);
+    bool recycled = false;
+    uint32_t x;
+    if (keep(v)) {                                   /* the shared buffer: through the window */
+        x = frame_new_unmapped();
+        if (!x || !map_frame(CAP_PTR(x) + 1, SELF_VSPACE, proc_win(s, v), seL4_ReadWrite)) return false;
+    } else {
+        x = frame_get(&recycled);
+    }
     if (!x) return false;
-    seL4_CPtr c = CAP_PTR(x);
-    if (!map_frame(c + 1, SELF_VSPACE, proc_win(s, v), seL4_ReadWrite) ||
-        !map_frame(c, sl->vspace, v, seL4_ReadWrite)) {
+    if (!map_frame(CAP_PTR(x), sl->vspace, v, seL4_ReadWrite)) {
         frame_put(x);
         return false;
     }
-    if (recycled && zero) memset((void *)proc_win(s, v), 0, 4096);
+    if (recycled && zero) memset(dptr(x), 0, 4096);
     *e = x;
     mem_pages_used++;
     if (!keep(v)) sl->npages++;
@@ -434,6 +449,44 @@ bool mem_ensure(int s, uintptr_t vaddr, size_t len)
 {
     for (uintptr_t v = vaddr & ~0xfffUL; v < vaddr + len; v += 4096)
         if (!page(s, v, true)) return false;
+    return true;
+}
+
+/* Where the server sees byte v of slot s (its page must exist), or NULL */
+uint8_t *mem_page_ptr(int s, uintptr_t v)
+{
+    if (keep(v)) return (uint8_t *)proc_win(s, v);
+    uint32_t *l = slots[s].dir[v >> 22];
+    uint32_t e = l ? l[(v >> 12) & 1023] : 0;
+    if (!e) return NULL;
+    if (e & SHARED) {
+        uint32_t meta = pair_meta[(e & ENTRY_IDX) >> 1];
+        uint32_t *src = shm_slot(&shms[meta >> 20], meta & 0xfffff, false);
+        if (!src || !*src) return NULL;
+        e = *src;
+    }
+    return dptr(e) + (v & 0xfff);
+}
+
+bool mem_has_page(int s, uintptr_t v)
+{
+    uint32_t *l = slots[s].dir[v >> 22];
+    return l && l[(v >> 12) & 1023];
+}
+
+/* Copies n bytes into the process at v (the pages are created if missing), or clears them */
+bool mem_copy_in(int s, uintptr_t v, const void *src, size_t n)
+{
+    while (n) {
+        size_t k = 4096 - (v & 0xfff) < n ? 4096 - (v & 0xfff) : n;
+        if (!page(s, v, true)) return false;
+        uint8_t *d = mem_page_ptr(s, v);
+        if (!d) return false;
+        if (src) { memcpy(d, src, k); src = (const uint8_t *)src + k; }
+        else memset(d, 0, k);
+        v += k;
+        n -= k;
+    }
     return true;
 }
 
@@ -493,7 +546,7 @@ bool mem_fork(int cs, int ps)
             }
             uint64_t t0 = clock_rdtsc();
             if (!page(cs, v, false)) return false;
-            memcpy((void *)proc_win(cs, v), (void *)proc_win(ps, v), 4096);
+            memcpy(dptr(slots[cs].dir[d][i]), dptr(e), 4096);
             perf_add(&perf_fork_copy, 1, t0);
         }
     }

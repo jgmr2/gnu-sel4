@@ -85,6 +85,11 @@ struct proc {
     int status;                     /* status for wait() once it is a zombie */
     bool orphan;                    /* its parent exited: nobody will wait() */
     uint64_t img_end;               /* end of the loaded image (for fork) */
+    /* The program's pages are read from its file when first touched (proc.c): its inode
+     * (0 = everything loaded) and its PT_LOAD segments */
+    uint32_t img_ino;
+    uint8_t nseg;
+    struct { uint64_t vaddr, filesz, memsz, off; } seg[4];
     char name[32];
 
     /* credentials (cred.c) */
@@ -162,7 +167,11 @@ uint64_t mem_free(void);
 bool slot_make(int s);
 seL4_CPtr slot_tcb(int s);
 void slot_signal(int s);
-uintptr_t proc_win(int s, uintptr_t vaddr);    /* address vaddr of the process in slot s */
+uintptr_t proc_win(int s, uintptr_t vaddr);    /* the shared buffer of slot s (contiguous) */
+uint8_t *mem_page_ptr(int s, uintptr_t v);     /* byte v of slot s as the server sees it (page must exist) */
+bool mem_copy_in(int s, uintptr_t v, const void *src, size_t n);   /* src NULL: clear */
+bool mem_has_page(int s, uintptr_t v);
+void proc_image_release(uint32_t ino);         /* before a file is changed: load it in full where it runs */
 bool mem_ensure(int s, uintptr_t vaddr, size_t len);
 void mem_free_range(int s, uintptr_t vaddr, size_t len);
 void mem_free_all(int s);
@@ -246,4 +255,5 @@ void vfs_close_cloexec(struct proc *p);
 long vfs_normalize(struct proc *p, const char *path, char *out);
 long vfs_lookup(const char *abs, bool follow, uint32_t *mode, uint64_t *size);
 long vfs_read_file(uint32_t ino, uint64_t off, void *dst, size_t len);
+long vfs_read_to_proc(uint32_t ino, uint64_t off, int slot, uintptr_t vaddr, size_t len);
 long vfs_owner(uint32_t ino, uint32_t *uid, uint32_t *gid);

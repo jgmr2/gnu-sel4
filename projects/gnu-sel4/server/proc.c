@@ -141,13 +141,12 @@ static long start_thread(int slot, seL4_UserContext *ctx)
 
 #define MAX_PHDRS 16
 
-/* Copies data onto the process's stack (through the server's window) and returns
+/* Copies data onto the process's stack and returns
  * its address inside the process. Out of memory, the stack is left half-built: *ok = false */
 static uintptr_t push_bytes(int slot, uintptr_t *sp, const void *data, size_t n, bool *ok)
 {
     *sp -= n;
-    if (!mem_ensure(slot, *sp, n)) *ok = false;
-    else memcpy((void *)proc_win(slot, *sp), data, n);
+    if (!mem_copy_in(slot, *sp, data, n)) *ok = false;
     return *sp;
 }
 
@@ -231,15 +230,30 @@ static long load_program(struct proc *p, const char *path, const char *args, uin
      * returned and the new one's is created as its segments are loaded */
     int slot = p->slot;
     mem_free_all(slot);
-    for (int i = 0; i < eh.e_phnum; i++) {
+    /* Up to 4 segments (static programs have 2-4): loaded page by page when touched */
+    int nload = 0;
+    for (int i = 0; i < eh.e_phnum; i++) nload += ph[i].p_type == PT_LOAD;
+    p->img_ino = 0;
+    p->nseg = 0;
+    if (nload <= 4) {
+        for (int i = 0; i < eh.e_phnum; i++) {
+            if (ph[i].p_type != PT_LOAD) continue;
+            p->seg[p->nseg].vaddr = ph[i].p_vaddr;
+            p->seg[p->nseg].filesz = ph[i].p_filesz;
+            p->seg[p->nseg].memsz = ph[i].p_memsz;
+            p->seg[p->nseg].off = ph[i].p_offset;
+            p->nseg++;
+        }
+        p->img_ino = ino;
+    }
+    for (int i = 0; i < eh.e_phnum && !p->img_ino; i++) {     /* otherwise, all of it now */
         if (ph[i].p_type != PT_LOAD) continue;
         if (!mem_ensure(slot, ph[i].p_vaddr, ph[i].p_filesz)) {
             tty_puts("[posix] exec: out of memory\n");
             proc_exit(p, SIGKILL);
             return -ENOMEM;
         }
-        uintptr_t dst = proc_win(slot, ph[i].p_vaddr);
-        if (vfs_read_file(ino, ph[i].p_offset, (void *)dst, ph[i].p_filesz) != (long)ph[i].p_filesz) {
+        if (vfs_read_to_proc(ino, ph[i].p_offset, slot, ph[i].p_vaddr, ph[i].p_filesz) != (long)ph[i].p_filesz) {
             proc_exit(p, SIGSEGV);
             return -EIO;
         }
@@ -248,8 +262,11 @@ static long load_program(struct proc *p, const char *path, const char *args, uin
         uintptr_t tail = (ph[i].p_vaddr + ph[i].p_filesz + 0xfff) & ~0xfffUL;
         uintptr_t mem_end = ph[i].p_vaddr + ph[i].p_memsz;
         if (tail > mem_end) tail = mem_end;
-        if (tail > ph[i].p_vaddr + ph[i].p_filesz)
-            memset((void *)(dst + ph[i].p_filesz), 0, tail - (ph[i].p_vaddr + ph[i].p_filesz));
+        if (tail > ph[i].p_vaddr + ph[i].p_filesz &&
+            !mem_copy_in(slot, ph[i].p_vaddr + ph[i].p_filesz, NULL, tail - (ph[i].p_vaddr + ph[i].p_filesz))) {
+            proc_exit(p, SIGKILL);
+            return -ENOMEM;
+        }
     }
     p->img_end = img_end;
 
@@ -358,6 +375,9 @@ static long sys_fork(uintptr_t brk_cur, uintptr_t mmap_cur, uintptr_t sp, uintpt
     c->pgid = cur->pgid;
     c->sid = cur->sid;
     c->img_end = cur->img_end;
+    c->img_ino = cur->img_ino;
+    c->nseg = cur->nseg;
+    memcpy(c->seg, cur->seg, sizeof c->seg);
     c->sig_caught = cur->sig_caught;
     c->sig_ignored = cur->sig_ignored;
     c->nice = cur->nice;
@@ -606,16 +626,85 @@ static long sys_reboot(long magic, long cmd)
 /* ------------------------------------------------------------------ */
 
 /* true: reply and the process carries on (the page now exists) */
+/* ------------------------------------------------------------------ */
+/* Program pages loaded when first touched                           */
+/* ------------------------------------------------------------------ */
+
+#define CLUSTER 0x10000UL                    /* read 64 KiB of the program at a time */
+static uint8_t cluster_buf[CLUSTER];
+
+/* Creates the missing pages of the 64 KiB cluster around addr that belong to p's segments, with
+ * their contents from the program's file (zeros past the file data: .bss). Existing pages are
+ * left alone (they may have been written). Returns false if out of memory or on a read error */
+static bool image_cluster(struct proc *p, uintptr_t addr)
+{
+    uintptr_t c0 = addr & ~(CLUSTER - 1);
+    uint32_t fresh = 0;                      /* bit i: page c0 + i * 4096 created here */
+    for (int i = 0; i < (int)(CLUSTER / 4096); i++) {
+        uintptr_t v = c0 + (uintptr_t)i * 4096;
+        if (mem_has_page(p->slot, v)) continue;
+        bool in = false;
+        for (int k = 0; k < p->nseg && !in; k++)
+            in = v + 4096 > p->seg[k].vaddr && v < p->seg[k].vaddr + p->seg[k].memsz;
+        if (!in) continue;
+        if (!mem_copy_in(p->slot, v, NULL, 4096)) return false;
+        fresh |= 1u << i;
+    }
+    if (!fresh) return true;
+    for (int k = 0; k < p->nseg; k++) {
+        uintptr_t lo = p->seg[k].vaddr > c0 ? p->seg[k].vaddr : c0;
+        uintptr_t hi = p->seg[k].vaddr + p->seg[k].filesz;
+        if (hi > c0 + CLUSTER) hi = c0 + CLUSTER;
+        if (lo >= hi) continue;
+        long n = vfs_read_file(p->img_ino, p->seg[k].off + (lo - p->seg[k].vaddr), cluster_buf, hi - lo);
+        if (n != (long)(hi - lo)) return false;
+        for (uintptr_t v = lo; v < hi; ) {               /* only into the pages created above */
+            uintptr_t end = (v | 0xfff) + 1 < hi ? (v | 0xfff) + 1 : hi;
+            if (fresh & (1u << ((v - c0) >> 12)))
+                memcpy(mem_page_ptr(p->slot, v), cluster_buf + (v - lo), end - v);
+            v = end;
+        }
+    }
+    return true;
+}
+
+/* A file is about to change (write, truncate, unlink, rename over it): every process running it
+ * gets the rest of its pages now, so it never sees the new contents */
+void proc_image_release(uint32_t ino)
+{
+    for (int i = 0; i < NPROC; i++) {
+        struct proc *p = &procs[i];
+        if (p->state != P_RUN || p->slot < 0 || p->img_ino != ino) continue;
+        bool ok = true;
+        for (int k = 0; k < p->nseg && ok; k++)
+            for (uintptr_t c = p->seg[k].vaddr & ~(CLUSTER - 1); ok && c < p->seg[k].vaddr + p->seg[k].memsz; c += CLUSTER)
+                ok = image_cluster(p, c);
+        p->img_ino = 0;
+        if (!ok) {
+            tty_puts("[posix] out of memory loading a program whose file changes: killed\n");
+            proc_exit(p, SIGKILL);
+        }
+    }
+}
+
 bool proc_fault(int slot, long label)
 {
     struct proc *p = proc_by_slot(slot);
     if (!p) return false;
-    if (label == seL4_Fault_VMFault && mem_fault(slot, microkit_mr_get(seL4_VMFault_Addr))) return true;
+    /* The fault's registers first: loading a page calls fs_ext2, which overwrites them */
+    uintptr_t a = label == seL4_Fault_VMFault ? microkit_mr_get(seL4_VMFault_Addr) : microkit_mr_get(0);
+    long vec = label == seL4_Fault_UserException ? microkit_mr_get(seL4_UserException_Number) : 0;
+    if (label == seL4_Fault_VMFault && p->img_ino &&
+        a >= PROC_IMG_BASE && a < PROC_IMG_BASE + PROC_IMG_SIZE && !image_cluster(p, a)) {
+        tty_puts("[posix] could not load a page of the program: killed\n");
+        proc_exit(p, SIGBUS);
+        return false;
+    }
+    if (label == seL4_Fault_VMFault && mem_fault(slot, a)) return true;
     /* Processor exception: as in Linux, general protection -> SIGSEGV, division -> SIGFPE */
     int sig = SIGILL;
     if (label == seL4_Fault_VMFault) sig = SIGSEGV;
     else if (label == seL4_Fault_UserException) {
-        long vec = microkit_mr_get(seL4_UserException_Number);
         sig = vec == 0 ? SIGFPE : vec == 6 ? SIGILL : SIGSEGV;
     }
     tty_puts("[posix] ");
@@ -625,7 +714,7 @@ bool proc_fault(int slot, long label)
     tty_puts(sig == SIGSEGV ? "): segmentation fault at 0x" : sig == SIGFPE ? "): arithmetic error at 0x"
                                                              : "): illegal instruction at 0x");
     char hex[17];
-    uint64_t v = label == seL4_Fault_VMFault ? microkit_mr_get(seL4_VMFault_Addr) : microkit_mr_get(0);
+    uint64_t v = a;
     for (int i = 15; i >= 0; i--, v >>= 4) hex[i] = "0123456789abcdef"[v & 15];
     hex[16] = 0;
     tty_puts(hex);
