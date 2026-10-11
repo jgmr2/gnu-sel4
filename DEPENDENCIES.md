@@ -35,4 +35,3 @@ image (`docker compose`, see README.md) carries them already fetched.
 | `third_party/s6-rc-0.7.0.0` | https://skarnet.org/software/s6-rc/ | 0.7.0.0 |
 | `third_party/spleen` | https://github.com/fcambus/spleen | 2.2.0 (`spleen-8x16.bdf`, LICENSE) |
 
-To do: a script that downloads them all.

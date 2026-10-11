@@ -43,4 +43,8 @@ done
 cp "$R/compiler/gcc.vim" "$R/compiler/shellcheck.vim" "$M/compiler/" 2>/dev/null || true
 cp "$R"/colors/*.vim "$M/colors/" 2>/dev/null || true
 cp -r "$R"/colors/lists "$M/colors/"                 # colour names (syncolor.vim)
+# netrw, the file explorer (:Ex, :e ., vim dir/), an optional package since 9.1; and matchparen
+mkdir -p "$M/plugin" "$M/pack/dist/opt"
+cp "$R"/plugin/netrwPlugin.vim "$R"/plugin/matchparen.vim "$M/plugin/"
+cp -r "$R"/pack/dist/opt/netrw "$M/pack/dist/opt/" && rm -rf "$M/pack/dist/opt/netrw/doc"
 echo "vim: $(du -h src/vim | cut -f1) binary, $(du -sh $M | cut -f1) trimmed runtime"

@@ -38,6 +38,7 @@ check gnu-tools   sh -c 'set -e; rm -rf /tmp/gt; mkdir /tmp/gt; cd /tmp/gt; prin
                          test "$(zcat x.tgz | tar tf - | xargs echo)" = "f g"; less -V >/dev/null; cd /; rm -rf /tmp/gt'
 check licenses    sh -c 'test -f /usr/share/licenses/gnu-sel4/LICENSE && test -f /usr/share/licenses/coreutils/COPYING && test "$(ls /usr/share/licenses | wc -l)" -ge 25'
 check vim         vim -es -c 'qa!'
+check vim-netrw   vim -es -c 'packadd netrw' -c 'if exists(":Explore") | qa! | else | cquit | endif'
 check procps      sh -c 'ps -e | wc -l | test "$(cat)" -ge 3 && free >/dev/null && uptime >/dev/null'
 check dhcp        sh -c 'case "$(cat /proc/net/dhcp)" in *bound*10.0.2.16/24*) ;; *) cat /proc/net/dhcp; exit 1;; esac'
 check resolv      sh -c 'case "$(cat /etc/resolv.conf)" in *"nameserver 10.0.2.3"*) ;; *) cat /etc/resolv.conf; exit 1;; esac'
