@@ -1,5 +1,9 @@
 # Dependencies (not in git: they are downloaded)
 
+`./fetch-deps.sh` downloads all of them and checks every SHA-256 and commit against
+[`deps.lock`](deps.lock), which is the authoritative list; this table describes it. The Docker
+image (`docker compose`, see README.md) carries them already fetched.
+
 | Directory | Source | Version |
 |---|---|---|
 | `sdk/microkit-sdk-2.3.1` | https://github.com/seL4/microkit/releases | 2.3.1 (prebuilt SDK: kernel, libmicrokit) |

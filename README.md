@@ -46,20 +46,38 @@ booting.
 ## Layout
 
 ```
-sdk/                 Microkit SDK 2.3.1 (seL4 kernel + tool + libmicrokit)
-third_party/microkit Microkit 2.3.1 source with our patch to the tool (make microkit-tool)
-libvmm/              libvmm (seL4 VMM) with sDDF in libvmm/dep/sddf (drivers and virtualisers)
-third_party/         third-party sources: musl, dash, coreutils, ncurses, zsh, vim, F-Stack...
-projects/gnu-sel4/  the system
-Dockerfile, dev.sh   build environment (clang/LLVM 18, make, dtc, iasl, sdfgen, e2fsprogs)
+deps.lock, fetch-deps.sh   every dependency with its exact version and hash, and the script that fetches them
+sdk/                 Microkit SDK 2.3.1 (seL4 kernel + libmicrokit)             (fetched)
+third_party/         musl, F-Stack, GNU tools, zsh, vim, curl...; microkit/ = the Microkit tool's
+                     source with our patches                                     (fetched)
+libvmm/              libvmm (seL4 VMM) with sDDF in libvmm/dep/sddf (drivers and virtualisers) (fetched)
+projects/gnu-sel4/   the system
+Dockerfile, dev.sh, docker-compose.yml   build environment (clang/LLVM 18, make, dtc, iasl, sdfgen, e2fsprogs)
 ```
 
 ## Usage
 
+The only requirement on the host is Docker; QEMU with KVM (nested virtualisation) runs the
+system: `sudo apt install qemu-system-x86`.
+
+**With Docker Compose** (simplest: the image carries every dependency, already checked, and the
+patched Microkit tool; the first run builds it, about 7 minutes and 3 GB):
+
 ```sh
+git clone https://github.com/jgmr2/gnu-sel4 && cd gnu-sel4
+docker compose run --rm vm-rootfs   # (once) kernel + initramfs for the Linux VM
+docker compose run --rm build       # build everything and install it into projects/gnu-sel4/disk.img
+docker compose run --rm test        # automated tests in headless QEMU
+cd projects/gnu-sel4 && make run    # boot it (on the host: QEMU opens a window)
+```
+
+**With the dependencies on the host** (what development uses; same result):
+
+```sh
+./fetch-deps.sh                 # download and verify the dependencies (deps.lock) next to the repository
 ./dev.sh build                  # build the Docker build image (once)
 cd projects/gnu-sel4
-make microkit-tool              # (host, once) Microkit tool with our patch
+make microkit-tool              # (host, once) the Microkit tool with our patches (Rust in Docker)
 make vm-rootfs                  # (host, once) kernel + initramfs for the VM
 ../../dev.sh make               # build everything and install it into disk.img
 make run                        # QEMU + KVM with a graphical console (window); quit: Ctrl-a x in the terminal

@@ -80,8 +80,10 @@ Real hardware stays last on purpose: first the system has to be worth booting.
        same recipe as coreutils; gnulib test suites left out). Test `gnu-tools` in `make test`
 2. [x] **Licensing** (S): BSD-2-Clause for our own code (`LICENSE`, SPDX headers), every
        project credited in `THIRD_PARTY.md`, license texts on the disk in `/usr/share/licenses/`
-3. [ ] **Fetch-dependencies script** (S): downloads and checks everything in `DEPENDENCIES.md`, so
-       the repository builds on another machine (also the first step of a CI)
+3. [x] **Reproducible builds** (S): `deps.lock` (every dependency with its SHA-256 or commit) +
+       `fetch-deps.sh`; a Docker image with all of it and the patched Microkit tool, and
+       `docker-compose.yml` (build, test, shell, vm-rootfs). A fresh clone builds and passes
+       `make test` with Docker alone. Next: CI on GitHub Actions running `make test` on every push
 4. [ ] **Supervision: `mkfifo` + s6 + s6-rc** (M)
    - [ ] Named pipes (`mkfifo`): a FIFO in ext2 that the server treats as a pipe
          (s6 uses them to control services)

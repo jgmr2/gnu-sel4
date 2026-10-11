@@ -9,3 +9,6 @@
 
 # Disk images (8+ GB; they hold data: back them up separately)
 *.img
+
+# Downloads of fetch-deps.sh
+/.cache/
