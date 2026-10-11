@@ -136,7 +136,7 @@ Pending:
        forward (only the regions with data, the disk stays sparse) and runs resize2fs. The install
        and `make test` read the partition size from the MBR. `make test SLOW=1` adds `bigdisk`
        (writes across block groups and measures the disk speed)
-8. [~] **Performance I: measure, then the cheap big wins** (M). The priority now
+8. [x] **Performance I: measure, then the cheap big wins** (M)
    - [x] Measurements: `/proc/perf` (count and TSC cycles of every system call, page faults,
          fork copies, address-space teardown, calls to fs_ext2 and fs_ext2's own operations,
          cache and disk requests) and `perfstat COMMAND` (what changed while it ran);
@@ -156,10 +156,14 @@ Pending:
          a capability copy, a child mapping and a read-only remap of the parent per page, plus a
          fault on every first write: as much or more. Revisit with large pages or if fork of big
          processes shows up in the numbers
-   - [ ] Large pages (2 MiB) for large regions; free unused page tables
-   - [ ] Make `nice` change the real seL4 priority (today the value is only stored)
-   - [ ] Release build (kernel and system without debugging, assertions and debug printing),
-         keeping the debug build as an option: measure the difference
+   - [x] `nice` changes the seL4 priority, only downwards: seL4 schedules by strict priority, so
+         nice > 0 runs below normal processes (a busy background job no longer slows down the
+         interactive ones: test `nice`) and nice <= 0 stays normal; only root lowers a nice value
+   - [x] Lazy loading reads 32 KiB of the program per fault (measured 16/32/64: 16 is ~20 %
+         faster warm but twice as slow cold, 64 the reverse)
+   - [x] Release build: `make RELEASE=1` (also `run`, `test`), in build-release/. Measured ~10 %
+         faster on fork/exec/exit, the same elsewhere; it loses the components' debug messages,
+         so debug stays the default
 9. [ ] **Server structure** (M): the base for rings, threads, isolation and splitting the server
    - [ ] Split `server/vfs.c` (2300+ lines) into modules: pipes and FIFOs, AF_UNIX sockets,
          eventfd/timerfd, network sockets, paths
@@ -180,6 +184,8 @@ Pending:
          (>= 64 KiB) passing page capabilities instead of copying. Small transfers keep copying:
          mapping + unmapping costs more than copying 4 KiB
    - [ ] kqueue as the native event API (epoll stays for compatibility), on top of the rings
+   - [ ] Large pages (2 MiB) for large regions (fork, exec and faults pay per 4 KiB page today);
+         free unused page tables
 11. [ ] **Linux VM integration** (M–L; the VM runs Linux at native speed with VT-x; what is slow
         is the current bridge: serial-port-style queues with byte-by-byte copies)
    - [ ] vsock (AF_VSOCK): POSIX sockets between native and VM processes (virtio-vsock in

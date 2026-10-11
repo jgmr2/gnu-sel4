@@ -396,6 +396,7 @@ static long sys_fork(uintptr_t brk_cur, uintptr_t mmap_cur, uintptr_t sp, uintpt
         proc_exit(c, SIGKILL);
         return -ENOMEM;
     }
+    proc_apply_nice(c);                 /* the slot may come from a process with another nice */
 
     /* The child starts at entry (which longjmps to the fork point) with a
      * temporary stack inside the copied memory */
@@ -539,27 +540,46 @@ static long sys_kill(long pid, long sig)
     return !found ? -ESRCH : !allowed ? -EPERM : 0;
 }
 
-/* getpriority/setpriority. which: 0 = process, 1 = group, 2 = user (everyone is root).
- * Like the Linux kernel, getpriority returns 20 - nice (musl converts it). */
+/* getpriority/setpriority. which: 0 = process, 1 = group, 2 = user.
+ * Like the Linux kernel, getpriority returns 20 - nice (musl converts it).
+ * seL4 schedules by strict priority, not by shares as Linux does, so nice only moves a process
+ * down: nice > 0 runs below the normal processes (a busy background job cannot slow down the
+ * interactive ones); nice <= 0 is the normal priority (a busy process with a higher seL4
+ * priority would stop every other one). The value itself is kept as given. */
+static int prio_of_nice(int nice) { return nice > 0 ? PROC_PRIO_LOW : PROC_PRIO_NORMAL; }
+
+void proc_apply_nice(struct proc *p)
+{
+    if (p->slot >= 0) mem_slot_set_prio(p->slot, prio_of_nice(p->nice));
+}
+
 static long sys_priority(bool set, long which, long who, long prio)
 {
     if (which < 0 || which > 2) return -EINVAL;
     if (prio < -20) prio = -20;
     if (prio > 19) prio = 19;
     int found = 0, best = 19;
+    long err = 0;
     for (int i = 0; i < NPROC; i++) {
         struct proc *q = &procs[i];
         if (q->state != P_RUN) continue;
         bool match = which == 0 ? q->pid == (who ? who : cur->pid)
                    : which == 1 ? q->pgid == (who ? who : cur->pgid)
-                   : who == 0;
+                   : q->uid == (uint32_t)(who ? who : (long)cur->euid);
         if (!match) continue;
         found++;
-        if (set) q->nice = prio;
-        else if (q->nice < best) best = q->nice;
+        if (set) {
+            if (cur->euid != 0 && cur->euid != q->uid && cur->euid != q->euid) { err = -EPERM; continue; }
+            if (cur->euid != 0 && prio < q->nice) { err = -EACCES; continue; }   /* only root lowers it */
+            q->nice = prio;
+            proc_apply_nice(q);
+        } else if (q->nice < best) {
+            best = q->nice;
+        }
     }
     if (!found) return -ESRCH;
-    return set ? 0 : 20 - best;
+    if (set) return err;
+    return 20 - best;
 }
 
 /* setitimer/getitimer (ITIMER_REAL only; the CPU-time ones are accepted with no effect).
@@ -630,7 +650,7 @@ static long sys_reboot(long magic, long cmd)
 /* Program pages loaded when first touched                           */
 /* ------------------------------------------------------------------ */
 
-#define CLUSTER 0x10000UL                    /* read 64 KiB of the program at a time */
+#define CLUSTER 0x8000UL                     /* read 32 KiB of the program at a time */
 static uint8_t cluster_buf[CLUSTER];
 
 /* Creates the missing pages of the 64 KiB cluster around addr that belong to p's segments, with

@@ -111,7 +111,7 @@ struct proc {
     bool fifo_wait_write;           /* ...for writing */
     uint32_t fifo_wait_opens;       /* opens of the other end when it started waiting */
     uint64_t deadline;              /* poll/sleep deadline (timer ns; 0 = none) */
-    int nice;                       /* -20..19 (informational for now: it does not change the seL4 priority) */
+    int nice;                       /* -20..19; > 0 lowers the seL4 priority (proc.c) */
     uint64_t itimer_next;           /* ITIMER_REAL: next SIGALRM (timer ns; 0 = off) */
     uint64_t itimer_interval;       /* ns between expirations (0 = one shot) */
 
@@ -171,6 +171,10 @@ uintptr_t proc_win(int s, uintptr_t vaddr);    /* the shared buffer of slot s (c
 uint8_t *mem_page_ptr(int s, uintptr_t v);     /* byte v of slot s as the server sees it (page must exist) */
 bool mem_copy_in(int s, uintptr_t v, const void *src, size_t n);   /* src NULL: clear */
 bool mem_has_page(int s, uintptr_t v);
+#define PROC_PRIO_NORMAL 100                   /* below posix_server (150), above the VM (90) */
+#define PROC_PRIO_LOW    95                    /* nice > 0 */
+void mem_slot_set_prio(int s, int prio);
+void proc_apply_nice(struct proc *p);
 void proc_image_release(uint32_t ino);         /* before a file is changed: load it in full where it runs */
 bool mem_ensure(int s, uintptr_t vaddr, size_t len);
 void mem_free_range(int s, uintptr_t vaddr, size_t len);

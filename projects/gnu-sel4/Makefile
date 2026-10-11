@@ -17,6 +17,13 @@
 export DEPS            ?= $(abspath ../..)
 export MICROKIT_SDK    ?= $(DEPS)/sdk/microkit-sdk-2.3.1
 export MICROKIT_BOARD  := x86_64_generic_vtx
+# make RELEASE=1 (also run, test): kernel and system without debugging, in build-release/.
+# Measured ~10 % faster on system-call-heavy work (fork, exec); it loses the components' debug
+# messages (faults, mount, DHCP) on the serial port, so debug stays the default
+ifneq ($(RELEASE),)
+export MICROKIT_CONFIG := release
+export BUILD_DIR       ?= $(abspath build-release)
+endif
 export MICROKIT_CONFIG ?= debug
 # Our own Microkit tool (third_party/microkit, branch gnu-sel4: <cap_untyped>, <cap_cnode>...)
 export MICROKIT_TOOL   := $(DEPS)/third_party/microkit/target/release/microkit

@@ -36,7 +36,6 @@
 #define SELF_TCB     ((seL4_CPtr)SRV_TCB_SLOT << 58)
 #define ASID_POOL    ((seL4_CPtr)SRV_ASID_POOL_SLOT << 58)
 #define SCHED_POOL(i) (((seL4_CPtr)SRV_SCHED_POOL_SLOT << 58) | (i))
-#define PROC_PRIO    100                /* below posix_server (150) and above the VM (90) */
 
 #define BADGE_PPC    (1ULL << 63)       /* libmicrokit's protected(): channel = badge & 0x3f */
 #define BADGE_FAULT  (1ULL << 62)       /* libmicrokit's fault(): child = badge & 0xff */
@@ -410,6 +409,8 @@ long mem_shm_map(int s, int id, uintptr_t vaddr, size_t len, uint64_t off, bool 
 
 uint32_t mem_slot_pages(int s) { return slots[s].npages; }
 
+void mem_slot_set_prio(int s, int prio) { seL4_TCB_SetPriority(slots[s].tcb, SELF_TCB, prio); }
+
 uint64_t mem_slot_consumed_us(int s)
 {
     seL4_SchedContext_Consumed_t c = seL4_SchedContext_Consumed(SCHED_POOL(s));
@@ -587,7 +588,7 @@ bool slot_make(int s)
     if (seL4_TCB_SetSpace(sl->tcb, fault_ep, sl->cnode,
                           seL4_CNode_CapData_new(0, 64 - PROC_CNODE_BITS).words[0], sl->vspace, 0) ||
         seL4_TCB_SetIPCBuffer(sl->tcb, PROC_IPCBUF, CAP_PTR(ipcbuf)) ||
-        seL4_TCB_SetSchedParams(sl->tcb, SELF_TCB, 0, PROC_PRIO, SCHED_POOL(s), fault_ep))
+        seL4_TCB_SetSchedParams(sl->tcb, SELF_TCB, 0, PROC_PRIO_NORMAL, SCHED_POOL(s), fault_ep))
         return false;
     sl->made = true;
     return true;

@@ -77,6 +77,14 @@ check lazy-exec   sh -c 'cp /bin/dash /tmp/d1 && cp /bin/dash /tmp/d2 || exit 1
                          echo "rewritten: $r1 $(cat /tmp/d1.out); removed: $r2 $(cat /tmp/d2.out)"
                          rm -f /tmp/d1 /tmp/fill /tmp/garbage /tmp/d1.out /tmp/d2.out
                          [ $r1 = 3 ] && [ $r2 = 4 ]'
+check nice        sh -c 'loop() { i=0; while [ $i -lt 3000 ]; do i=$((i+1)); done; }
+                         t() { a=$(date +%s%N); loop; b=$(date +%s%N); echo $(( (b - a) / 1000000 )); }
+                         base=$(t); nice -n 10 sh -c "while kill -0 1 2>/dev/null; do :; done" & hog=$!
+                         sleep 0.2; low=$(t); kill $hog; wait $hog 2>/dev/null
+                         echo "INFO loop alone $base ms, next to a nice 10 busy process $low ms"
+                         [ $low -le $((base * 2 + 5)) ] || exit 1
+                         out=$(printf "nice -n -5 true\nexit\n" | login -f user 2>&1)
+                         echo "$out" | grep -q "Permission denied" || { echo "user lowered its nice: $out"; exit 1; }'
 check hardlinks   sh -c 'rm -f /tmp/e1 /tmp/e2; echo x >/tmp/e1 && ln /tmp/e1 /tmp/e2 && [ "$(stat -c %h /tmp/e1)" = 2 ] && rm /tmp/e1 && [ "$(cat /tmp/e2)" = x ] && [ "$(stat -c %h /tmp/e2)" = 1 ] && rm /tmp/e2'
 check coreutils   sh -c '[ "$(ls /bin | wc -l)" -gt 100 ] && [ "$(echo hello | tr a-z A-Z)" = HELLO ]'
 check gnu-tools   sh -c 'set -e; rm -rf /tmp/gt; mkdir /tmp/gt; cd /tmp/gt; printf "a\nb\nc\n" > f
