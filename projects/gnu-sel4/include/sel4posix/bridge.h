@@ -1,8 +1,8 @@
 /*
  * GNU/seL4 <-> Linux VM bridge (like WSL "interop").
  *
- * posix_server and the VM share a byte channel: to Linux it is the virtio
- * console /dev/hvc1, where sel4-agent (vm/agent/) listens. Frames of
+ * posix_server and the VM share a byte channel: to Linux it is a vsock
+ * connection to the host (port BR_VSOCK_PORT), opened by sel4-agent (vm/agent/). Frames of
  * multiplexed sessions travel over the channel; each session is a command run
  * in the VM on behalf of a native program (apps/linux: /bin/linux, /bin/docker...).
  *

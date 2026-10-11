@@ -24,7 +24,7 @@
 #include <sys/statvfs.h>
 #include <sel4posix/bridge.h>
 
-#define MSIZE 32768
+#define MSIZE 131072                 /* 9P message size: fewer round trips over the bridge */
 
 /* ---------------- 9P2000.L messages ---------------- */
 

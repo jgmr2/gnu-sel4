@@ -129,7 +129,7 @@ over IPC and sDDF queues.
   VFS↔FS protocol: `include/sel4posix/fs_protocol.h`.
 - **Transparent Linux.** `docker ...` and `linux command ...` run in the VM from the native
   shell, with stdin/stdout/stderr, exit code and a pty when interactive. `/bin/linux` ↔
-  `/dev/linux` ↔ queues shared with the VMM (`/dev/hvc1` in the VM) ↔ `sel4-agent`.
+  `/dev/linux` ↔ queues shared with the VMM ↔ a virtio-vsock connection in the VM ↔ `sel4-agent`.
   Protocol: `include/sel4posix/bridge.h`.
 - **Native networking.** `netstack` is the FreeBSD TCP/IP stack (from F-Stack, `net/`) as a
   component of its own on top of sDDF networking: programs use ordinary POSIX sockets, which

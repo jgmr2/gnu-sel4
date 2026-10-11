@@ -35,7 +35,7 @@ net_queue_handle_t net_tx_queue;
 /* Bookkeeping structures for virtio devices */
 struct virtio_console_device virtio_console;
 
-/* Bridge to GNU/seL4 (/dev/hvc1 in the VM): queues in memory shared with
+/* Bridge to GNU/seL4 (a vsock connection in the VM, vm/virtio_vsock.c): queues in memory shared with
  * posix_server (set by Microkit, see meta.py) */
 uintptr_t bridge_rx_queue, bridge_rx_data, bridge_tx_queue, bridge_tx_data;
 #define BRIDGE_DATA_SIZE 0x10000

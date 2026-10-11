@@ -131,7 +131,7 @@ static void spawn(int id, const char *data, uint32_t len)
             char opts[160];
             int fd = dup(sv[1]);                    /* no CLOEXEC: the kernel will use it */
             mkdir_p(s->mnt);
-            snprintf(opts, sizeof opts, "trans=fd,rfdno=%d,wfdno=%d,version=9p2000.L,msize=32768,access=any", fd, fd);
+            snprintf(opts, sizeof opts, "trans=fd,rfdno=%d,wfdno=%d,version=9p2000.L,msize=131072,access=any", fd, fd);
             if (mount("sel4", s->mnt, "9p", 0, opts)) {
                 fprintf(stderr, "sel4-agent: mount 9p on %s: %s\n", s->mnt, strerror(errno));
                 _exit(1);
@@ -239,13 +239,14 @@ static void handle_frame(int type, int id, const char *data, uint32_t len)
     case BR_CLOSE:
         if (s->used) {
             if (s->mount) {
-                /* 9pd went away (it is restarted by s6). Close the 9P transport first, so the
-                 * kernel's pending requests fail at once; unmounting may still wait for replies
-                 * that only this agent would forward, so it happens in a child */
+                /* 9pd went away (it is restarted by s6). Close the 9P transport first: the
+                 * kernel then cancels the pending requests by itself (they no longer need this
+                 * agent to forward a reply) and the unmount cannot hang. It is done here, before
+                 * the next request is read: a new 9pd's mount must not be the one detached */
                 char mnt[sizeof s->mnt];
                 memcpy(mnt, s->mnt, sizeof mnt);
                 close_sess(id);
-                if (fork() == 0) { umount2(mnt, MNT_DETACH); _exit(0); }
+                umount2(mnt, MNT_DETACH);
             } else {
                 if (!s->exited) kill(-s->pid, SIGHUP);
                 close_sess(id);

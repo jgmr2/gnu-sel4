@@ -200,11 +200,19 @@ Pending:
    - [ ] kqueue as the native event API (epoll stays for compatibility), on top of the rings
    - [ ] Large pages (2 MiB) for large regions (fork, exec and faults pay per 4 KiB page today);
          free unused page tables
-11. [ ] **Linux VM integration** (M–L; the VM runs Linux at native speed with VT-x; what is slow
+11. [~] **Linux VM integration** (M–L; the VM runs Linux at native speed with VT-x; what is slow
         is the current bridge: serial-port-style queues with byte-by-byte copies)
-   - [ ] vsock (AF_VSOCK): POSIX sockets between native and VM processes (virtio-vsock in
-         libvmm, AF_VSOCK in posix_server); `docker`/`linux` over vsock instead of the current
-         bridge. virtio rings are zero copy: the biggest copy saving in the whole system
+   - [x] The bridge travels over virtio-vsock (vm/virtio_vsock.c, a minimal device in the VMM:
+         one stream connection from the agent to the host's port 5000) instead of a virtio
+         console, whose tty layer handed over 2 KiB per VM exit: 4 MiB native -> VM
+         1.44 s -> 286 ms, VM -> native 2.47 s -> 527 ms. libvmm's console copied received data
+         byte by byte (patched: projects/gnu-sel4/libvmm). 9P with 128 KiB messages
+   - [ ] What is left is latency: a 9P round trip costs ~4.5 ms under QEMU (several VM exits
+         per message at ~1 ms each in nested virtualisation: queue kick, interrupt status read,
+         EOI), so `find /mnt/sel4/...` or small writes are slow; on real hardware an exit costs
+         microseconds. MSI-X and VIRTIO_F_EVENT_IDX in libvmm would remove most exits
+   - [ ] AF_VSOCK for native programs (sockets between native and VM processes); `docker` and
+         `linux` keep using the bridge
    - [ ] Direct networking between native and the VM (today it goes around via the host):
          sDDF vswitch or virtio-net between netstack and the VM
    - [ ] Fast shared files: 9P or virtio-fs over shared-memory queues; hard links over 9P
