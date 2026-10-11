@@ -1,12 +1,16 @@
 #!/bin/sh
 # /etc/tests.sh: automated tests (make test on the host). /etc/rc runs it only if /etc/test
-# exists (make test creates it on a copy of the disk). Everything goes to /dev/kmsg, which
-# reaches QEMU's serial port; make test reads it from there.
+# exists (make test creates it on a copy of the disk). The results go to /var/log/test-results,
+# which make test reads from the disk after the final power off, and to /dev/kmsg (QEMU's
+# serial port) to follow them live: the serial port is shared and can lose a line.
 #   /etc/test containing "no-net": skip the tests that need the internet.
 #
 # SPDX-License-Identifier: BSD-2-Clause
 exec >/dev/kmsg 2>&1
-echo "== TESTS: BEGIN =="
+RESULTS=/var/log/test-results
+: > $RESULTS
+say() { echo "$1"; echo "$1" >> $RESULTS; }
+say "== TESTS: BEGIN =="
 failures=0
 total=0
 
@@ -14,10 +18,10 @@ check() {          # check <name> <command...>
     name=$1; shift
     total=$((total + 1))
     if "$@" >/tmp/test.log 2>&1; then
-        echo "TEST $name: ok"
+        say "TEST $name: ok"
     else
-        echo "TEST $name: FAIL ($?)"
-        while IFS= read -r l; do echo "    $l"; done </tmp/test.log
+        say "TEST $name: FAIL ($?)"
+        while IFS= read -r l; do say "    $l"; done </tmp/test.log
         failures=$((failures + 1))
     fi
 }
@@ -31,6 +35,11 @@ check login       sh -c 'echo "user:s3cret" | chpasswd || { echo "chpasswd faile
                          case "$out" in *user*1000*10*/home/user*) ;; *) echo "login as user failed"; exit 1;; esac
                          grep -q "^user:[$]6[$]" /etc/shadow || { echo "no SHA-512 hash:"; cut -c1-12 /etc/shadow; exit 1; }
                          out=$(printf "user\nwrong\n" | login 2>&1); case "$out" in *"Login incorrect"*) ;; *) echo "$out"; exit 1;; esac'
+check sudo        sh -c 'out=$(printf "echo s3cret | sudo -k -S -p \"\" id -u | sed s/^/UID=/\nexit\n" | login -f user 2>&1)
+                         case "$out" in *UID=0*) ;; *) echo "$out" | tail -5; exit 1;; esac
+                         out=$(printf "echo wrong | sudo -k -S -p \"\" id -u | sed s/^/UID=/\nexit\n" | login -f user 2>&1)
+                         case "$out" in *UID=0*) echo "a wrong password worked"; exit 1;; esac
+                         grep -q "user.*COMMAND=/bin/id" /var/log/sudo.log || { echo "nothing in /var/log/sudo.log"; exit 1; }'
 check hardlinks   sh -c 'rm -f /tmp/e1 /tmp/e2; echo x >/tmp/e1 && ln /tmp/e1 /tmp/e2 && [ "$(stat -c %h /tmp/e1)" = 2 ] && rm /tmp/e1 && [ "$(cat /tmp/e2)" = x ] && [ "$(stat -c %h /tmp/e2)" = 1 ] && rm /tmp/e2'
 check coreutils   sh -c '[ "$(ls /bin | wc -l)" -gt 100 ] && [ "$(echo hello | tr a-z A-Z)" = HELLO ]'
 check gnu-tools   sh -c 'set -e; rm -rf /tmp/gt; mkdir /tmp/gt; cd /tmp/gt; printf "a\nb\nc\n" > f
@@ -63,7 +72,8 @@ else
     check curl-https sh -c 'curl -sS -o /tmp/ex.html -w "%{http_code}" https://example.com | test "$(cat)" = 200 && test -s /tmp/ex.html'
 fi
 
-echo "== TESTS: END ($failures failures, $total tests) =="
+say "== TESTS: END ($failures failures, $total tests) =="
+sync
 
 # Last: an orderly power off (make test checks that QEMU exits on its own and the disk is clean)
 exec /sbin/poweroff

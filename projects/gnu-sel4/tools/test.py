@@ -66,23 +66,26 @@ def main():
             "-netdev", "user,id=net0", "-device", "virtio-net-pci,netdev=net0,addr=0x4.0"]
     p = subprocess.Popen(qemu, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
     os.set_blocking(p.stdout.fileno(), False)
-    end, results, buf, t0 = None, [], b"", time.time()
+    end, results, buf, t0, done = None, [], b"", time.time(), None   # done: when the end was seen
     try:
-        while time.time() - t0 < a.timeout and end is None:
+        # Follow the serial port live until the guest powers off (the results themselves are
+        # read from the disk afterwards: the serial port is shared and can lose a line)
+        while time.time() - t0 < a.timeout:
             if not select.select([p.stdout], [], [], 1)[0]:
                 if p.poll() is not None:
                     break
                 continue
-            buf += p.stdout.read() or b""
+            chunk = p.stdout.read()
+            if chunk == b"":                             # EOF: QEMU exited (powered off)
+                break
+            buf += chunk or b""
             *lines, buf = buf.split(b"\n")
             for l in lines:
                 t = l.decode("utf-8", "replace").rstrip("\r")
                 if t.startswith("TEST ") or t.startswith("    "):
                     print(t)
-                    if t.startswith("TEST "):
-                        results.append(t)
                 elif t.startswith("== TESTS: END"):
-                    end = t
+                    done = time.time()
                 elif "[posix]" in t and ("powering off" in t or "halted" in t):
                     print("  [serial] " + t)
                 elif "fs_ext2:" in t and "cleanly" in t:
@@ -91,13 +94,28 @@ def main():
                     print("  [serial] " + t)
                 elif "PANIC" in t or "faulting PD" in t:
                     print("  [serial] " + t)
+            if done and time.time() - done > 60:      # it should have powered off by now
+                break
         # The tests end with /sbin/poweroff: QEMU must exit by itself, leaving the disk clean
+        try:                                             # EOF comes a moment before the exit
+            p.wait(timeout=10)
+            powered_off = True
+        except subprocess.TimeoutExpired:
+            powered_off = False
+        p.kill()
+        p.wait()
+        r = subprocess.run(debugfs + ["-R", "cat /var/log/test-results", "%s?offset=1048576" % rel(COPY)],
+                           cwd=top, capture_output=True, text=True)
+        for t in r.stdout.splitlines():
+            if t.startswith("TEST "):
+                results.append(t)
+            elif t.startswith("== TESTS: END"):
+                end = t
         if end is not None:
-            try:
-                p.wait(timeout=60)
-                results.append("TEST poweroff: ok")
-            except subprocess.TimeoutExpired:
-                results.append("TEST poweroff: FAIL (QEMU still running 60 s after the tests)")
+            if not done:                                 # the serial port lost them: show them now
+                for t in r.stdout.splitlines():
+                    if t.startswith("TEST ") or t.startswith("    "): print(t)
+            results.append("TEST poweroff: " + ("ok" if powered_off else "FAIL (QEMU did not exit on its own)"))
             print(results[-1])
             with open(COPY, "rb") as c:
                 c.seek((1 << 20) + 1024 + 58)              # partition 1, superblock, s_state
@@ -111,7 +129,8 @@ def main():
             if r.returncode:
                 for l in (r.stdout + r.stderr).splitlines()[:20]: print("    " + l)
     finally:
-        p.kill()
+        if p.poll() is None:
+            p.kill()
         p.wait()
         os.remove(COPY)
         os.remove(MARKER)
@@ -119,14 +138,13 @@ def main():
     if end is None:
         print("DID NOT FINISH: the tests did not reach the end in %d s" % a.timeout)
         return 1
-    # The serial port is shared (other components log there too): a line can get mangled and
-    # lost. The guest says how many tests it ran; any missing result counts as a failure.
+    # The guest says how many tests it ran; any missing result counts as a failure
     import re
     m = re.search(r"(\d+) tests\)", end)
     ran = int(m.group(1)) if m else -1
     got = len([r for r in results if r.startswith("TEST ") and not r.split(":")[0][5:] in ("poweroff", "clean-unmount", "e2fsck")])
     if ran != got:
-        results.append("TEST serial: FAIL (the guest ran %d tests, %d results arrived)" % (ran, got))
+        results.append("TEST results: FAIL (the guest ran %d tests, %d results found)" % (ran, got))
         print(results[-1])
     bad = [r for r in results if "FAIL" in r]
     print("%s: %d tests, %d failures (%.0f s)" % ("PASS" if not bad else "FAIL", len(results),

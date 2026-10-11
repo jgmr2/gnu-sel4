@@ -139,7 +139,7 @@ netstack_copy.elf: network_copy.elf
 SBIN_APPS := init 9pd poweroff
 SBIN_LINKS := reboot:poweroff halt:poweroff
 # Installed set-user-ID root (they act for the user on root's files: /etc/shadow)
-SETUID_APPS := passwd
+SETUID_APPS := passwd sudo
 APPS := $(notdir $(wildcard $(POSIX)/apps/*))
 BINS := $(addprefix bin/,$(APPS))
 .SECONDEXPANSION:
@@ -226,7 +226,14 @@ gnu-%/.built: $(SYSROOT_READY) $(NCURSES) $(POSIX)/ports/gnu/build-gnu.sh
 $(foreach n,$(sort $(dir $(GNU_PROGS))),$(eval gnu-$(n)bin/%: gnu-$(n).built ; @test -f $$@))
 GNU_BINS := $(foreach p,$(GNU_PROGS),gnu-$(dir $(p))bin/$(notdir $(p)):$(notdir $(p)))
 
-EXTRA_BINS := dash/src/dash:dash coreutils.bin:coreutils zsh/Src/zsh:zsh vim.bin:vim curl.bin:curl \
+# sudo: one static binary with the sudoers policy inside; installed set-user-ID root
+SUDO_SRC := $(TP)/sudo-1.9.17p2
+sudo/.built: $(SYSROOT_READY) $(POSIX)/ports/sudo/build-sudo.sh
+	$(POSIX)/ports/sudo/build-sudo.sh $(SUDO_SRC) sudo $(SYSROOT)
+	touch $@
+sudo/bin/sudo sudo/bin/visudo: sudo/.built ;
+
+EXTRA_BINS := dash/src/dash:dash sudo/bin/sudo:sudo sudo/bin/visudo:visudo coreutils.bin:coreutils zsh/Src/zsh:zsh vim.bin:vim curl.bin:curl \
 	      socat.bin:socat dropbear.bin:dropbearmulti $(GNU_BINS) \
 	      $(foreach p,$(NC_PROGS),ncurses/inst/usr/bin/$(p):$(p)) \
 	      $(foreach p,$(PROCPS_PROGS),procps/bin/$(p):$(p))
@@ -255,7 +262,7 @@ LICENSE_FILES := gnu-sel4:$(POSIX)/../../LICENSE gnu-sel4:$(POSIX)/../../THIRD_P
 	less:$(TP)/less-710/LICENSE procps-ng:$(TP)/procps-ng-4.0.7/COPYING procps-ng:$(TP)/procps-ng-4.0.7/COPYING.LIB \
 	curl:$(TP)/curl-8.22.0/COPYING mbedtls:$(TP)/mbedtls-3.6.7/LICENSE \
 	socat:$(TP)/socat-1.8.1.3/COPYING socat:$(TP)/socat-1.8.1.3/COPYING.OpenSSL \
-	dropbear:$(TP)/dropbear-2026.94/LICENSE spleen:$(TP)/spleen/LICENSE \
+	dropbear:$(TP)/dropbear-2026.94/LICENSE spleen:$(TP)/spleen/LICENSE sudo:$(TP)/sudo-1.9.17p2/LICENSE.md \
 	$(foreach p,$(SKARNET_PKGS),$(call gnu_dir,$(p)):$(TP)/$(p)/COPYING) \
 	llvm-compiler-rt:$(SDDF)/LICENSES/Apache-2.0.txt llvm-compiler-rt:$(SDDF)/LICENSES/LLVM-exception.txt
 licenses/.built: $(foreach l,$(LICENSE_FILES),$(lastword $(subst :, ,$(l))))
@@ -348,7 +355,7 @@ SYSFILES := etc/motd etc/profile etc/rc etc/mtab etc/zshrc etc/zprofile etc/shel
 	    etc/resolv.conf usr/share/vim/vimrc etc/tests.sh bin/nc
 # INITFILES: the user's own configuration (accounts, passwords, network): installed only when
 # missing, never overwritten ("path:mode")
-INITFILES := etc/passwd:0644 etc/group:0644 etc/shadow:0600 etc/netcfg.conf:0644 etc/hosts:0644
+INITFILES := etc/passwd:0644 etc/group:0644 etc/shadow:0600 etc/sudoers:0440 etc/netcfg.conf:0644 etc/hosts:0644
 # Everything installed belongs to root (mke2fs -d keeps the build host's owners); the system
 # directories get standard modes, and each home directory its user ("name:uid")
 HOMES := user:1000
@@ -395,7 +402,7 @@ install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EX
 	awk '{ print } $$1 == "write" { print "sif " $$3 " uid 0"; print "sif " $$3 " gid 0" } \
 	     $$1 == "mkdir" { print "sif " $$2 " uid 0"; print "sif " $$2 " gid 0" }' install.cmds.0 > install.cmds; \
 	(cd $(POSIX)/rootfs && find . -mindepth 1 -type d | sed 's|^\.||') | while read d; do \
-	  echo "sif $$d uid 0"; echo "sif $$d gid 0"; echo "sif $$d mode 040755"; done >> install.cmds; \
+	  echo "mkdir $$d"; echo "sif $$d uid 0"; echo "sif $$d gid 0"; echo "sif $$d mode 040755"; done >> install.cmds; \
 	printf '%s\n' "sif /tmp mode 041777" "sif /root mode 040700" $(foreach h,$(HOMES),"sif /home/$(word 1,$(subst :, ,$(h))) uid $(word 2,$(subst :, ,$(h)))" "sif /home/$(word 1,$(subst :, ,$(h))) gid $(word 2,$(subst :, ,$(h)))" "sif /home/$(word 1,$(subst :, ,$(h))) mode 040700") >> install.cmds; \
 	debugfs -w -f install.cmds part.img >/dev/null 2>install.log || { cat install.log; exit 1; }; \
 	dd if=part.img of=$(DISK) bs=1M seek=1 conv=notrunc status=none; \

@@ -1,0 +1,13 @@
+# /etc/sudoers: who may run what as whom. Edit it with visudo (it checks the syntax).
+#
+# SPDX-License-Identifier: BSD-2-Clause
+
+# No pseudo-terminals yet (TODO item 7): commands run on the same terminal
+Defaults !use_pty
+# No syslog daemon: sudo keeps its own log
+Defaults !syslog, logfile=/var/log/sudo.log
+Defaults secure_path="/bin:/sbin:/usr/bin"
+
+root   ALL=(ALL:ALL) ALL
+# Members of wheel may run anything as anyone, after typing their own password
+%wheel ALL=(ALL:ALL) ALL

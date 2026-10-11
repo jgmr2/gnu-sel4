@@ -44,6 +44,7 @@ On the installed system, the license texts of the programs on the disk are in
 | [socat](http://www.dest-unreach.org/socat/) | Gerhard Rieger and contributors | GPL-2.0 | socat and `nc` |
 | [Dropbear](https://matt.ucc.asn.au/dropbear/dropbear.html) | Matt Johnston and contributors (includes libtomcrypt/libtommath, public domain) | MIT | ssh, scp, dropbearkey |
 | [skalibs, execline, s6, s6-rc](https://skarnet.org/software/) | Laurent Bercot (skarnet.org) | ISC | service supervision (`s6-svscan`, `s6-svc`…), the execline language |
+| [sudo](https://www.sudo.ws) | Todd C. Miller and contributors | ISC-style (sudo license) | root work from a normal account |
 | [Spleen](https://github.com/fcambus/spleen) | Frederic Cambus | BSD-2-Clause | the console font |
 
 ## Linux VM

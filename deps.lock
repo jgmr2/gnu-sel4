@@ -37,4 +37,5 @@ tar  third_party/skalibs-2.15.1.0   https://skarnet.org/software/skalibs/skalibs
 tar  third_party/execline-2.9.9.2  https://skarnet.org/software/execline/execline-2.9.9.2.tar.gz      908ed4db3a6b3a23a205d8fd4cf2a71089156f2aeae0f54656045aafad2dee32
 tar  third_party/s6-2.15.1.0       https://skarnet.org/software/s6/s6-2.15.1.0.tar.gz                  eab9c46e22b66b16135f9a05ec68a0ea287d9060b84d10defaaa2caad158ab52
 tar  third_party/s6-rc-0.7.0.0     https://skarnet.org/software/s6-rc/s6-rc-0.7.0.0.tar.gz             bf5b8ce0da5a4ee70d642b818b61d9916a7a9b64a457595f388113e54a188688
+tar  third_party/sudo-1.9.17p2      https://www.sudo.ws/dist/sudo-1.9.17p2.tar.gz                      4a38a1ab3adb1199257edc2a7c4a2bd714665eb605b04368843b06dada2cfcfb
 tar  third_party/spleen            https://github.com/fcambus/spleen/releases/download/2.2.0/spleen-2.2.0.tar.gz  ec42925c6b56d2138c862b2f97147c872e472f674bf03423417d827a08d69a89  only=spleen-8x16.bdf,LICENSE
