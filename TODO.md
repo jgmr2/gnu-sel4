@@ -84,8 +84,8 @@ Real hardware stays last on purpose: first the system has to be worth booting.
        `fetch-deps.sh`; a Docker image with all of it and the patched Microkit tool, and
        `docker-compose.yml` (build, test, shell, vm-rootfs). A fresh clone builds and passes
        `make test` with Docker alone. Next: CI on GitHub Actions running `make test` on every push
-4. [ ] **Supervision: `mkfifo` + s6 + s6-rc** (M)
-   - [ ] Named pipes (`mkfifo`): a FIFO in ext2 that the server treats as a pipe
+4. [~] **Supervision: `mkfifo` + s6 + s6-rc** (M)
+   - [x] Named pipes (`mkfifo`): a FIFO in ext2 that the server treats as a pipe
          (s6 uses them to control services)
    - [ ] s6 + s6-rc (skarnet, ISC; maintained, in C; chosen over runit, which has not been
          maintained since 2014): skalibs + s6 + s6-rc (+ execline). `s6-svscan` as PID 1 or
@@ -93,6 +93,10 @@ Real hardware stays last on purpose: first the system has to be worth booting.
          dependencies ("sshd after the network") and one-shot tasks (fsck, time, network).
          skalibs without signalfd until signalfd exists (it uses its fallback).
          Crashed services come back on their own: the first step towards restarting the userland
+   - [x] skalibs 2.15.1, execline 2.9.9 (multicall), s6 2.15.1 and s6-rc 0.7.0 ported;
+         `s6-svscan /run/service` from /etc/rc; 9pd is supervised (test `s6`: kill -> restarted)
+   - [ ] s6-rc: compiled service database, dependencies, network as a oneshot; the login session
+         as a supervised service
 5. [ ] **Clean shutdown and disk safety** (S–M)
    - [ ] Real `poweroff`/`reboot`: stop services, `sync`, shut down the VM, power off (ACPI)
    - [ ] ext2 fsck at boot if the disk was left dirty (ext2 state flag)
@@ -105,12 +109,16 @@ Real hardware stays last on purpose: first the system has to be worth booting.
    - [ ] `sudo` (port of sudo 1.9, works with musl and without PAM, via `/etc/shadow`) for root
          work from the normal account; `/etc/sudoers` with the `wheel` group; `su` as well
    - [ ] Users from the network later on: musl asks an nscd-protocol daemon for users it does not
-         find in /etc/passwd (or skarnet's nsss): the hook for item 17
+         find in /etc/passwd (or skarnet's nsss): the hook for item 18
 7. [ ] **Pseudo-terminals** (M): `/dev/ptmx`, openpty. Unlocks the ssh server (dropbear),
        tmux/screen and later foot
 8. [ ] **Room to grow** (M)
    - [ ] A bigger ext2 partition (64 MB is not enough for the desktop libraries)
-   - [ ] Installing software without rebuilding the image (packages or updates)
+   - [ ] Installing software without rebuilding the image: **dpkg + apt** with our own `.deb`
+         repository (Debian's binaries are built for glibc and Linux and do not run here: the
+         packages are built from our ports, signed, and published e.g. with GitHub Releases or
+         Pages). dpkg first (C); apt is C++, so it needs a C++ runtime (libc++) and pthreads
+         (item 10). Until then, ports organised like FreeBSD's ports tree
    - [ ] More than 32 processes and larger server tables (today: 128 open files, 32 pipes,
          64 sockets): a desktop exceeds them (64-bit masks in vfs/tty/bridge, or wait lists)
 9. [ ] **Job control and signals** (M): asynchronous signals to processes that make no syscalls
@@ -128,7 +136,21 @@ Real hardware stays last on purpose: first the system has to be worth booting.
          and unmodified sway
    - [ ] Phase 4: foot as the native terminal; Linux VM windows through waypipe (like WSLg);
          per-origin border colours (native / VM), Qubes-style
-12. [ ] **Performance** (M): measure first, then optimise what the numbers point at
+12. [ ] **Native isolation and process restriction** (M–L), ideas from FreeBSD and OpenBSD.
+        Docker is not affected: it keeps running Linux containers in the Linux VM
+   - [ ] Jails for native programs: their own root, their own visible processes, their own
+         network. On seL4 a jail can also be a separate posix_server instance in its own
+         component: isolation enforced by the kernel, not by server code. Later, OCI images
+         on jails (as FreeBSD's podman + ocijail) for native containers
+   - [ ] Process restriction: Capsicum (FreeBSD's capability mode: only the descriptors it
+         holds) or pledge/unveil (OpenBSD: "only these kinds of calls, only these paths"),
+         enforced in posix_server, through which every call already goes
+   - [ ] kqueue as the native event API (epoll stays for compatibility); both on top of the rings
+   - [ ] `sysctl` (FreeBSD style) next to the Linux-format /proc
+   - [ ] Own ring ABI (submission/completion rings in the shared buffer, the sDDF model): many
+         operations per notification, nothing blocking; epoll, kqueue and poll become thin layers
+         on top. A subset of the io_uring ABI on top of it only if some program needs liburing
+13. [ ] **Performance** (M): measure first, then optimise what the numbers point at
    - [ ] Measurements: TSC counters for fork, exec, exit, page faults, PPCs and copies, visible
          in /proc (numbers before any optimisation)
    - [ ] Copy-on-write fork: today `mem_fork` copies every page, and fork + exec (every command
@@ -142,7 +164,7 @@ Real hardware stays last on purpose: first the system has to be worth booting.
          (>= 64 KiB) passing page capabilities instead of copying. Small transfers keep copying:
          mapping + unmapping costs more than copying 4 KiB
    - [ ] Large pages (2 MiB) for large regions; free unused page tables
-13. [ ] **Linux VM integration** (M–L; the VM runs Linux at native speed with VT-x; what is slow
+14. [ ] **Linux VM integration** (M–L; the VM runs Linux at native speed with VT-x; what is slow
         is the current bridge: serial-port-style queues with byte-by-byte copies)
    - [ ] vsock (AF_VSOCK): POSIX sockets between native and VM processes (virtio-vsock in
          libvmm, AF_VSOCK in posix_server); `docker`/`linux` over vsock instead of the current
@@ -156,7 +178,7 @@ Real hardware stays last on purpose: first the system has to be worth booting.
    - [ ] Memory server: move mem.c out of posix_server into a component that hands pages to
          posix_server and the VMM (a single pool); Microkit: capability to the VM's EPT
    - [ ] The VM's system on disk instead of an initramfs in RAM (252 MB fixed today)
-14. [ ] **Self-hosted development loop** (L): develop GNU/seL4 from inside GNU/seL4,
+15. [ ] **Self-hosted development loop** (L): develop GNU/seL4 from inside GNU/seL4,
         autonomously: edit → build → stage → restart the whole userland (not the kernel) →
         read logs and behaviour → commit if it is good
    - [ ] First step: Claude Code + toolchain in the Linux VM, working on the tree through
@@ -168,8 +190,8 @@ Real hardware stays last on purpose: first the system has to be worth booting.
          does not pass `make test` within N seconds; logs kept across restarts
    - [ ] Native toolchain: clang/LLVM, make, git (needs pthreads and large memory)
    - [ ] Native Claude Code: Node.js (pthreads, libuv, executable mappings for V8's JIT)
-15. [ ] **Journal in fs_ext2** (L), towards ext3/ext4
-16. [ ] **Booting on real hardware: Dell Latitude 7390 2-in-1, UEFI** (L)
+16. [ ] **Journal in fs_ext2** (L), towards ext3/ext4
+17. [ ] **Booting on real hardware: Dell Latitude 7390 2-in-1, UEFI** (L)
    - [ ] Live ISO: GRUB (multiboot2) loads seL4 + the system + an ext2 disk into RAM
    - [ ] GOP framebuffer (address and format from multiboot2) for the graphical console;
          2x font scaling for HiDPI; scrollback with Shift+PgUp
@@ -182,7 +204,7 @@ Real hardware stays last on purpose: first the system has to be worth booting.
    - [ ] Multicore (seL4 runs on a single core today; the laptop has 4)
    - [ ] Release build (kernel and system without debugging)
 
-17. [ ] **Directory services, native: LDAP, Kerberos, Active Directory, Samba** (L), last on purpose
+18. [ ] **Directory services, native: LDAP, Kerberos, Active Directory, Samba** (L), last on purpose
    - [ ] LDAP client (OpenLDAP's libldap; needs OpenSSL or GnuTLS) and a small nscd-protocol daemon
          backed by LDAP, so `id`, `ls -l`, `ps` see directory users unmodified (item 6)
    - [ ] Kerberos (MIT krb5 or Heimdal) and pluggable authentication (Linux-PAM works with musl)
@@ -192,7 +214,7 @@ Real hardware stays last on purpose: first the system has to be worth booting.
 ## Long term
 
 - [ ] io_uring as an interface for programs: not planned (a Linux-only ABI that almost nothing
-      uses directly; seL4 PPCs are cheap). The ring model is used between servers instead (item 12)
+      uses directly; seL4 PPCs are cheap). Our own ring ABI instead (item 12), also between servers (item 13)
 - [ ] **posix_server is a single point of failure**: if it goes down, all of native goes down;
       split it into servers (processes/memory, files, network, tty)
 - [ ] Our own triple (`x86_64-sel4-musl`) instead of `x86_64-linux-musl` (today programs see `__linux__`)
