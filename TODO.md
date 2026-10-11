@@ -176,7 +176,17 @@ Pending:
    - [x] /proc: real load average (Linux's fixed-point averages, sampled every 5 s),
          /proc/<pid>/maps (runs of present pages: with lazy loading the program shows in
          32 KiB pieces) and /proc/<pid>/fd (Linux names: pipe:[n], socket:[n], anon_inode:...)
-10. [ ] **Rings and asynchronous I/O** (L)
+10. [~] **Rings and asynchronous I/O** (L). Measured first (2026-10-11), with these findings:
+   - [x] Asynchronous file reads were built and measured, then left out (the patch is not in the
+         tree): a read that misses the cache returned -EAGAIN, fs_ext2 read the blocks in the
+         background (in runs of up to 32) and notified posix_server, which put the process to
+         sleep meanwhile. No gain: small cached reads next to a cold 24 MiB read took 186 ms
+         against 183 ms synchronous, because each 64 KiB operation waits only ~0.3 ms for the
+         disk and posix_server already serves other processes between them; what slows them
+         down is CPU, not waiting. Worth it again with slow disks or once posix_server is split
+   - [x] Zero copy measured: a cached 64 KiB read costs 28 us in posix_server + fs_ext2
+         (~2.3 GB/s, two copies); for `cat` of 8 MiB that is 3.7 of 14 ms (the rest is starting
+         the process). Mapping cache pages would save ~2 ms per 8 MiB: later, for large files
    - [ ] Own ring ABI (submission/completion rings in the shared buffer, the sDDF model): many
          operations per notification, nothing blocking; epoll, kqueue and poll become thin layers
          on top. A subset of the io_uring ABI on top of it only if some program needs liburing

@@ -58,7 +58,7 @@ def main():
     with open(CMDS, "w") as f:
         f.write("\n".join(cmds) + "\n")
     r = subprocess.run(debugfs + ["-w", "-f", rel(CMDS), "%s?offset=1048576" % rel(COPY)],
-                       cwd=top, capture_output=True, text=True)
+                       cwd=top, capture_output=True, text=True, errors="replace")
     if r.returncode:
         sys.exit("debugfs: " + r.stderr)
 
@@ -121,7 +121,7 @@ def main():
         p.kill()
         p.wait()
         r = subprocess.run(debugfs + ["-R", "cat /var/log/test-results", "%s?offset=1048576" % rel(COPY)],
-                           cwd=top, capture_output=True, text=True)
+                           cwd=top, capture_output=True, text=True, errors="replace")
         if a.script:                                     # the script's output, as it is
             print(r.stdout, end="")
         for t in r.stdout.splitlines():
@@ -141,7 +141,7 @@ def main():
             results.append("TEST clean-unmount: " + ("ok" if clean else "FAIL (the ext2 state is not clean)"))
             print(results[-1])
             fsck = ["e2fsck"] if shutil.which("e2fsck") else [os.path.join(top, "dev.sh"), "e2fsck"]
-            r = subprocess.run(fsck + ["-fn", "%s?offset=1048576" % rel(COPY)], cwd=top, capture_output=True, text=True)
+            r = subprocess.run(fsck + ["-fn", "%s?offset=1048576" % rel(COPY)], cwd=top, capture_output=True, text=True, errors="replace")
             results.append("TEST e2fsck: " + ("ok" if r.returncode == 0 else "FAIL (exit %d)" % r.returncode))
             print(results[-1])
             if r.returncode:
