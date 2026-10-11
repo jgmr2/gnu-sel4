@@ -149,16 +149,23 @@ Real hardware stays last on purpose: first the system has to be worth booting.
         comes from splitting it into servers on several cores with rings. Better after the async
         fs_ext2 I/O and the rings (items 12-13), so threads meet a server that never waits.
        Blocks glib (pango, sway), browsers, Node.js and almost any large program
-11. [ ] **Graphical desktop: sway + Wayland** (L), on top of items 7, 8 and 10
+11. [ ] **Graphical desktop: our own Wayland compositor** (L), on top of items 7, 8 and 10.
+        Sway/wlroots dropped: cairo, pango, glib, harfbuzz, freetype, fontconfig, libdrm,
+        libinput... would multiply the native attack surface. Heavy GUI applications run in the
+        Linux VM and reach the native desktop through waypipe (like WSLg)
+   - [ ] Phase 0b: PS/2 mouse; Latin American keyboard layout; virtual consoles; an input
+         device (/dev/input) and a mappable framebuffer (/dev/fb0) exposed by fbcon
    - [ ] Phase 1b: signalfd, shm_open (/dev/shm), AF_UNIX SEQPACKET, nested epoll in poll
-   - [ ] Phase 0b: PS/2 mouse; Latin American keyboard layout; virtual consoles
-   - [ ] Phase 2: libraries: libwayland, wayland-protocols, libffi, libxkbcommon (+ keymaps),
-         pixman, json-c, pcre2; cairo + pango (glib, harfbuzz, freetype, fontconfig).
-         meson/ninja in the build image
-   - [ ] Phase 3: wlroots with our own seL4 backend (framebuffer + input; pixman renderer)
-         and unmodified sway
-   - [ ] Phase 4: foot as the native terminal; Linux VM windows through waypipe (like WSLg);
-         per-origin border colours (native / VM), Qubes-style
+   - [ ] Phase 2: libwayland (server + client; libffi) and wayland-protocols (xdg-shell); a
+         precompiled XKB keymap the compositor sends to clients (libxkbcommon only in clients)
+   - [ ] Phase 3: the compositor, a POSIX process (not a PD), in C: libwayland-server, wl_shm
+         only, xdg-shell; one epoll loop (Wayland sockets, input, a 60 Hz timerfd as the frame
+         clock: there is no vsync interrupt); i3-style tiling and floating windows in one tree;
+         CPU rendering of damaged regions only (AVX2 alpha blending, if seL4 saves the AVX
+         state: check XSAVE in the kernel configuration); bitmap fonts (Spleen) for decorations;
+         resizes through xdg-shell configure/ack and sway-style transactions (no flicker)
+   - [ ] Phase 4: a native terminal (foot or our own); VM windows through waypipe; per-origin
+         border colours (native / VM), Qubes-style
 12. [ ] **Native isolation and process restriction** (M–L), ideas from FreeBSD and OpenBSD.
         Docker is not affected: it keeps running Linux containers in the Linux VM
    - [ ] Jails for native programs: their own root, their own visible processes, their own
