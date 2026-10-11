@@ -12,7 +12,7 @@
  *     directory drops its index and leaves it as a linear directory)
  *   - read and write: files, directories, symbolic links, hard links,
  *     create, delete, rename, truncate, chmod, chown, statfs
- *   - block cache with immediate writes (write-through), no journal
+ *   - block cache, written at the end of every operation (all of its blocks at once), no journal
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -59,13 +59,23 @@
 #endif
 static uint64_t clk_epoch = BUILD_TIME, clk_tsc0, clk_hz;
 
+static inline uint64_t tsc(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return (uint64_t)hi << 32 | lo;
+}
+
 static uint32_t now(void)
 {
     if (!clk_hz) return clk_epoch;
-    uint32_t lo, hi;
-    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    return clk_epoch + (((uint64_t)hi << 32 | lo) - clk_tsc0) / clk_hz;
+    return clk_epoch + (tsc() - clk_tsc0) / clk_hz;
 }
+
+/* Counters for /proc/perf (FS_OP_STATS): count and TSC cycles */
+struct ctr { uint64_t n, cyc; };
+static struct ctr st_op[32], st_disk_read, st_disk_write, st_cache_lookup, st_flush;
+static uint64_t st_hits, st_misses;
 
 /* ------------------------------------------------------------------ */
 /* On-disk ext2 structures                                            */
@@ -154,26 +164,88 @@ static uint32_t ngroups, inode_size;
 #define MAX_GROUPS 1024
 static struct ext2_gd gd[MAX_GROUPS];
 static bool sb_dirty, gd_dirty;
+/* Only the free block/inode counts changed: written at sync and unmount, not after every
+ * operation. After a power cut the disk is marked in use and mount recounts them from the
+ * bitmaps (recount_free), as Linux's ext2 does with its lazy counters */
+static bool counts_dirty;
 
 /* ------------------------------------------------------------------ */
 /* Block cache over the sDDF data region                               */
 /* ------------------------------------------------------------------ */
 
-#define MAX_SLOTS 1024
-static struct { uint64_t blk; uint32_t lru; bool valid; } slots[MAX_SLOTS];
-static uint32_t nslots, lru_clock;
+/* The cache: a hash table to find a block, an LRU list to pick the one to reuse. Writes are
+ * write-back within one operation: bwrite() only marks the block dirty, and flush_dirty() (at the
+ * end of every operation, before the reply) writes all of them at once, sorted, with runs of
+ * consecutive blocks in one request and every request in flight together. So an operation is
+ * still on the disk when it returns, but a block written several times in it (a bitmap, an
+ * indirect block, a new block zeroed then filled) goes out once. The last STAGE_BLOCKS of the
+ * data region are not cache: they stage multi-block transfers (contiguous in memory). */
+#define MAX_SLOTS    8192
+#define STAGE_BLOCKS 64
+#define NO_SLOT      0xffffffffu
+static struct cslot {
+    uint64_t blk;
+    uint32_t prev, next;               /* LRU list (head = most recently used) */
+    uint32_t hnext;                    /* hash chain */
+    bool valid, dirty, hashed;
+} slots[MAX_SLOTS];
+#define HASH_SIZE (2 * MAX_SLOTS)
+static uint32_t hash_head[HASH_SIZE];
+static uint32_t nslots, lru_head = NO_SLOT, lru_tail = NO_SLOT;
+static uint32_t dirty_list[MAX_SLOTS], ndirty;
+static uint32_t stage_first;           /* first block of the staging area in the data region */
 
 static uint8_t *slot_data(int s) { return (uint8_t *)blk_config.data.vaddr + (uintptr_t)s * BS; }
+static uint8_t *stage_data(uint32_t i) { return slot_data(stage_first + i); }
+static uint32_t hash_of(uint64_t blk) { return (uint32_t)(blk * 0x9E3779B1u) % HASH_SIZE; }
+
+static void lru_unlink(uint32_t i)
+{
+    struct cslot *c = &slots[i];
+    if (c->prev != NO_SLOT) slots[c->prev].next = c->next; else lru_head = c->next;
+    if (c->next != NO_SLOT) slots[c->next].prev = c->prev; else lru_tail = c->prev;
+}
+
+static void lru_push_front(uint32_t i)
+{
+    slots[i].prev = NO_SLOT;
+    slots[i].next = lru_head;
+    if (lru_head != NO_SLOT) slots[lru_head].prev = i;
+    lru_head = i;
+    if (lru_tail == NO_SLOT) lru_tail = i;
+}
+
+static void hash_remove(uint32_t i)
+{
+    if (!slots[i].hashed) return;
+    uint32_t *pp = &hash_head[hash_of(slots[i].blk)];
+    while (*pp != NO_SLOT && *pp != i) pp = &slots[*pp].hnext;
+    if (*pp == i) *pp = slots[i].hnext;
+    slots[i].hashed = false;
+}
+
+static void cache_init(void)
+{
+    for (uint32_t h = 0; h < HASH_SIZE; h++) hash_head[h] = NO_SLOT;
+    for (uint32_t i = 0; i < nslots; i++) {
+        slots[i] = (struct cslot){ .hnext = NO_SLOT };
+        lru_push_front(i);
+    }
+}
 
 /* One request at a time: queue it, notify blk_virt and wait for the reply.
  * blk_virt and the driver have a higher priority, so they run while this
- * component waits. */
+ * component waits. Used for single reads; writes go through flush_dirty(). */
 static int blk_io(blk_req_code_t code, int s, uint64_t blk)
 {
     if (blk >= disk_blocks) return -EIO;
+    uint64_t t0 = tsc();
     if (blk_enqueue_req(&blkq, code, (uintptr_t)s * BS, blk, 1, 0)) return -EIO;
     sddf_notify(blk_config.virt.id);
     while (blk_queue_empty_resp(&blkq)) __asm__ volatile("pause" ::: "memory");
+    struct ctr *c = code == BLK_REQ_READ ? &st_disk_read : &st_disk_write;
+    c->n++;
+    c->cyc += tsc() - t0;
     blk_resp_status_t status;
     uint16_t count;
     uint32_t id;
@@ -181,23 +253,114 @@ static int blk_io(blk_req_code_t code, int s, uint64_t blk)
     return status == BLK_RESP_OK ? 0 : -EIO;
 }
 
-static int cache_slot(uint64_t blk, bool *hit)
+/* A batch of requests in flight together: queued until the queue is full, then all waited for */
+static uint32_t batch_inflight;
+static int batch_err;
+static struct ctr *batch_ctr;
+static uint64_t batch_t0;
+
+static void batch_wait_all(void)
 {
-    int victim = 0;
-    for (uint32_t i = 0; i < nslots; i++) {
-        if (slots[i].valid && slots[i].blk == blk) {
-            slots[i].lru = ++lru_clock;
-            *hit = true;
+    if (!batch_inflight) return;
+    sddf_notify(blk_config.virt.id);
+    while (batch_inflight) {
+        while (blk_queue_empty_resp(&blkq)) __asm__ volatile("pause" ::: "memory");
+        blk_resp_status_t status;
+        uint16_t count;
+        uint32_t id;
+        blk_dequeue_resp(&blkq, &status, &count, &id);
+        if (status != BLK_RESP_OK) batch_err = -EIO;
+        batch_inflight--;
+    }
+}
+
+static void batch_begin(struct ctr *c) { batch_err = 0; batch_ctr = c; batch_t0 = tsc(); }
+
+static void batch_add(blk_req_code_t code, uintptr_t offset, uint64_t blk, uint16_t count)
+{
+    if (blk + count > disk_blocks) { batch_err = -EIO; return; }
+    if (blk_queue_full_req(&blkq) || batch_inflight >= blk_config.virt.num_buffers / 2) batch_wait_all();
+    if (blk_enqueue_req(&blkq, code, offset, blk, count, 0)) { batch_err = -EIO; return; }
+    batch_inflight++;
+    batch_ctr->n++;
+}
+
+static int batch_end(void)
+{
+    batch_wait_all();
+    batch_ctr->cyc += tsc() - batch_t0;
+    return batch_err;
+}
+
+static void sort_by_block(uint32_t *v, uint32_t n)
+{
+    for (uint32_t gap = n / 2; gap; gap /= 2)                  /* shell sort: n is small */
+        for (uint32_t i = gap; i < n; i++)
+            for (uint32_t j = i; j >= gap && slots[v[j - gap]].blk > slots[v[j]].blk; j -= gap) {
+                uint32_t t = v[j]; v[j] = v[j - gap]; v[j - gap] = t;
+            }
+}
+
+/* Writes every dirty block: sorted, consecutive blocks in one request through the staging area */
+static int flush_dirty(void)
+{
+    if (!ndirty) return 0;
+    sort_by_block(dirty_list, ndirty);
+    batch_begin(&st_disk_write);
+    uint32_t i = 0;
+    while (i < ndirty) {
+        uint32_t j = i + 1;
+        while (j < ndirty && j - i < STAGE_BLOCKS &&
+               slots[dirty_list[j]].blk == slots[dirty_list[j - 1]].blk + 1) j++;
+        if (j - i == 1) {
+            batch_add(BLK_REQ_WRITE, (uintptr_t)dirty_list[i] * BS, slots[dirty_list[i]].blk, 1);
+        } else {
+            batch_wait_all();                                  /* the staging area is free */
+            for (uint32_t k = i; k < j; k++) memcpy(stage_data(k - i), slot_data(dirty_list[k]), BS);
+            batch_add(BLK_REQ_WRITE, (uintptr_t)stage_first * BS, slots[dirty_list[i]].blk, j - i);
+            batch_wait_all();                                  /* before the staging is reused */
+        }
+        i = j;
+    }
+    int r = batch_end();
+    for (uint32_t k = 0; k < ndirty; k++) slots[dirty_list[k]].dirty = false;
+    ndirty = 0;
+    return r;
+}
+
+/* The slot for blk: found (hit) or the least recently used one, emptied for it */
+static int cache_slot_find(uint64_t blk, bool *hit)
+{
+    for (uint32_t i = hash_head[hash_of(blk)]; i != NO_SLOT; i = slots[i].hnext) {
+        if (slots[i].blk == blk && slots[i].hashed) {
+            lru_unlink(i);
+            lru_push_front(i);
+            *hit = slots[i].valid;
             return i;
         }
-        if (!slots[i].valid) victim = i;
-        else if (slots[victim].valid && slots[i].lru < slots[victim].lru) victim = i;
     }
     *hit = false;
-    slots[victim].valid = false;
-    slots[victim].blk = blk;
-    slots[victim].lru = ++lru_clock;
-    return victim;
+    uint32_t v = lru_tail;
+    if (slots[v].dirty) flush_dirty();          /* only with more dirty blocks than the cache */
+    hash_remove(v);
+    lru_unlink(v);
+    lru_push_front(v);
+    slots[v].valid = false;
+    slots[v].blk = blk;
+    slots[v].hnext = hash_head[hash_of(blk)];
+    hash_head[hash_of(blk)] = v;
+    slots[v].hashed = true;
+    return v;
+}
+
+static int cache_slot(uint64_t blk, bool *hit)
+{
+    uint64_t t0 = tsc();
+    int s = cache_slot_find(blk, hit);
+    st_cache_lookup.n++;
+    st_cache_lookup.cyc += tsc() - t0;
+    if (*hit) st_hits++; else st_misses++;
+    return s;
 }
 
 /* Block in the cache (read from disk if needed). Returns the slot or -EIO. */
@@ -206,9 +369,58 @@ static int bread(uint64_t blk)
     bool hit;
     int s = cache_slot(blk, &hit);
     if (!hit) {
-        if (blk_io(BLK_REQ_READ, s, blk)) return -EIO;
+        if (blk_io(BLK_REQ_READ, s, blk)) { hash_remove(s); return -EIO; }
         slots[s].valid = true;
     }
+    return s;
+}
+
+/* Reads the blocks of v[] that are not cached yet, together: runs of consecutive blocks in one
+ * request through the staging area. Zero entries (holes) are skipped. */
+static int bread_many(const uint32_t *v, uint32_t n)
+{
+    static uint32_t miss[STAGE_BLOCKS * 4];
+    uint32_t nm = 0;
+    for (uint32_t i = 0; i < n && nm < sizeof miss / sizeof *miss; i++) {
+        if (!v[i]) continue;
+        bool dup = false;
+        for (uint32_t k = 0; k < nm && !dup; k++) dup = slots[miss[k]].blk == v[i];
+        if (dup) continue;
+        bool hit;
+        int s = cache_slot(v[i], &hit);
+        if (!hit) miss[nm++] = s;
+    }
+    if (!nm) return 0;
+    sort_by_block(miss, nm);
+    batch_begin(&st_disk_read);
+    uint32_t i = 0;
+    while (i < nm) {
+        uint32_t j = i + 1;
+        while (j < nm && j - i < STAGE_BLOCKS && slots[miss[j]].blk == slots[miss[j - 1]].blk + 1) j++;
+        if (j - i == 1) {
+            batch_add(BLK_REQ_READ, (uintptr_t)miss[i] * BS, slots[miss[i]].blk, 1);
+        } else {
+            batch_wait_all();
+            batch_add(BLK_REQ_READ, (uintptr_t)stage_first * BS, slots[miss[i]].blk, j - i);
+            batch_wait_all();
+            for (uint32_t k = i; k < j; k++) memcpy(slot_data(miss[k]), stage_data(k - i), BS);
+        }
+        i = j;
+    }
+    int r = batch_end();
+    for (uint32_t k = 0; k < nm; k++) {
+        if (r) hash_remove(miss[k]);
+        else slots[miss[k]].valid = true;
+    }
+    return r;
+}
+
+/* Block about to be overwritten completely: in the cache without reading it */
+static int bget(uint64_t blk)
+{
+    bool hit;
+    int s = cache_slot(blk, &hit);
+    slots[s].valid = true;
     return s;
 }
 
@@ -222,17 +434,26 @@ static int bzero_get(uint64_t blk)
     return s;
 }
 
+/* Marks the block dirty: flush_dirty() writes it at the end of the operation */
 static int bwrite(int s)
 {
-    return blk_io(BLK_REQ_WRITE, s, slots[s].blk);
+    if (!slots[s].dirty) {
+        slots[s].dirty = true;
+        dirty_list[ndirty++] = s;
+    }
+    return 0;
 }
 
 /* ------------------------------------------------------------------ */
 /* Metadata: superblock, group descriptors, inodes                     */
 /* ------------------------------------------------------------------ */
 
-static int flush_meta(void)
+static int flush_meta_(bool counts)
 {
+    if (counts && counts_dirty) {
+        sb_dirty = gd_dirty = true;
+        counts_dirty = false;
+    }
     if (sb_dirty) {
         int s = bread(0);
         if (s < 0) return s;
@@ -251,8 +472,10 @@ static int flush_meta(void)
         }
         gd_dirty = false;
     }
-    return 0;
+    return flush_dirty();                 /* and every block the operation changed */
 }
+
+static int flush_meta(void) { return flush_meta_(false); }
 
 static int inode_loc(uint32_t ino, uint64_t *blk, uint32_t *off)
 {
@@ -348,7 +571,7 @@ static int64_t alloc_block(uint32_t goal_group)
         if (bit < 0) return bit;
         gd[g].bg_free_blocks_count--;
         sb->s_free_blocks_count--;
-        gd_dirty = sb_dirty = true;
+        counts_dirty = true;
         return (int64_t)g * sb->s_blocks_per_group + bit + sb->s_first_data_block;
     }
     return -ENOSPC;
@@ -372,7 +595,7 @@ static int free_block(uint32_t b)
     if (bitmap_free(gd[g].bg_block_bitmap, bit)) return -EIO;
     gd[g].bg_free_blocks_count++;
     sb->s_free_blocks_count++;
-    gd_dirty = sb_dirty = true;
+    counts_dirty = true;
     return 0;
 }
 
@@ -390,7 +613,8 @@ static int64_t alloc_inode(uint32_t goal_group, bool is_dir)
         gd[g].bg_free_inodes_count--;
         if (is_dir) gd[g].bg_used_dirs_count++;
         sb->s_free_inodes_count--;
-        gd_dirty = sb_dirty = true;
+        counts_dirty = true;
+        if (is_dir) gd_dirty = true;       /* recount_free does not recount directories */
         return (int64_t)g * sb->s_inodes_per_group + bit + 1;
     }
     return -ENOSPC;
@@ -403,7 +627,8 @@ static int free_inode(uint32_t ino, bool is_dir)
     gd[g].bg_free_inodes_count++;
     if (is_dir) gd[g].bg_used_dirs_count--;
     sb->s_free_inodes_count++;
-    gd_dirty = sb_dirty = true;
+    counts_dirty = true;
+    if (is_dir) gd_dirty = true;
     return 0;
 }
 
@@ -551,11 +776,35 @@ static int truncate_blocks(struct ext2_inode *in, uint64_t new_size)
 /* Reading and writing contents                                        */
 /* ------------------------------------------------------------------ */
 
+/* Sequential reads: the last file read and where it stopped, for read-ahead */
+static uint32_t ra_ino;
+static uint64_t ra_next;
+#define READ_AHEAD 32                  /* blocks (128 KiB) */
+
 static long file_read(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32_t len, uint8_t *out)
 {
     uint64_t size = inode_size_of(in);
     if (off >= size) return 0;
     if (len > size - off) len = size - off;
+    /* The blocks this read needs (and, if it continues the previous one, the next READ_AHEAD)
+     * that are not cached are read together first */
+    {
+        static uint32_t pbs[STAGE_BLOCKS * 4];
+        uint64_t first = off / BS, want = (off + len - 1) / BS - first + 1;
+        uint64_t nblk = (size + BS - 1) / BS - first;
+        uint64_t n = want + (ino == ra_ino && off == ra_next ? READ_AHEAD : 0);
+        if (n > nblk) n = nblk;
+        if (n > sizeof pbs / sizeof *pbs) n = sizeof pbs / sizeof *pbs;
+        uint32_t k = 0;
+        for (; k < n; k++) {
+            int64_t pb = bmap(ino, in, first + k, false, NULL);
+            if (pb < 0) break;
+            pbs[k] = pb;
+        }
+        bread_many(pbs, k);            /* errors show up below, block by block */
+    }
+    ra_ino = ino;
+    ra_next = off + len;
     uint32_t done = 0;
     while (done < len) {
         uint64_t pos = off + done;
@@ -586,7 +835,7 @@ static long file_write(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32
         uint32_t n = BS - bo < len - done ? BS - bo : len - done;
         int64_t pb = bmap(ino, in, pos / BS, true, &dirty);
         if (pb < 0) { err = pb; break; }
-        int s = bread(pb);
+        int s = n == BS ? bget(pb) : bread(pb);         /* a whole block: no need to read it */
         if (s < 0) { err = s; break; }
         memcpy(slot_data(s) + bo, data + done, n);
         if (bwrite(s)) { err = -EIO; break; }
@@ -1188,6 +1437,57 @@ static long op_statfs(void)
 
 static long op_sync(bool unmount);
 
+static size_t put_ctr(char *b, size_t n, size_t max, const char *name, uint64_t cnt, uint64_t cyc)
+{
+    char line[96], num[24];
+    size_t l = 0;
+    for (const char *p = name; *p && l < 60; p++) line[l++] = *p;
+    uint64_t v[2] = { cnt, cyc };
+    for (int k = 0; k < 2; k++) {
+        int i = 0;
+        uint64_t x = v[k];
+        do { num[i++] = '0' + x % 10; x /= 10; } while (x);
+        line[l++] = ' ';
+        while (i) line[l++] = num[--i];
+    }
+    line[l++] = '\n';
+    if (n + l > max) return n;
+    memcpy(b + n, line, l);
+    return n + l;
+}
+
+static long op_stats(char *b, size_t max)
+{
+    static const char *names[32] = {
+        [FS_OP_LOOKUP] = "lookup", [FS_OP_STAT] = "stat", [FS_OP_READ] = "read",
+        [FS_OP_WRITE] = "write", [FS_OP_TRUNCATE] = "truncate", [FS_OP_GETDENTS] = "getdents",
+        [FS_OP_READLINK] = "readlink", [FS_OP_CREATE] = "create", [FS_OP_UNLINK] = "unlink",
+        [FS_OP_RENAME] = "rename", [FS_OP_SYMLINK] = "symlink", [FS_OP_CHMOD] = "chmod",
+        [FS_OP_STATFS] = "statfs", [FS_OP_SETCLOCK] = "setclock", [FS_OP_SETTIMES] = "settimes",
+        [FS_OP_CHOWN] = "chown", [FS_OP_LINK] = "link", [FS_OP_SYNC] = "sync",
+        [FS_OP_SETCRED] = "setcred",
+    };
+    char name[48];
+    size_t n = 0;
+    for (int i = 0; i < 32; i++) {
+        if (!st_op[i].n) continue;
+        const char *nm = names[i] ? names[i] : "other";
+        size_t l = 0;
+        for (const char *p = "ext2.op."; *p; p++) name[l++] = *p;
+        for (const char *p = nm; *p; p++) name[l++] = *p;
+        name[l] = 0;
+        n = put_ctr(b, n, max, name, st_op[i].n, st_op[i].cyc);
+    }
+    n = put_ctr(b, n, max, "ext2.flush_meta", st_flush.n, st_flush.cyc);
+    n = put_ctr(b, n, max, "ext2.cache_lookup", st_cache_lookup.n, st_cache_lookup.cyc);
+    n = put_ctr(b, n, max, "ext2.cache_hit", st_hits, 0);
+    n = put_ctr(b, n, max, "ext2.cache_miss", st_misses, 0);
+    n = put_ctr(b, n, max, "ext2.disk_read", st_disk_read.n, st_disk_read.cyc);
+    n = put_ctr(b, n, max, "ext2.disk_write", st_disk_write.n, st_disk_write.cyc);
+    n = put_ctr(b, n, max, "ext2.cache_slots", nslots, 0);
+    return n;
+}
+
 static bool is_write_op(long op)
 {
     return op == FS_OP_LINK || op == FS_OP_WRITE || op == FS_OP_TRUNCATE || op == FS_OP_CREATE || op == FS_OP_UNLINK ||
@@ -1283,6 +1583,8 @@ static long dispatch(long op, uint64_t a1, uint64_t a2, uint64_t a3)
     case FS_OP_SETCLOCK:
         clk_epoch = a1; clk_tsc0 = a2; clk_hz = a3;
         return 0;
+    case FS_OP_STATS:
+        return op_stats(buf, FS_BUF_SIZE);
     }
     return -EINVAL;
 }
@@ -1295,8 +1597,17 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
     if (!mounted && op != FS_OP_SETCLOCK) r = -EIO;
     else if (read_only && is_write_op(op)) r = -EROFS;
     else {
+        uint64_t t0 = tsc();
         r = dispatch(op, microkit_mr_get(1), microkit_mr_get(2), microkit_mr_get(3));
+        uint64_t t1 = tsc();
         if (flush_meta() && r >= 0) r = -EIO;
+        uint64_t t2 = tsc();
+        if (op != FS_OP_STATS) {
+            st_op[op & 31].n++;
+            st_op[op & 31].cyc += t2 - t0;
+            st_flush.n++;
+            st_flush.cyc += t2 - t1;
+        }
     }
     microkit_mr_set(0, r);
     return microkit_msginfo_new(0, 5);
@@ -1342,7 +1653,7 @@ static int recount_free(void)
     return flush_meta();
 }
 
-/* FS_OP_SYNC: everything is already on disk (write-through); unmounting marks it clean */
+/* FS_OP_SYNC: every operation is already on disk when it returns; unmounting marks it clean */
 static long op_sync(bool unmount)
 {
     if (read_only) return 0;
@@ -1350,7 +1661,7 @@ static long op_sync(bool unmount)
         sb->s_state |= EXT2_VALID_FS;
         sb_dirty = true;
     }
-    if (flush_meta()) return -EIO;
+    if (flush_meta_(true)) return -EIO;
     if (unmount) read_only = true;
     return 0;
 }
@@ -1413,8 +1724,10 @@ void init(void)
     }
     blk_queue_init(&blkq, blk_config.virt.req_queue.vaddr, blk_config.virt.resp_queue.vaddr,
                    blk_config.virt.num_buffers);
-    nslots = blk_config.data.size / BS;
+    nslots = blk_config.data.size / BS - STAGE_BLOCKS;
     if (nslots > MAX_SLOTS) nslots = MAX_SLOTS;
+    stage_first = blk_config.data.size / BS - STAGE_BLOCKS;
+    cache_init();
 
     blk_storage_info_t *info = blk_config.virt.storage_info.vaddr;
     while (!blk_storage_is_ready(info)) __asm__ volatile("pause" ::: "memory");

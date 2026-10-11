@@ -7,6 +7,8 @@ touched), creates /etc/test on the copy (so /etc/rc runs /etc/tests.sh), boots Q
 reads the "TEST ..." lines from the serial port. Exits with 0 only if all of them pass.
 
   usage: tools/test.py [--no-net] [--slow] [--timeout SECONDS]
+         tools/test.py --script FILE    runs only FILE (sh) in the guest and prints its output
+                                        (measurements, quick experiments: no test suite)
 """
 import argparse, fcntl, os, select, shutil, subprocess, sys, time
 
@@ -16,10 +18,13 @@ DISK = os.path.join(PROJ, "disk.img")
 BUILD = os.environ.get("BUILD_DIR") or os.path.join(PROJ, "build")   # docker compose: build-docker/
 COPY = os.path.join(BUILD, "test-disk.img")
 MARKER = os.path.join(BUILD, "test-marker")
+SCRIPT = os.path.join(BUILD, "test-script")
+CMDS = os.path.join(BUILD, "test-debugfs.cmds")
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-net", action="store_true", help="skip the tests that need the internet")
+    ap.add_argument("--script", help="run only this shell script in the guest and print its output")
     ap.add_argument("--slow", action="store_true", help="add the expensive tests (bigdisk: ~3 minutes more)")
     ap.add_argument("--timeout", type=int, default=0, help="limit in seconds (default 240, 480 with --slow)")
     a = ap.parse_args()
@@ -46,7 +51,13 @@ def main():
     top = os.path.dirname(os.path.dirname(PROJ))
     rel = lambda p: os.path.relpath(p, top).replace(os.sep, "/")
     debugfs = ["debugfs"] if shutil.which("debugfs") else [os.path.join(top, "dev.sh"), "debugfs"]
-    r = subprocess.run(debugfs + ["-w", "-R", "write %s /etc/test" % rel(MARKER), "%s?offset=1048576" % rel(COPY)],
+    cmds = ["write %s /etc/test" % rel(MARKER)]
+    if a.script:
+        shutil.copy(a.script, SCRIPT)
+        cmds.append("write %s /etc/test.script" % rel(SCRIPT))
+    with open(CMDS, "w") as f:
+        f.write("\n".join(cmds) + "\n")
+    r = subprocess.run(debugfs + ["-w", "-f", rel(CMDS), "%s?offset=1048576" % rel(COPY)],
                        cwd=top, capture_output=True, text=True)
     if r.returncode:
         sys.exit("debugfs: " + r.stderr)
@@ -109,6 +120,8 @@ def main():
         p.wait()
         r = subprocess.run(debugfs + ["-R", "cat /var/log/test-results", "%s?offset=1048576" % rel(COPY)],
                            cwd=top, capture_output=True, text=True)
+        if a.script:                                     # the script's output, as it is
+            print(r.stdout, end="")
         for t in r.stdout.splitlines():
             if t.startswith("TEST "):
                 results.append(t)
@@ -135,8 +148,8 @@ def main():
         if p.poll() is None:
             p.kill()
         p.wait()
-        os.remove(COPY)
-        os.remove(MARKER)
+        for f in (COPY, MARKER, SCRIPT, CMDS):
+            if os.path.exists(f): os.remove(f)
 
     if end is None:
         print("DID NOT FINISH: the tests did not reach the end in %d s" % a.timeout)

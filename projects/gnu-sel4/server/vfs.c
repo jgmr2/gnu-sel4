@@ -252,13 +252,25 @@ static void fs_send_cred(void)
 
 static long fs_call(long op, uint64_t a1, uint64_t a2, uint64_t a3)
 {
+    uint64_t t0 = clock_rdtsc();
     fs_send_cred();
     microkit_mr_set(0, op);
     microkit_mr_set(1, a1);
     microkit_mr_set(2, a2);
     microkit_mr_set(3, a3);
     microkit_ppcall(FS_CH, microkit_msginfo_new(0, 4));
-    return (long)microkit_mr_get(0);
+    long r = (long)microkit_mr_get(0);
+    perf_add(&perf_fs[op & 31], 1, t0);
+    return r;
+}
+
+size_t vfs_fs_stats(char *dst, size_t max)
+{
+    long r = fs_call(FS_OP_STATS, 0, 0, 0);
+    if (r <= 0) return 0;
+    if ((size_t)r > max) r = max;
+    memcpy(dst, (void *)fs_buf, r);
+    return r;
 }
 
 static void fs_set_path(uint32_t off, const char *abs)

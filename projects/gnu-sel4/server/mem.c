@@ -463,6 +463,7 @@ void mem_free_range(int s, uintptr_t vaddr, size_t len)
 /* Everything but the shared buffer and the IPC buffer (exit and exec) */
 void mem_free_all(int s)
 {
+    uint64_t t0 = clock_rdtsc();
     struct slot *sl = &slots[s];
     mem_free_range(s, 0, 1UL << 32);
     for (int d = 0; d < 1024; d++) {
@@ -471,6 +472,7 @@ void mem_free_all(int s)
         free_leaves = sl->dir[d];
         sl->dir[d] = NULL;
     }
+    perf_add(&perf_free_all, 1, t0);
 }
 
 /* fork: copies every page of slot ps into slot cs */
@@ -489,8 +491,10 @@ bool mem_fork(int cs, int ps)
                 if (!shared_map(cs, v, meta >> 20, meta & 0xfffff, e & SHARED_RO)) return false;
                 continue;
             }
+            uint64_t t0 = clock_rdtsc();
             if (!page(cs, v, false)) return false;
             memcpy((void *)proc_win(cs, v), (void *)proc_win(ps, v), 4096);
+            perf_add(&perf_fork_copy, 1, t0);
         }
     }
     return true;

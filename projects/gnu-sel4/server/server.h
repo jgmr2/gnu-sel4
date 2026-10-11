@@ -192,6 +192,14 @@ extern uint64_t clock_epoch, clock_tsc0, clock_tsc_hz;
 void clock_init(void);
 uint64_t clock_now(void);
 uint64_t clock_rdtsc(void);
+
+/* perf.c: counters for /proc/perf (count and TSC cycles) */
+struct perf_ctr { uint64_t n, cyc; };
+#define PERF_NSYS 512
+extern struct perf_ctr perf_sys[PERF_NSYS], perf_fs[32], perf_fault, perf_fork_copy, perf_free_all;
+static inline void perf_add(struct perf_ctr *c, uint64_t n, uint64_t t0) { c->n += n; c->cyc += clock_rdtsc() - t0; }
+size_t perf_text(char *buf, size_t max);
+size_t vfs_fs_stats(char *dst, size_t max);                           /* fs_ext2's counters, as text */
 bool timer_notified(unsigned ch);          /* true if it was the timer channel */
 void timer_wait(struct proc *p, uint64_t ns);   /* wake p up in ns */
 uint64_t timer_now_ns(void);

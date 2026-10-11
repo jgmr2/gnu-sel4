@@ -5,6 +5,7 @@
  *   /proc/<pid>/{stat,statm,status,cmdline,environ,comm}, exe and cwd (links)
  *   /proc/self -> <pid> of the caller
  *   /proc/{meminfo,stat,uptime,loadavg,version,mounts}, /proc/net/dhcp
+ *   /proc/perf: performance counters (perf.c)
  *   /proc/sys/kernel/{osrelease,pid_max,hostname}
  *
  * Memory: posix_server's process memory (mem.c). CPU: the time seL4 accounts
@@ -50,7 +51,7 @@ enum {
     F_NONE,
     /* global */
     F_ROOT, F_SELF, F_MEMINFO, F_STAT, F_UPTIME, F_LOADAVG, F_VERSION, F_MOUNTS,
-    F_SYS, F_SYS_KERNEL, F_OSRELEASE, F_PIDMAX, F_HOSTNAME, F_NET, F_NET_DHCP,
+    F_SYS, F_SYS_KERNEL, F_OSRELEASE, F_PIDMAX, F_HOSTNAME, F_NET, F_NET_DHCP, F_PERF,
     /* per process */
     F_PID, F_P_STAT, F_P_STATM, F_P_STATUS, F_P_CMDLINE, F_P_ENVIRON, F_P_COMM, F_P_EXE, F_P_CWD,
 };
@@ -63,6 +64,7 @@ static const struct { const char *name; int id, kind, dt; } root_ents[] = {
     { "loadavg", F_LOADAVG, PROCFS_FILE, DT_REG },
     { "version", F_VERSION, PROCFS_FILE, DT_REG },
     { "mounts", F_MOUNTS, PROCFS_FILE, DT_REG },
+    { "perf", F_PERF, PROCFS_FILE, DT_REG },
     { "sys", F_SYS, PROCFS_DIR, DT_DIR },
     { "net", F_NET, PROCFS_DIR, DT_DIR },
 }, net_ents[] = {
@@ -225,6 +227,7 @@ static size_t generate(int id, struct proc *p)
     case F_PIDMAX:    OUT("32768\n"); break;
     case F_HOSTNAME:  OUT("gnu-sel4\n"); break;
     case F_NET_DHCP:  n = net_info_text(gen, max); break;
+    case F_PERF:      n = perf_text(gen, max); break;
 
     case F_P_STAT: {
         procfs_account(p);

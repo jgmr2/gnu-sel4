@@ -64,4 +64,6 @@ enum fs_op {
      * groups (in registers: the buffer may already hold the next operation's path). uid 0 is
      * not checked */
     FS_OP_SETCRED,
+    /* -> buf: counters as text lines "name count cycles" (TSC cycles); result: length */
+    FS_OP_STATS,
 };

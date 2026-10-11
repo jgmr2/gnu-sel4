@@ -65,6 +65,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
     }
     client_buf = proc_win(cur->slot, PROC_BUF_BASE);
 
+    uint64_t t0 = clock_rdtsc();
     long n = microkit_mr_get(0);
     long a1 = microkit_mr_get(1), a2 = microkit_mr_get(2), a3 = microkit_mr_get(3);
     long a4 = microkit_mr_get(4), a5 = microkit_mr_get(5), a6 = microkit_mr_get(6);
@@ -96,6 +97,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
             r = -ENOSYS;
         }
     }
+    if (n >= 0 && n < PERF_NSYS) perf_add(&perf_sys[n], 1, t0);
     /* A call that would block with signals pending ends with EINTR */
     if (r == POSIX_RETRY && cur->sig_pending) r = -EINTR;
     cur->blocked = r == POSIX_RETRY;          /* for /proc: state S (sleeping) */
@@ -113,8 +115,10 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
 seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo *reply)
 {
     (void)reply;
-    if (proc_fault(child, microkit_msginfo_get_label(msginfo)))
-        seL4_Send(MICROKIT_REPLY_CAP, seL4_MessageInfo_new(0, 0, 0, 0));
+    uint64_t t0 = clock_rdtsc();
+    bool ok = proc_fault(child, microkit_msginfo_get_label(msginfo));
+    perf_add(&perf_fault, 1, t0);
+    if (ok) seL4_Send(MICROKIT_REPLY_CAP, seL4_MessageInfo_new(0, 0, 0, 0));
     return seL4_False;
 }
 

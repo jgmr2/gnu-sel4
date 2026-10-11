@@ -11,6 +11,13 @@ exec >/dev/kmsg 2>&1
 RESULTS=/var/log/test-results
 : > $RESULTS
 say() { echo "$1"; echo "$1" >> $RESULTS; }
+# make test with a script (tools/test.py --script FILE): only that script, then power off
+if [ -f /etc/test.script ]; then
+    sh /etc/test.script >> $RESULTS 2>&1
+    say "== TESTS: END (script, 0 tests) =="
+    sync
+    exec /sbin/poweroff
+fi
 say "== TESTS: BEGIN =="
 mode=" $(cat /etc/test) "
 failures=0
