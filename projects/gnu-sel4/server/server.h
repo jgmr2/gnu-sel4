@@ -52,6 +52,7 @@
 #define SIGALRM       14
 
 /* Signals the server uses */
+#define SIGHUP   1
 #define SIGINT   2
 #define SIGQUIT  3
 #define SIGILL   4
@@ -106,6 +107,14 @@ struct proc {
      * here only the disposition (to decide when sending) and what is pending */
     uint64_t sig_pending, sig_caught, sig_ignored;
 
+    /* job control: stopped by SIGSTOP/SIGTSTP/SIGTTIN/SIGTTOU until SIGCONT (proc.c) */
+    bool stopped;
+    int stop_sig;
+    bool stop_reported, cont_reported;   /* to the parent's wait4 (WUNTRACED, WCONTINUED) */
+    bool stop_self;                 /* it stopped itself in the current call: suspend after it */
+    bool saved_valid;               /* that call's result, for when it retries after SIGCONT */
+    long saved_r;
+
     bool wait_child;                /* blocked in wait4 */
     int fifo_wait;                  /* blocked opening a FIFO: pipe index + 1 (0 = none) */
     bool fifo_wait_write;           /* ...for writing */
@@ -148,6 +157,7 @@ void proc_wake(struct proc *p);
 void proc_wake_mask(waitmask_t mask);
 void proc_signal(struct proc *p, int sig);
 void proc_signal_pgrp(int pgid, int sig);
+bool proc_pgrp_orphaned(int pgid);           /* no parent in the session outside the group */
 void proc_exit(struct proc *p, int status);
 bool proc_fault(int slot, long label);
 
@@ -235,17 +245,29 @@ long bridge_write(int sid, const uint8_t *rec, size_t len);
 long bridge_read(int sid, uint8_t *out, size_t len);
 int  bridge_poll(int sid, bool want_in, bool want_out, bool wait);
 
-/* tty.c */
+/* tty.c: terminals (0 = the console, 1..NTTY-1 = pseudo-terminals /dev/pts/0...) */
+#define NTTY 17
 void tty_init(void);
 void tty_notified(unsigned ch);
-long tty_read(size_t len);                 /* data -> client_buf */
-long tty_write(const char *data, size_t len);
-long tty_ioctl(long req, long arg);        /* structures in client_buf */
-int  tty_poll(bool want_in, bool want_out, bool wait);
-void tty_puts(const char *s);
+long tty_open(const char *abs, uint32_t flags, bool *master);   /* -> tty index or -errno */
+void tty_close(int tty, bool master);
+int  tty_pts_number(const char *abs);       /* "/dev/pts/<n>" -> n, or -1 */
+bool tty_exists(int tty);
+long tty_read(int tty, size_t len);          /* data -> client_buf */
+long tty_write(int tty, const char *data, size_t len);
+long pty_master_read(int tty, size_t len);
+long pty_master_write(int tty, const char *data, size_t len);
+long tty_ioctl(int tty, bool master, long req, long arg);   /* structures in client_buf */
+int  tty_poll(int tty, bool want_in, bool want_out, bool wait);
+int  pty_master_poll(int tty, bool want_in, bool want_out, bool wait);
+int  tty_ctty(const struct proc *p);         /* its controlling terminal, or -1 */
+int  tty_fg_of(int tty);                     /* foreground process group */
+void tty_session_leader_exit(const struct proc *p);
+void tty_console_session(int sid);         /* (init) */
+uint32_t tty_rdev(int tty);
+void tty_name(int tty, char *out, size_t max);
+void tty_puts(const char *s);                /* the server's own messages, on the console */
 void tty_putdec(long v);
-void tty_set_fg(int pgid);
-int  tty_get_fg(void);
 
 /* vfs.c */
 void vfs_init(void);

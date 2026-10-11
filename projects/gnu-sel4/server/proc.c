@@ -58,6 +58,8 @@ typedef struct {
 #define AT_RANDOM   25
 
 #define WNOHANG    1
+#define WUNTRACED  2
+#define WCONTINUED 8
 #define S_IFMT     0170000
 #define S_IFREG    0100000
 
@@ -433,6 +435,7 @@ void proc_exit(struct proc *p, int status)
     cur = p;
     vfs_close_all(p);
     cur = saved;
+    tty_session_leader_exit(p);            /* its terminal: SIGHUP to the foreground group */
 
     /* Children are handed to init; orphaned zombies are freed */
     for (int i = 0; i < NPROC; i++) {
@@ -485,6 +488,18 @@ static long sys_wait4(long pid, long options)
             cur->wait_child = false;
             return r;
         }
+        if ((options & WUNTRACED) && q->stopped && !q->stop_reported) {
+            q->stop_reported = true;
+            microkit_mr_set(1, (q->stop_sig << 8) | 0x7f);     /* WIFSTOPPED */
+            cur->wait_child = false;
+            return q->pid;
+        }
+        if ((options & WCONTINUED) && !q->stopped && !q->cont_reported) {
+            q->cont_reported = true;
+            microkit_mr_set(1, 0xffff);                        /* WIFCONTINUED */
+            cur->wait_child = false;
+            return q->pid;
+        }
     }
     if (!any) return -ECHILD;
     if (options & WNOHANG) return 0;
@@ -498,18 +513,73 @@ static long sys_wait4(long pid, long options)
 
 static bool default_ignore(int sig)
 {
-    return sig == SIGCHLD || sig == SIGURG || sig == SIGWINCH || sig == SIGCONT ||
-           sig == SIGSTOP || sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU;   /* no stopping processes yet */
+    return sig == SIGCHLD || sig == SIGURG || sig == SIGWINCH || sig == SIGCONT;
+}
+
+/* A stopped or continued child: SIGCHLD to its parent, and its wait4 looks again */
+static void tell_parent(struct proc *p)
+{
+    struct proc *parent = p->orphan ? NULL : proc_by_pid(p->ppid);
+    if (!parent) return;
+    proc_signal(parent, SIGCHLD);
+    if (parent->wait_child) proc_wake(parent);
+}
+
+/* Job control. Another process's thread is suspended right away (seL4 restarts the call it
+ * may have been queued for when it resumes). The caller itself finishes its call first: posix_server
+ * keeps the result and parks it until SIGCONT (protected() in posix_server.c) */
+static void proc_stop(struct proc *p, int sig)
+{
+    if (p->stopped || p->pid == 1) return;           /* init is never stopped */
+    p->stopped = true;
+    p->stop_sig = sig;
+    p->stop_reported = false;
+    p->cont_reported = true;
+    p->sig_pending &= ~SIGBIT(SIGCONT);
+    if (p == cur) p->stop_self = true;
+    else if (p->slot >= 0) seL4_TCB_Suspend(slot_tcb(p->slot));
+    tell_parent(p);
+}
+
+static void proc_continue(struct proc *p)
+{
+    if (!p->stopped) return;
+    p->stopped = false;
+    p->cont_reported = false;
+    p->sig_pending &= ~(SIGBIT(SIGSTOP) | SIGBIT(SIGTSTP) | SIGBIT(SIGTTIN) | SIGBIT(SIGTTOU));
+    if (p->slot >= 0) seL4_TCB_Resume(slot_tcb(p->slot));   /* nothing if it was not suspended */
+    proc_wake(p);                                    /* a parked call retries */
+    tell_parent(p);
+}
+
+/* POSIX: a group none of whose members has a parent in the same session but outside the group.
+ * Its processes are not stopped by the terminal's signals (nobody would continue them) */
+bool proc_pgrp_orphaned(int pgid)
+{
+    for (int i = 0; i < NPROC; i++) {
+        struct proc *q = &procs[i];
+        if (q->state != P_RUN || q->pgid != pgid) continue;
+        struct proc *pp = q->orphan ? NULL : proc_by_pid(q->ppid);
+        if (pp && pp->pgid != pgid && pp->sid == q->sid) return false;
+    }
+    return true;
 }
 
 void proc_signal(struct proc *p, int sig)
 {
     if (!p || p->state != P_RUN || sig <= 0 || sig > 64) return;
     uint64_t bit = SIGBIT(sig);
-    if (sig != SIGKILL && (p->sig_ignored & bit)) return;
-    if (sig != SIGKILL && (p->sig_caught & bit)) {
+    if (sig == SIGKILL) { proc_exit(p, sig); return; }
+    if (sig == SIGCONT) proc_continue(p);            /* always, even when ignored or caught */
+    if (sig == SIGSTOP) { proc_stop(p, sig); return; }
+    if (p->sig_ignored & bit) return;
+    if (p->sig_caught & bit) {
         p->sig_pending |= bit;
         proc_wake(p);                      /* if it was blocked, it retries and gets EINTR */
+        return;
+    }
+    if (sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU) {   /* default action: stop */
+        if (!proc_pgrp_orphaned(p->pgid)) proc_stop(p, sig);
         return;
     }
     if (default_ignore(sig)) return;
@@ -851,7 +921,7 @@ void proc_start_init(void)
     p->pgid = p->sid = 1;
     cred_init_root(p);
     vfs_proc_tty(p);
-    tty_set_fg(1);
+    tty_console_session(1);                /* the console is session 1's (init's) */
 
     static const char *const candidates[][2] = {
         { "/sbin/init", "init" }, { "/bin/sh", "-sh" },

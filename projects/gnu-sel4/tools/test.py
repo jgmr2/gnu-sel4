@@ -6,7 +6,7 @@ Copies the system partition of disk.img to a temporary disk (the real disk is ne
 touched), creates /etc/test on the copy (so /etc/rc runs /etc/tests.sh), boots QEMU and
 reads the "TEST ..." lines from the serial port. Exits with 0 only if all of them pass.
 
-  usage: tools/test.py [--no-net] [--slow] [--timeout SECONDS]
+  usage: tools/test.py [--no-net] [--slow] [--only NAME,...] [--timeout SECONDS]
          tools/test.py --script FILE    runs only FILE (sh) in the guest and prints its output
          tools/test.py --keep-disk ...  leaves the disk copy in build/test-disk.img
                                         (measurements, quick experiments: no test suite)
@@ -27,6 +27,7 @@ def main():
     ap.add_argument("--no-net", action="store_true", help="skip the tests that need the internet")
     ap.add_argument("--script", help="run only this shell script in the guest and print its output")
     ap.add_argument("--slow", action="store_true", help="add the expensive tests (bigdisk: ~3 minutes more)")
+    ap.add_argument("--only", help="just these tests, comma-separated (e.g. ptytest,jobtest)")
     ap.add_argument("--keep-disk", action="store_true",
                     help="keep the disk copy (build/test-disk.img) afterwards, e.g. to look at what a cut left")
     ap.add_argument("--timeout", type=int, default=0, help="limit in seconds (default 240, 480 with --slow)")
@@ -49,7 +50,8 @@ def main():
             c.truncate(os.path.getsize(DISK))    # the rest (Docker partition) empty, sparse
 
     with open(MARKER, "w") as m:
-        m.write(" ".join(["no-net" if a.no_net else "full"] + (["slow"] if a.slow else [])))
+        m.write(" ".join(["no-net" if a.no_net else "full"] + (["slow"] if a.slow else []) +
+                         (["only=" + a.only] if a.only else [])))
     # debugfs: directly if it is here (inside the Docker image), otherwise through dev.sh
     top = os.path.dirname(os.path.dirname(PROJ))
     rel = lambda p: os.path.relpath(p, top).replace(os.sep, "/")

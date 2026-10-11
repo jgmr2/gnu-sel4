@@ -78,7 +78,8 @@ enum { OF_FREE, OF_TTY, OF_NULL, OF_FILE, OF_DIR, OF_PIPE_R, OF_PIPE_W, OF_LINUX
        OF_KMSG,                        /* /dev/kmsg: to the serial port (logs, make test) */
        OF_RANDOM,                      /* /dev/urandom, /dev/random (RDRAND) */
        OF_ZERO,                        /* /dev/zero */
-       OF_BLK };                       /* /dev/root: the ext2 partition, raw (e2fsprogs) */
+       OF_BLK,                         /* /dev/root: the ext2 partition, raw (e2fsprogs) */
+       OF_PTM };                       /* a pseudo-terminal's master side (/dev/ptmx); ino = tty */
 
 /* Is the path under /proc? */
 static inline bool is_proc(const char *abs)

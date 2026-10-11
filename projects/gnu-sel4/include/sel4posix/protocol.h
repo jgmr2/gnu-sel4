@@ -32,3 +32,7 @@
 
 /* Outside the errno range (-1..-4095): it never reaches the program */
 #define POSIX_RETRY     (-0x7000)
+/* The process is stopped (job control: SIGSTOP, SIGTSTP...): wait for the server's notification
+ * and make the same call again, whatever the call is (the runtime does it in every call). After
+ * SIGCONT that gives the result of the call it stopped in, or runs it then */
+#define POSIX_STOPPED   (-0x7001)

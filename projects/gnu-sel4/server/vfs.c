@@ -73,6 +73,7 @@ void ofile_release(int of)
         pipe_maybe_free(pp);
     }
     if (f->type == OF_LINUX) bridge_close(f->ino);
+    if (f->type == OF_TTY || f->type == OF_PTM) tty_close(f->ino, f->type == OF_PTM);
     if (f->type == OF_SOCKET) net_call(NET_OP_CLOSE, f->ino, 0, 0, 0);
     if (f->type == OF_EVENTFD) evfds[f->ino].used = false;
     if (f->type == OF_TIMERFD) { tfds[f->ino].used = false; timer_rearm(); }
@@ -350,7 +351,8 @@ long normalize(long dirfd, const char *path, char *out)
 /* Devices that live in the server rather than on disk */
 static int dev_type(const char *abs)
 {
-    if (!strcmp(abs, "/dev/tty") || !strcmp(abs, "/dev/console")) return OF_TTY;
+    if (!strcmp(abs, "/dev/tty") || !strcmp(abs, "/dev/console") || tty_pts_number(abs) >= 0) return OF_TTY;
+    if (!strcmp(abs, "/dev/ptmx")) return OF_PTM;
     if (!strcmp(abs, "/dev/null")) return OF_NULL;
     if (!strcmp(abs, "/dev/zero")) return OF_ZERO;
     if (!strcmp(abs, "/dev/root")) return OF_BLK;      /* the ext2 partition, raw */
@@ -362,18 +364,20 @@ static int dev_type(const char *abs)
     return OF_FREE;
 }
 
-/* struct stat for the server's character devices */
-static void dev_stat(int type)
+/* struct stat for the server's character devices; rdev: a terminal's (0 = by type) */
+static void dev_stat(int type, uint32_t rdev)
 {
     uint64_t *st = (uint64_t *)client_buf;
     memset(st, 0, K_STAT_SIZE);
     st[0] = 5;                                                 /* st_dev */
-    st[1] = type == OF_TTY ? 1 : type == OF_BLK ? 3 : 2;       /* st_ino */
+    st[1] = rdev ? rdev : type == OF_BLK ? 3 : 2;              /* st_ino (ttyname() compares it) */
     st[2] = 1;                                                 /* st_nlink */
     ((uint32_t *)client_buf)[6] = type == OF_BLK ? S_IFBLK | 0600 : S_IFCHR | (type == OF_TTY ? 0620 : 0666);
+    if (type == OF_TTY) ((uint32_t *)client_buf)[8] = 5;          /* st_gid: tty, as Linux's ptys */
     /* st_rdev; /dev/root's is the st_dev of the files on it (fs_ext2: 0x0801), which is how
      * e2fsprogs knows it is the root file system */
-    st[5] = type == OF_TTY ? 0x0500 : type == OF_ZERO ? 0x0105 : type == OF_BLK ? 0x0801 : 0x0103;
+    st[5] = rdev ? rdev : type == OF_TTY ? 0x0500 : type == OF_PTM ? 0x0502 : type == OF_ZERO ? 0x0105 :
+            type == OF_BLK ? 0x0801 : 0x0103;
     st[7] = 1024;                                              /* st_blksize */
 }
 
@@ -465,9 +469,17 @@ static long do_open(long dirfd, uint32_t flags, uint32_t mode)
         if (sid < 0) return sid;
         ino = sid;
     }
+    if (type == OF_TTY || type == OF_PTM) {             /* the console, /dev/tty, a pty's side */
+        bool master;
+        long t = tty_open(abs, flags, &master);
+        if (t < 0) return t;
+        ino = t;
+        type = master ? OF_PTM : OF_TTY;
+    }
     int of = ofile_alloc(type);
     if (of < 0) {
         if (type == OF_LINUX) bridge_close(ino);
+        if (type == OF_TTY || type == OF_PTM) tty_close(ino, type == OF_PTM);
         return -EMFILE;
     }
     ofiles[of].ino = ino;
@@ -484,7 +496,8 @@ static long do_read(long fd, size_t len, bool positional, uint64_t pos)
     struct ofile *f = fd_get(fd);
     if (!f) return -EBADF;
     switch (f->type) {
-    case OF_TTY:    return positional ? -ESPIPE : tty_read(len);
+    case OF_TTY:    return positional ? -ESPIPE : tty_read(f->ino, len);
+    case OF_PTM:    return positional ? -ESPIPE : pty_master_read(f->ino, len);
     case OF_NULL:   return 0;
     case OF_ZERO:   if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE; memset((void *)client_buf, 0, len); return len;
     case OF_DIR:    return -EISDIR;
@@ -550,7 +563,8 @@ static long do_write(long fd, size_t len, bool positional, uint64_t pos)
     struct ofile *f = fd_get(fd);
     if (!f) return -EBADF;
     switch (f->type) {
-    case OF_TTY:    return positional ? -ESPIPE : tty_write((const char *)client_buf, len);
+    case OF_TTY:    return positional ? -ESPIPE : tty_write(f->ino, (const char *)client_buf, len);
+    case OF_PTM:    return positional ? -ESPIPE : pty_master_write(f->ino, (const char *)client_buf, len);
     case OF_NULL:   return len;
     case OF_ZERO:   return len;
     case OF_DIR:    return -EISDIR;
@@ -684,8 +698,11 @@ static long do_fstat(long fd)
         ((uint32_t *)client_buf)[6] = 0140777;                     /* S_IFSOCK */
         return 0;
     }
-    if (f->type == OF_TTY || f->type == OF_NULL || f->type == OF_LINUX || f->type == OF_KMSG || f->type == OF_RANDOM || f->type == OF_ZERO || f->type == OF_BLK) {
-        dev_stat(f->type == OF_TTY || f->type == OF_ZERO || f->type == OF_BLK ? f->type : OF_NULL);
+    if (f->type == OF_TTY || f->type == OF_PTM || f->type == OF_NULL || f->type == OF_LINUX || f->type == OF_KMSG ||
+        f->type == OF_RANDOM || f->type == OF_ZERO || f->type == OF_BLK) {
+        int t = f->type;
+        dev_stat(t == OF_TTY || t == OF_PTM || t == OF_ZERO || t == OF_BLK ? t : OF_NULL,
+                 t == OF_TTY ? tty_rdev(f->ino) : 0);
         return 0;
     }
     if (f->type == OF_PIPE_R || f->type == OF_PIPE_W) {
@@ -707,7 +724,14 @@ static long do_stat(long dirfd, long flags)
     if (r) return r;
     int type = dev_type(abs);
     if (type != OF_FREE) {
-        dev_stat(type);
+        uint32_t rdev = 0;
+        if (!strcmp(abs, "/dev/console")) rdev = tty_rdev(0);
+        int n = tty_pts_number(abs);
+        if (n >= 0) {
+            if (!tty_exists(n + 1)) return -ENOENT;
+            rdev = tty_rdev(n + 1);
+        }
+        dev_stat(type, rdev);
         return 0;
     }
     if (is_proc(abs)) {
@@ -893,10 +917,13 @@ static short fd_poll(int fd, short events, bool wait)
     bool in = events & POLLIN, out = events & POLLOUT;
     short r = 0;
     switch (f->type) {
-    case OF_TTY: {
-        int t = tty_poll(in, out, wait);
+    case OF_TTY:
+    case OF_PTM: {
+        int t = f->type == OF_TTY ? tty_poll(f->ino, in, out, wait) : pty_master_poll(f->ino, in, out, wait);
         if (t & 1) r |= POLLIN;
         if (t & 4) r |= POLLOUT;
+        if (t & 8) r |= POLLERR;
+        if (t & 16) r |= POLLHUP;
         break;
     }
     case OF_PIPE_R: {
@@ -1202,7 +1229,7 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
             if (n >= 0) microkit_mr_set(1, n);
             return n < 0 ? n : 0;
         }
-        return f->type == OF_TTY ? tty_ioctl(a2, a3) : -ENOTTY;
+        return f->type == OF_TTY || f->type == OF_PTM ? tty_ioctl(f->ino, f->type == OF_PTM, a2, a3) : -ENOTTY;
     case __NR_dup:        return do_dup(a1, 0, false, false);
     case __NR_dup2:       return do_dup(a1, a2, true, false);
     case __NR_dup3:       return a1 == a2 ? -EINVAL : do_dup(a1, a2, true, a3 & O_CLOEXEC);
@@ -1304,7 +1331,8 @@ void vfs_proc_tty(struct proc *p)
     for (int i = 0; i < NFD; i++) p->fdt[i].of = -1;
     int tty = ofile_alloc(OF_TTY);
     ofiles[tty].flags = 2;  /* O_RDWR */
-    memcpy(ofiles[tty].path, "/dev/tty", 9);
+    ofiles[tty].ino = 0;    /* the console */
+    memcpy(ofiles[tty].path, "/dev/console", 13);
     ofiles[tty].refs = 3;
     for (int fd = 0; fd < 3; fd++) p->fdt[fd].of = tty;
     memcpy(p->cwd, "/", 2);
@@ -1413,7 +1441,8 @@ long vfs_fd_describe(struct proc *p, int fd, char *out, size_t max)
     case OF_TIMERFD: n = sddf_snprintf(out, max, "anon_inode:[timerfd]"); break;
     case OF_EPOLL:   n = sddf_snprintf(out, max, "anon_inode:[eventpoll]"); break;
     case OF_SHM:     n = sddf_snprintf(out, max, "/memfd: (deleted)"); break;
-    case OF_TTY:     n = sddf_snprintf(out, max, "%s", f->path[0] ? f->path : "/dev/console"); break;
+    case OF_TTY:     { char nm[24]; tty_name(f->ino, nm, sizeof nm); n = sddf_snprintf(out, max, "%s", nm); break; }
+    case OF_PTM:     n = sddf_snprintf(out, max, "/dev/ptmx"); break;
     default:         n = sddf_snprintf(out, max, "%s", f->path[0] ? f->path : "?"); break;
     }
     return n < (int)max ? n : (long)max;

@@ -7,7 +7,8 @@
 #   expensive ones (make test SLOW=1: bigdisk, which also measures the disk speed); "live" is
 #   the live system on real hardware (make PLATFORM=... iso): everything on the screen, hardware
 #   measurements after the tests, the results as QR codes (qrlog), and then the login prompt
-#   instead of powering off.
+#   instead of powering off. "only=a,b": just those tests (make test ONLY=a,b), for quick runs
+#   while working on one thing.
 #
 # SPDX-License-Identifier: BSD-2-Clause
 case " $(cat /etc/test 2>/dev/null) " in
@@ -43,8 +44,12 @@ total=0
 # A test that takes longer than this (seconds) fails as hung, with the state of every process
 TEST_TIMEOUT=60
 
+only=
+for w in $mode; do case $w in only=*) only=",${w#only=},";; esac; done
+
 check() {          # check <name> <command...>; output lines starting with "INFO " are always shown
     name=$1; shift
+    case "$only" in ""|*",$name,"*) ;; *) return 0;; esac
     total=$((total + 1))
     [ -n "$LIVE" ] && printf '  [%2d] %-14s running...\r' "$total" "$name"
     "$@" >/tmp/test.log 2>&1 </dev/null &
@@ -71,6 +76,8 @@ check() {          # check <name> <command...>; output lines starting with "INFO
 
 check proctest    proctest
 check phase1test  phase1test
+check ptytest     ptytest
+check jobtest     jobtest
 check filetest    filetest
 check usertest    usertest
 check passwd      sh -c 'printf "printf \"n3w-pass\\\\nn3w-pass\\\\n\" | passwd\nexit\n" | login -f user 2>&1 | tail -2

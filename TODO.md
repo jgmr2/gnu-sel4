@@ -156,12 +156,19 @@ Principles the plan follows:
          the inodes, bitmaps and blocks that point to them. Measured: QEMU killed in the middle of
          ~600 file writes leaves only lazy free counts and one leaked block, which e2fsck -p
          repairs on its own
-4. [ ] **Terminals, sessions and job control** (M). Needs: nothing. What makes daily use and ssh real
-   - [ ] Pseudo-terminals: `/dev/ptmx`, `/dev/pts/N`, openpty, grantpt/unlockpt, TIOCSWINSZ
-   - [ ] Sessions and controlling terminals: setsid, TIOCSCTTY, tcsetpgrp/tcgetpgrp, SIGHUP;
-         terminal signals go to the foreground process group
-   - [ ] Job control: `Ctrl-Z` (SIGTSTP), stopped processes, SIGCONT, `fg`/`bg`, SIGTTIN/SIGTTOU;
-         `Ctrl-C` in the middle of dash's prompt (today processed with the next line)
+4. [~] **Terminals, sessions and job control** (M). Needs: nothing. What makes daily use and ssh real
+   - [x] Pseudo-terminals (server/tty.c: the console and 16 ptys, each with its own line
+         discipline): `/dev/ptmx`, `/dev/pts/N`, openpty/forkpty, unlockpt, TIOCSWINSZ, ttyname;
+         tcdrain/tcflush (TCSBRK, TCFLSH). Test ptytest
+   - [x] Sessions and controlling terminals: a session leader takes the terminal it opens (or
+         TIOCSCTTY), /dev/tty is the caller's, signal characters go to its foreground group;
+         SIGHUP when the master closes or the session leader exits; /proc shows tty_nr and tpgid
+   - [x] Job control: SIGSTOP/SIGTSTP/SIGTTIN/SIGTTOU stop (the thread suspended; a process
+         stopping itself finishes its call, POSIX_STOPPED parks it), SIGCONT continues, wait4
+         WUNTRACED/WCONTINUED, `Ctrl-Z`, SIGTTIN/SIGTTOU (TOSTOP) for background jobs, orphaned
+         groups not stopped, state T in /proc. Test jobtest
+   - [ ] `fg`/`bg` in zsh and dash tried by hand on the console and a pty; `Ctrl-C` in the middle
+         of dash's prompt (today processed with the next line)
    - [ ] Asynchronous signals to processes that make no system calls (pure loops)
    - [ ] With it: the console login as an s6-rc longrun (getty-like); the dropbear ssh server as
          a longrun; sudo without `!use_pty`; /proc shows the tty name; tmux or screen

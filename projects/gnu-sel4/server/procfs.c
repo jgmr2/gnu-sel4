@@ -185,7 +185,7 @@ static char gen[16384];
 
 static char state_of(struct proc *p)
 {
-    return p->state == P_ZOMBIE ? 'Z' : p->blocked ? 'S' : 'R';
+    return p->state == P_ZOMBIE ? 'Z' : p->stopped ? 'T' : p->blocked ? 'S' : 'R';
 }
 
 static uint64_t ticks(uint64_t us) { return us / (1000000 / HZ); }
@@ -278,7 +278,8 @@ static size_t generate(int id, struct proc *p)
         OUT("%d (%s) %c %d %d %d %d %d 4194304 0 0 0 0 %lu 0 0 0 %d %d 1 0 %lu %lu %lu "
             "18446744073709551615 0 0 0 0 0 %lu 0 %lu %lu 0 0 0 17 0 0 0 0 0 0 0 0 0 0 0 0 0 %d\n",
             p->pid, p->name, state_of(p), p->orphan ? 1 : p->ppid, p->pgid, p->sid,
-            0x0501 /* /dev/console (5,1) */, tty_get_fg(),
+            tty_ctty(p) >= 0 ? (int)tty_rdev(tty_ctty(p)) : 0,     /* tty_nr: its controlling terminal */
+            tty_ctty(p) >= 0 ? tty_fg_of(tty_ctty(p)) : -1,
             ticks(p->cpu_us), 20 + p->nice, p->nice,
             ticks(p->start_ns / 1000), pages * 4096, pages,
             p->sig_pending, p->sig_ignored, p->sig_caught,

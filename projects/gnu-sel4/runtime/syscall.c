@@ -108,17 +108,21 @@ static int deliver_signals(void)
 
 static long server_call(long n, long a1, long a2, long a3, long a4, long a5, long a6)
 {
-    mr_set(0, n);
-    mr_set(1, a1);
-    mr_set(2, a2);
-    mr_set(3, a3);
-    mr_set(4, a4);
-    mr_set(5, a5);
-    mr_set(6, a6);
-    seL4_Call(BASE_ENDPOINT_CAP + POSIX_CHANNEL, seL4_MessageInfo_new(0, 0, 0, POSIX_NUM_MRS));
-    long r = (long)mr_get(0);
-    sig_pending |= mr_get(POSIX_MR_SIGNALS);
-    return r;
+    for (;;) {
+        mr_set(0, n);
+        mr_set(1, a1);
+        mr_set(2, a2);
+        mr_set(3, a3);
+        mr_set(4, a4);
+        mr_set(5, a5);
+        mr_set(6, a6);
+        seL4_Call(BASE_ENDPOINT_CAP + POSIX_CHANNEL, seL4_MessageInfo_new(0, 0, 0, POSIX_NUM_MRS));
+        long r = (long)mr_get(0);
+        sig_pending |= mr_get(POSIX_MR_SIGNALS);
+        if (r != POSIX_STOPPED) return r;
+        seL4_Word badge;                          /* stopped: until SIGCONT */
+        seL4_Wait(INPUT_CAP, &badge);
+    }
 }
 
 /* Extra results of the last call (MR1, MR2...) */
@@ -288,9 +292,14 @@ static long sys_ioctl(long fd, long req, void *arg)
         memcpy((void *)PROC_BUF_BASE, arg, sizeof(struct net_cfg));
         return server_call(SYS_ioctl, fd, req, 0, 0, 0, 0);
     case FIONREAD:
+    case TIOCOUTQ:
+    case TIOCGPTN:                                /* pseudo-terminals: its number */
+    case TIOCGSID:
         r = server_call(SYS_ioctl, fd, req, 0, 0, 0, 0);
         if (r >= 0) *(int *)arg = server_result(1);
         return r;
+    case TIOCSPTLCK:                              /* unlockpt(): the int, by value */
+        return server_call(SYS_ioctl, fd, req, *(int *)arg, 0, 0, 0);
     default:
         return server_call(SYS_ioctl, fd, req, (long)arg, 0, 0, 0);
     }

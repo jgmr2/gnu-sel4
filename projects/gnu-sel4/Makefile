@@ -97,10 +97,11 @@ run:
 		-netdev user,id=net0,$(HOSTFWD) -device virtio-net-pci,netdev=net0,addr=0x4.0
 
 # Automated tests in headless QEMU, on a copy of the disk (tools/test.py).
-# make test NO_NET=1: skip the tests that need the internet; SLOW=1: add the expensive ones
+# make test NO_NET=1: skip the tests that need the internet; SLOW=1: add the expensive ones;
+# ONLY=a,b: just those (quick, while working on one thing)
 test:
 	@test -f $(IMAGE) || { echo "Missing $(IMAGE): build with ../../dev.sh make"; exit 1; }
-	tools/test.py $(if $(NO_NET),--no-net) $(if $(SLOW),--slow)
+	tools/test.py $(if $(NO_NET),--no-net) $(if $(SLOW),--slow) $(if $(ONLY),--only $(ONLY))
 
 # Grows the ext2 partition of an existing disk.img to EXT2_MB (system.mk), keeping everything
 disk-grow:
