@@ -16,7 +16,7 @@ ap.add_argument("--timeout", type=int, default=300)
 a = ap.parse_args()
 
 q = subprocess.Popen(["qemu-system-x86_64", "-machine", "q35", "-accel", "kvm",
-                      "-cpu", "host,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave,+vmx,+vme", "-m", "6G",
+                      "-cpu", "host,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave,+vmx,+vme,+invtsc", "-m", "6G",
                       "-kernel", a.build + "/sel4_32.elf", "-initrd", a.build + "/loader.img",
                       "-display", "none", "-vga", "none", "-serial", "stdio", "-monitor", "none", "-nic", "none"],
                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)

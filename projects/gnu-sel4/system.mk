@@ -58,12 +58,17 @@ endif
 
 IMAGES := serial_driver.elf serial_virt_tx.elf serial_virt_rx.elf $(BLK_ELFS) \
 	  $(ETH_ELF) network_virt_rx.elf network_virt_tx.elf network_copy.elf timer_driver.elf \
-	  fs_ext2.elf posix_server.elf client_vmm.elf netstack.elf netstack_copy.elf fbcon.elf
+	  fs_ext2.elf posix_server.elf client_vmm.elf netstack.elf netstack_copy.elf fbcon.elf timer_ticker.elf
 $(IMAGES): libsddf_util_debug.a
 
+# make TIMER_TICKER_ONLY=1: never arm the HPET alarm (to check the ticker alone, as on the laptop)
 timer_driver.o: $(POSIX)/timer/hpet_timer.c
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) $(if $(TIMER_TICKER_ONLY),-DTIMER_TICKER_ONLY) -c $< -o $@
 timer_driver.elf: timer_driver.o
+	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@
+timer_ticker.o: $(POSIX)/timer/ticker.c
+	$(CC) $(CFLAGS) -c $< -o $@
+timer_ticker.elf: timer_ticker.o
 	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@
 
 # --- syscall tables generated from musl (Linux x86_64 numbers and names) ---

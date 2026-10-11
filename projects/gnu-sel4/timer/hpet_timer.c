@@ -15,6 +15,10 @@
  * most ARM_MAX_NS ahead; when it rings, the deadlines are checked against the TSC and the alarm
  * is armed again. A slow HPET then delays a deadline by a few milliseconds at worst, and there
  * are no wake-ups while nothing waits. Without a usable TSC the HPET is the clock, as before.
+ *
+ * Third: where the HPET almost stops in idle (the laptop), even that alarm does not ring. The
+ * earliest deadline is published in timer_next, and timer_ticker (timer/ticker.c), which the
+ * kernel runs every millisecond through its MCS budget refills, notifies us when it passes.
  */
 
 #include <stdint.h>
@@ -100,6 +104,9 @@ typedef struct __attribute__((packed)) hpet_timer {
 
 // @terryb: remove hard-coded IRQ channel
 #define IRQ_CH 0
+#define TICK_CH 60                      /* timer_ticker: a deadline passed (timer/ticker.c) */
+uintptr_t timer_next;                   /* shared with the ticker: [0] the earliest deadline (ns),
+                                           [1] the TSC frequency (Hz), [2] 1 once [1] is set */
 uintptr_t HPET_REGION = 0x50000000;
 
 volatile hpet_timer_t *timer_0;
@@ -151,7 +158,11 @@ static void process_timeouts(void)
                 next_timeout = timeouts[i];
             }
         }
+        if (timer_next) *(volatile uint64_t *)timer_next = next_timeout;   /* for the ticker */
         if (next_timeout == UINT64_MAX) return;
+#ifdef TIMER_TICKER_ONLY
+        return;                         /* debugging: as if the HPET never rang (the laptop) */
+#endif
         uint64_t delta = next_timeout - now;
         if (tsc_freq && delta > ARM_MAX_NS) delta = ARM_MAX_NS;
         uint64_t target = get_hpet_ticks() + ns_to_hpet_ticks(delta);
@@ -159,6 +170,16 @@ static void process_timeouts(void)
         /* The comparator only fires on a match: make sure the counter has not passed it */
         if (target > get_hpet_ticks() + min_delta_ticks) return;
     }
+}
+
+/* CPUID 0x80000007 EDX bit 8: the TSC runs at a constant rate (also in idle states) */
+static int is_invariant_tsc_cpu(void)
+{
+    uint32_t a, b, c, d;
+    __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(0x80000000), "c"(0));
+    if (a < 0x80000007) return 0;
+    __asm__ volatile("cpuid" : "=a"(a), "=b"(b), "=c"(c), "=d"(d) : "a"(0x80000007), "c"(0));
+    return (d >> 8) & 1;
 }
 
 static uint64_t tsc_ticks_to_ns(uint64_t tsc)
@@ -221,8 +242,19 @@ void init(void)
 
     microkit_deferred_irq_ack(IRQ_CH);
 
-    /* Detect TSC */
-    tsc_freq = sddf_read_freq();
+    /* The TSC frequency, measured against the HPET for 20 ms while this CPU is busy (the HPET
+     * counts properly then): it does not depend on what CPUID reports (nothing under KVM, the
+     * nominal 1900 MHz on the laptop, whose TSC really runs at 1896) */
+    if (sddf_read_freq() || is_invariant_tsc_cpu()) {
+        uint64_t h0 = get_hpet_ticks(), t0 = sddf_read_counter();
+        while (get_hpet_ticks() - h0 < hpet_freq / 50) ;
+        uint64_t h1 = get_hpet_ticks(), t1 = sddf_read_counter();
+        tsc_freq = (t1 - t0) * hpet_freq / (h1 - h0);
+    }
+    if (timer_next) {
+        ((volatile uint64_t *)timer_next)[1] = tsc_freq;
+        __atomic_store_n(&((volatile uint64_t *)timer_next)[2], 1, __ATOMIC_RELEASE);   /* measured */
+    }
     if (!tsc_freq) {
         LOG_TIMER_DRIVER_ERR("Cannot detect or use TSC frequency, expect performance degradation.\n");
         /* Because SDDF_TIMER_GET_TIME calls will go to the HPET rather than from the TSC.
@@ -261,6 +293,10 @@ seL4_MessageInfo_t protected(microkit_channel ch, microkit_msginfo msginfo)
 
 void notified(microkit_channel ch)
 {
+    if (ch == TICK_CH) {                /* the kernel-timer heartbeat saw a deadline pass */
+        process_timeouts();
+        return;
+    }
     if (ch != IRQ_CH) {
         return;
     }

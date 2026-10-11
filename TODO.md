@@ -170,7 +170,11 @@ Principles the plan follows:
          posix_server work. Two timer bugs only real hardware shows: the HPET driver lost
          deadlines already passed when programmed (a real HPET only fires on a match), and the
          laptop's HPET runs 3-4x slow while the CPU idles (Linux does not use it there either).
-         timer/hpet_timer.c keeps time with the TSC and uses the HPET only as a 1 ms alarm
+         timer/hpet_timer.c keeps time with the TSC (measured against the HPET at boot) and uses
+         the HPET only as a 1 ms alarm; build 003 showed the alarm does not ring either while the
+         laptop idles, so timer_ticker (timer/ticker.c) gets the kernel's own timer through MCS
+         budget refills (100 us every 1 ms; 20 us, the kernel's minimum, is never refilled) and
+         notifies the driver when a deadline passes. make TIMER_TICKER_ONLY=1 checks that alone
    - [ ] Boot it on the laptop and bring back the QR codes; revisit the decisions marked
          "under QEMU" with them
    - [ ] Power off through \_S5 from the ACPI tables (today: halt, then the power button)

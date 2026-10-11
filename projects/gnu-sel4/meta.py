@@ -193,10 +193,18 @@ def generate(sdf, sdf_file, output_dir):
     timer_system.add_client(server)          # poll() and nanosleep() timeouts
     timer_system.add_client(netstack)        # TCP/IP stack clock
     add_x86_hpet(sdf, timer_driver)
+    # Its heartbeat from the kernel's timer: up to 100 us every 1 ms, a few used (timer/ticker.c); the HPET alone
+    # cannot be trusted to ring (on the laptop it almost stops while the CPU idles)
+    ticker = ProtectionDomain("timer_ticker", "timer_ticker.elf", priority=253, budget=100, period=1000)
+    timer_next = MemoryRegion(sdf, "timer_next", 0x1000)
+    sdf.add_mr(timer_next)
+    timer_driver.add_map(Map(timer_next, 0x5100_0000, "rw", setvar_vaddr="timer_next"))
+    ticker.add_map(Map(timer_next, 0x5100_0000, "r", setvar_vaddr="timer_next"))
 
     for pd in (serial_driver, serial_virt_tx, serial_virt_rx, eth_driver, net_virt_tx, net_virt_rx,
-               vm_net_copier, fs, server, vmm, timer_driver, netstack, netstack_copier):
+               vm_net_copier, fs, server, vmm, timer_driver, ticker, netstack, netstack_copier):
         sdf.add_pd(pd)
+    sdf.add_channel(Channel(ticker, timer_driver, a_id=0, b_id=60))     # TICK_CH in timer/hpet_timer.c
     if not LIVE:
         sdf.add_pd(blk_driver)
         sdf.add_pd(blk_virt)
