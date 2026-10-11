@@ -471,15 +471,18 @@ install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EX
 	echo "installed in /bin: $(APPS) $(foreach b,$(EXTRA_BINS),$(lastword $(subst :, ,$(b)))) + $$(wc -l < coreutils/programs.txt) coreutils programs"
 
 ifdef LIVE
-live-part1.img: install.stamp
+live-part1.img: install.stamp FORCE
 	set -e; \
 	dd if=$(DISK) of=$@.tmp bs=1M skip=1 count=$(EXT2_MB) status=none; \
 	printf 'live no-net\n' > live-marker; \
 	debugfs -w -R "write live-marker /etc/test" $@.tmp >/dev/null 2>&1; \
+	printf '%s\n' "$(LIVE_BUILD)" > live-marker; \
+	debugfs -w -R "write live-marker /etc/live-build" $@.tmp >/dev/null 2>&1; \
 	debugfs -w -R "sif /etc/test uid 0" $@.tmp >/dev/null 2>&1; \
 	e2fsck -fy $@.tmp >/dev/null 2>&1 || true; \
 	rm -f live-marker; mv $@.tmp $@
 endif
 
 all: $(IMAGE_FILE) install.stamp
-.PHONY: all sysroot
+.PHONY: all sysroot FORCE
+FORCE:

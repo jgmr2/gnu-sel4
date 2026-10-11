@@ -29,6 +29,7 @@ if [ -f /etc/test.script ]; then
 fi
 say "== TESTS: BEGIN =="
 if [ -n "$LIVE" ]; then
+    say "GNU/seL4 live build $(cat /etc/live-build 2>/dev/null || echo '?')"
     # Everything below waits on timers: if this line stays, timer interrupts are not arriving
     printf '%s' "Checking the timer (sleep 1 s; if this line stays here, timer interrupts do not arrive)... "
     t0=$(date +%s%N); sleep 1; t1=$(date +%s%N)

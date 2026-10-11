@@ -89,16 +89,34 @@ test:
 disk-grow:
 	tools/disk-grow.py
 
-# The live ISO (inside the development image: ../../dev.sh make PLATFORM=latitude7390 iso)
-ISO := $(BUILD_DIR)/gnu-sel4-live-$(PLATFORM).iso
+# The live ISO (inside the development image: ../../dev.sh make PLATFORM=latitude7390 iso).
+# Every ISO gets the next build number (in its name, the GRUB menu and the test log);
+# make ventoy (on the host) copies the last one to the mounted Ventoy USB stick
+LIVE_COUNTER := $(BUILD_DIR)/live-build-number
+LAST_BUILD := $(shell cat $(LIVE_COUNTER) 2>/dev/null || echo 0)
+export LIVE_BUILD := $(shell printf %03d $$(( $(LAST_BUILD) + 1 )))
+ISO = $(BUILD_DIR)/gnu-sel4-live-$(PLATFORM)-build$(1).iso
 iso: all
 	@test "$(PLATFORM)" != qemu || { echo "make iso needs PLATFORM=latitude7390"; exit 1; }
 	rm -rf $(BUILD_DIR)/iso && mkdir -p $(BUILD_DIR)/iso/boot/grub
 	cp $(BUILD_DIR)/sel4_32.elf $(BUILD_DIR)/iso/boot/sel4.elf
 	cp $(BUILD_DIR)/loader.img $(BUILD_DIR)/iso/boot/loader.img
-	cp tools/grub-live.cfg $(BUILD_DIR)/iso/boot/grub/grub.cfg
-	grub-mkrescue -o $(ISO) $(BUILD_DIR)/iso -- -volid GNU-SEL4-LIVE >/dev/null 2>&1
-	@ls -l $(ISO)
+	sed 's/@BUILD@/$(LIVE_BUILD)/g' tools/grub-live.cfg > $(BUILD_DIR)/iso/boot/grub/grub.cfg
+	grub-mkrescue -o $(call ISO,$(LIVE_BUILD)) $(BUILD_DIR)/iso -- -volid GNU-SEL4-$(LIVE_BUILD) >/dev/null 2>&1
+	echo $(LIVE_BUILD) > $(LIVE_COUNTER)
+	@ls -l $(call ISO,$(LIVE_BUILD))
+
+# Copies the last live ISO to the Ventoy stick: only to a mounted file system labelled Ventoy on a
+# USB device, as a plain file copy (nothing else on the stick or any other disk is touched)
+VENTOY ?= $(shell findmnt -rn -S LABEL=Ventoy -o TARGET 2>/dev/null)
+ventoy:
+	@test -n "$(VENTOY)" || { echo "no mounted Ventoy stick (a file system labelled Ventoy)"; exit 1; }
+	@src=$$(findmnt -rn -o SOURCE "$(VENTOY)"); disk=$$(lsblk -no PKNAME "$$src"); \
+	 [ "$$(lsblk -dno TRAN /dev/$$disk)" = usb ] || { echo "$(VENTOY) is not on a USB device: not copying"; exit 1; }
+	@f=$(call ISO,$$(printf %03d $(LAST_BUILD))); test -f "$$f" || { echo "no ISO $$f: make iso first"; exit 1; }; \
+	 cp "$$f" "$(VENTOY)/" && sync -f "$(VENTOY)/$$(basename $$f)" && ls -l "$(VENTOY)/$$(basename $$f)"
+
+disk-reset:
 
 disk-reset:
 	rm -f disk.img $(BUILD_DIR)/install.stamp
@@ -106,4 +124,4 @@ disk-reset:
 clean:
 	rm -rf $(BUILD_DIR)
 
-.PHONY: all run test clean disk-grow disk-reset iso vm-rootfs microkit-tool
+.PHONY: all run test clean disk-grow disk-reset iso ventoy vm-rootfs microkit-tool
