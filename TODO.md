@@ -68,8 +68,9 @@ Status: `[x]` done · `[~]` in progress · `[ ]` pending
 - [x] `make test` (`tools/test.py`): copies the system partition, marks it dirty, creates
       /etc/test, boots headless QEMU; /etc/tests.sh runs the tests, writes the results to
       /var/log/test-results (read with debugfs afterwards: the serial port can lose lines) and
-      powers off. The host checks the count, the clean unmount and e2fsck. 29 tests in ~48 s.
-      `make test NO_NET=1` without internet
+      powers off. The host checks the count, the clean unmount and e2fsck. 33 tests in ~30 s.
+      `make test NO_NET=1` without internet; `make test SLOW=1` adds the expensive ones;
+      `tools/test.py --script FILE` runs a single script (measurements, experiments)
 
 ## Next, ordered by cost/benefit
 
@@ -88,7 +89,7 @@ Finished:
 3. [x] **Reproducible builds** (S): `deps.lock` (every dependency with its SHA-256 or commit) +
        `fetch-deps.sh`; a Docker image with all of it and the patched Microkit tool, and
        `docker-compose.yml` (build, test, shell, vm-rootfs). A fresh clone builds and passes
-       `make test` with Docker alone. Next: CI on GitHub Actions running `make test` on every push
+       `make test` with Docker alone. Next: CI on GitHub Actions running `make test` (item 10)
 4. [x] **Supervision: `mkfifo` + s6 + s6-rc** (M)
    - [x] Named pipes (`mkfifo`) with POSIX semantics (blocking opens meet, ENXIO, O_RDWR)
    - [x] skalibs 2.15.1, execline 2.9.9 (multicall), s6 2.15.1 and s6-rc 0.7.0 (skarnet, ISC;
