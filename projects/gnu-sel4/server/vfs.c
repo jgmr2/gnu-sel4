@@ -352,6 +352,7 @@ static int dev_type(const char *abs)
 {
     if (!strcmp(abs, "/dev/tty") || !strcmp(abs, "/dev/console")) return OF_TTY;
     if (!strcmp(abs, "/dev/null")) return OF_NULL;
+    if (!strcmp(abs, "/dev/zero")) return OF_ZERO;
     if (!strcmp(abs, "/dev/linux")) return OF_LINUX;   /* session with the Linux VM */
     if (!strcmp(abs, "/dev/kmsg")) return OF_KMSG;     /* messages to the serial port */
     if (!strcmp(abs, "/dev/urandom") || !strcmp(abs, "/dev/random")) return OF_RANDOM;
@@ -367,7 +368,7 @@ static void dev_stat(int type)
     st[1] = type == OF_TTY ? 1 : 2;                            /* st_ino */
     st[2] = 1;                                                 /* st_nlink */
     ((uint32_t *)client_buf)[6] = S_IFCHR | (type == OF_TTY ? 0620 : 0666);   /* st_mode */
-    st[5] = type == OF_TTY ? 0x0500 : 0x0103;                  /* st_rdev */
+    st[5] = type == OF_TTY ? 0x0500 : type == OF_ZERO ? 0x0105 : 0x0103;   /* st_rdev */
     st[7] = 1024;                                              /* st_blksize */
 }
 
@@ -462,6 +463,7 @@ static long do_read(long fd, size_t len, bool positional, uint64_t pos)
     switch (f->type) {
     case OF_TTY:    return positional ? -ESPIPE : tty_read(len);
     case OF_NULL:   return 0;
+    case OF_ZERO:   if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE; memset((void *)client_buf, 0, len); return len;
     case OF_DIR:    return -EISDIR;
     case OF_PIPE_R: return positional ? -ESPIPE : pipe_read(f, len);
     case OF_PIPE_W: return -EBADF;
@@ -517,6 +519,7 @@ static long do_write(long fd, size_t len, bool positional, uint64_t pos)
     switch (f->type) {
     case OF_TTY:    return positional ? -ESPIPE : tty_write((const char *)client_buf, len);
     case OF_NULL:   return len;
+    case OF_ZERO:   return len;
     case OF_DIR:    return -EISDIR;
     case OF_PIPE_W: return positional ? -ESPIPE : pipe_write(f, len);
     case OF_PIPE_R:                                    /* a FIFO opened O_RDWR also writes */
@@ -628,8 +631,8 @@ static long do_fstat(long fd)
         ((uint32_t *)client_buf)[6] = 0140777;                     /* S_IFSOCK */
         return 0;
     }
-    if (f->type == OF_TTY || f->type == OF_NULL || f->type == OF_LINUX || f->type == OF_KMSG || f->type == OF_RANDOM) {
-        dev_stat(f->type == OF_TTY ? OF_TTY : OF_NULL);
+    if (f->type == OF_TTY || f->type == OF_NULL || f->type == OF_LINUX || f->type == OF_KMSG || f->type == OF_RANDOM || f->type == OF_ZERO) {
+        dev_stat(f->type == OF_TTY ? OF_TTY : f->type == OF_ZERO ? OF_ZERO : OF_NULL);
         return 0;
     }
     if (f->type == OF_PIPE_R || f->type == OF_PIPE_W) {

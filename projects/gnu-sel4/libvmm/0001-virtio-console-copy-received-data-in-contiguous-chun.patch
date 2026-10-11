@@ -1,0 +1,46 @@
+From 017aa342a51259f038ee5986c328307c6b693070 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jos=C3=A9=20Guadalupe=20Mu=C3=B1oz=20Ram=C3=ADrez?=
+ <joseguadalupemr@protonmail.com>
+Date: Sun, 11 Oct 2026 03:41:16 -0600
+Subject: [PATCH] virtio console: copy received data in contiguous chunks
+
+handle_rx copied the serial queue into the guest's buffers one byte at a time, walking the
+descriptor chain and translating the address for every byte. Copy each contiguous part of the
+queue at once.
+---
+ src/virtio/console.c | 18 ++++++++++++++----
+ 1 file changed, 14 insertions(+), 4 deletions(-)
+
+diff --git a/src/virtio/console.c b/src/virtio/console.c
+index 6490d078..88206882 100644
+--- a/src/virtio/console.c
++++ b/src/virtio/console.c
+@@ -247,11 +247,21 @@ static bool virtio_console_handle_rx(struct virtio_console_device *console)
+         transferred = true;
+         uint64_t payload_len = virtio_desc_chain_payload_len(vq, desc_head);
+ 
++        /* Copy in contiguous chunks of the serial queue, not byte by byte */
+         uint32_t bytes_written = 0;
+-        char c;
+-        while (bytes_written < payload_len && serial_dequeue(console->rxq, &c) == 0) {
+-            assert(virtio_write_data_to_desc_chain(vq, desc_head, 1, bytes_written, &c));
+-            bytes_written++;
++        while (bytes_written < payload_len) {
++            uint32_t chunk = serial_queue_contiguous_length(console->rxq);
++            if (chunk == 0) {
++                break;
++            }
++            if (chunk > payload_len - bytes_written) {
++                chunk = payload_len - bytes_written;
++            }
++            uint32_t head = console->rxq->queue->head;
++            assert(virtio_write_data_to_desc_chain(vq, desc_head, chunk, bytes_written,
++                                                   console->rxq->data_region + (head % console->rxq->capacity)));
++            serial_update_shared_head(console->rxq, head + chunk);
++            bytes_written += chunk;
+         }
+ 
+         virtio_virtq_add_used(vq, desc_head, bytes_written);
+-- 
+2.47.3
+

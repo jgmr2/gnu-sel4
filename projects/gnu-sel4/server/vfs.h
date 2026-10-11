@@ -73,7 +73,8 @@ enum { OF_FREE, OF_TTY, OF_NULL, OF_FILE, OF_DIR, OF_PIPE_R, OF_PIPE_W, OF_LINUX
        OF_USOCK,                       /* local socket (AF_UNIX) */
        OF_SHM,                         /* memfd: shared memory (mem.c) */
        OF_KMSG,                        /* /dev/kmsg: to the serial port (logs, make test) */
-       OF_RANDOM };                    /* /dev/urandom, /dev/random (RDRAND) */
+       OF_RANDOM,                      /* /dev/urandom, /dev/random (RDRAND) */
+       OF_ZERO };                      /* /dev/zero */
 
 /* Is the path under /proc? */
 static inline bool is_proc(const char *abs)
