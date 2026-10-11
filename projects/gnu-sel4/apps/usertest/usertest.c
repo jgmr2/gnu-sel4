@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/syscall.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
@@ -79,6 +80,9 @@ int main(int argc, char **argv)
         if (chown("/tmp/ut/mine", 0, 0) == 0 || errno != EPERM) _exit(25);
         if (access("/tmp/ut/rootfile", R_OK) == 0 || access("/tmp/ut/mine", W_OK) != 0) _exit(26);
         if (open("/etc/passwd", O_RDONLY) < 0) _exit(27);                    /* 0644: readable */
+        if (open("/dev/linux", O_RDWR) >= 0 || errno != EACCES) _exit(28);    /* not in wheel */
+        if (open("/dev/kmsg", O_WRONLY) >= 0 || errno != EACCES) _exit(29);   /* the system log */
+        if (syscall(SYS_reboot, 0xfee1dead, 672274793, 0x4321fedc, 0) == 0 || errno != EPERM) _exit(30);
         pid_t q = fork();
         if (q == 0) execl("/tmp/ut/suid", "suid", "setuid-child", (char *)0), _exit(17);
         int st2;
@@ -94,9 +98,11 @@ int main(int argc, char **argv)
         "exec of the set-user-ID program", "set-user-ID: euid 0, saved uid, access() with the real uid",
         "writing /etc/passwd must fail", "creating in /etc must fail", "reading a 0600 root file must fail",
         "deleting someone else's file in a sticky directory must fail", "searching a 0700 root directory must fail",
-        "chmod of someone else's file must fail", "chown to root must fail", "access()", "reading /etc/passwd" };
-    if (code) printf("       child failed at: %s\n", code > 0 && code < 28 ? why[code] : "?");
-    CHECK(code == 0, "uid 1000: no way back, owns its files, cannot signal init, set-user-ID, file permissions");
+        "chmod of someone else's file must fail", "chown to root must fail", "access()", "reading /etc/passwd",
+        "opening /dev/linux outside wheel must fail", "writing /dev/kmsg must fail", "reboot(2) must fail" };
+    if (code) printf("       child failed at: %s\n", code > 0 && code < 31 ? why[code] : "?");
+    CHECK(code == 0, "uid 1000: no way back, owns its files, cannot signal init, set-user-ID, file permissions, "
+                     "no VM outside wheel, no system log, no reboot");
     struct stat ms;
     CHECK(stat("/tmp/ut/mine", &ms) == 0 && ms.st_uid == 1000, "the file stays owned by 1000");
     unlink("/tmp/ut/mine"); unlink("/tmp/ut/suid"); unlink("/tmp/ut/rootfile");

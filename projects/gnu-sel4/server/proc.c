@@ -622,6 +622,7 @@ static long sys_itimer(bool set, long which, uint64_t value_ns, uint64_t interva
  * hardware will need \_S5 from the ACPI tables); restart uses the reset control register 0xCF9. */
 static long sys_reboot(long magic, long cmd)
 {
+    if (cur->euid != 0) return -EPERM;
     if ((uint32_t)magic != REBOOT_MAGIC1) return -EINVAL;
     if ((uint32_t)cmd == RB_ENABLE_CAD || (uint32_t)cmd == RB_DISABLE_CAD) return 0;
     if ((uint32_t)cmd != RB_AUTOBOOT && (uint32_t)cmd != RB_HALT_SYSTEM && (uint32_t)cmd != RB_POWER_OFF)

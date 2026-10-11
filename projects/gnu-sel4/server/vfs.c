@@ -437,6 +437,11 @@ static long do_open(long dirfd, uint32_t flags, uint32_t mode)
             }
         }
     }
+    /* The Linux VM: root and the wheel group (commands run there as the caller, and the VM's root
+     * is squashed to nobody on /mnt/sel4, but the VM itself is shared) */
+    if (type == OF_LINUX && cur->euid != 0 && !cred_in_group(cur, WHEEL_GID)) return -EACCES;
+    /* Writing to the system log (the serial port): root only, as in Linux */
+    if (type == OF_KMSG && (flags & O_ACCMODE) != O_RDONLY && cur->euid != 0) return -EACCES;
     if (type == OF_LINUX) {
         long sid = bridge_open();
         if (sid < 0) return sid;
@@ -1138,6 +1143,7 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
             return 0;
         }
         if (f->type == OF_SOCKET && a2 == NET_SIOC_CONFIG) {    /* network configuration (apps/netcfg) */
+            if (cur->euid != 0) return -EPERM;
             memcpy((void *)net_buf, (void *)client_buf, sizeof(struct net_cfg));
             long r = net_call(NET_OP_CONFIG, 0, 0, 0, 0);
             if (r == 0) net_lease_changed();                    /* DNS of the static address */

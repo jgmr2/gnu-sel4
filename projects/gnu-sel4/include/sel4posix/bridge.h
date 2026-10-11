@@ -45,9 +45,17 @@ enum br_type {
 
 #define BR_OPEN_TTY   1            /* run with a terminal (pty): interactive mode */
 
+#define BR_MAX_GROUPS 16
+
+/* Who runs the command: posix_server overwrites these with the credentials of the process that
+ * writes the BR_OPEN (whatever the program put there does not count). The agent runs the
+ * command with them; only root may ask for the internal commands (@9p-mount) */
 struct br_open {
     uint32_t flags;
     uint16_t rows, cols;
     uint32_t argc;
+    uint32_t uid, gid;              /* effective IDs */
+    uint32_t ngroups;
+    uint32_t groups[BR_MAX_GROUPS]; /* supplementary groups */
     /* followed by argc strings */
 };

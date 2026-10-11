@@ -209,6 +209,19 @@ long bridge_write(int sid, const uint8_t *rec, size_t len)
         hello_waiters |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
+    if (rec[0] == BR_OPEN) {                               /* stamp who asks: the agent trusts it */
+        static uint8_t stamped[1 + BR_MAX_DATA];
+        if (len < 1 + sizeof(struct br_open)) return -EINVAL;
+        memcpy(stamped, rec, len);
+        struct br_open op;
+        memcpy(&op, stamped + 1, sizeof op);
+        op.uid = cur->euid;
+        op.gid = cur->egid;
+        op.ngroups = cur->ngroups < BR_MAX_GROUPS ? cur->ngroups : BR_MAX_GROUPS;
+        for (uint32_t i = 0; i < op.ngroups; i++) op.groups[i] = cur->groups[i];
+        memcpy(stamped + 1, &op, sizeof op);
+        rec = stamped;
+    }
     long r = send_frame(rec[0], sid, rec + 1, len - 1);
     if (r >= 0) s->started = true;
     return r < 0 ? r : (long)len;

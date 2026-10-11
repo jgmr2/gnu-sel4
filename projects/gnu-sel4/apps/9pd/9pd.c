@@ -10,6 +10,11 @@
  * is served with plain POSIX calls (open, pread, getdents...), so fs_ext2 stays
  * the only owner of the disk.
  *
+ * Permissions: the VM mounts with access=user, so each VM user attaches with its own uid, and
+ * every request is served with that user's native credentials (9pd runs as root and switches its
+ * effective IDs). The VM's root is squashed to nobody (as NFS does): being root inside the VM
+ * (Docker) gives no power over native files.
+ *
  * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <dirent.h>
@@ -22,6 +27,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <grp.h>
+#include <pwd.h>
 #include <sel4posix/bridge.h>
 
 #define MSIZE 131072                 /* 9P message size: fewer round trips over the bridge */
@@ -77,7 +84,33 @@ static void pqid(const struct stat *st)
 /* ---------------- fids ---------------- */
 
 #define NFID 256
-static struct fid { int used; uint32_t id; char path[1024]; int fd; } fids[NFID];
+static struct fid { int used; uint32_t id; char path[1024]; int fd; uint32_t uid; } fids[NFID];
+
+/* ---------------- credentials ---------------- */
+
+#define NOBODY 65534
+static uint32_t as_uid;                 /* whose effective IDs 9pd has now (0 = its own, root) */
+
+/* Takes the native credentials of uid: its gid and supplementary groups from /etc/passwd and
+ * /etc/group (a uid with no account gets nobody's group and none) */
+static void become(uint32_t uid)
+{
+    if (uid == as_uid) return;
+    if (as_uid != 0) {
+        if (seteuid(0)) return;
+        as_uid = 0;
+    }
+    gid_t gid = uid == 0 ? 0 : NOBODY, groups[32];
+    int ng = 0;
+    struct passwd *pw = uid == 0 ? NULL : getpwuid(uid);
+    if (pw) {
+        gid = pw->pw_gid;
+        ng = 32;
+        if (getgrouplist(pw->pw_name, gid, groups, &ng) < 0) ng = 0;
+    }
+    if (setgroups(ng, groups) || setegid(gid)) return;
+    if (uid == 0 || seteuid(uid) == 0) as_uid = uid;
+}
 
 static struct fid *fid_get(uint32_t id)
 {
@@ -85,7 +118,7 @@ static struct fid *fid_get(uint32_t id)
     return NULL;
 }
 
-static struct fid *fid_new(uint32_t id, const char *path)
+static struct fid *fid_new(uint32_t id, const char *path, uint32_t uid)
 {
     struct fid *f = fid_get(id);
     if (!f) for (int i = 0; i < NFID && !f; i++) if (!fids[i].used) f = &fids[i];
@@ -94,6 +127,7 @@ static struct fid *fid_new(uint32_t id, const char *path)
     f->used = 1;
     f->id = id;
     f->fd = -1;
+    f->uid = uid;
     snprintf(f->path, sizeof f->path, "%s", path);
     return f;
 }
@@ -129,7 +163,7 @@ static int handle(const uint8_t *msg, size_t len)
     char name[256], path[1024], tgt[1024];
     int err = 0;
 
-#define NEED_FID(id) do { f = fid_get(id); if (!f) { err = EBADF; goto fail; } } while (0)
+#define NEED_FID(id) do { f = fid_get(id); if (!f) { err = EBADF; goto fail; } become(f->uid); } while (0)
 
     switch (type) {
     case Tversion: {
@@ -144,7 +178,13 @@ static int handle(const uint8_t *msg, size_t len)
     }
     case Tattach: {
         uint32_t fid = g32(&m);
-        if (!fid_new(fid, "/") || lstat("/", &st)) { err = ENOMEM; goto fail; }
+        g32(&m);                                   /* afid: no authentication */
+        gstr(&m, name, sizeof name);               /* uname, aname */
+        gstr(&m, name, sizeof name);
+        uint32_t uid = g32(&m);                    /* n_uname: the VM user's uid */
+        if (uid == 0 || uid == 0xffffffffu) uid = NOBODY;   /* root squashing */
+        become(uid);
+        if (!fid_new(fid, "/", uid) || lstat("/", &st)) { err = ENOMEM; goto fail; }
         begin(Rattach, tag);
         pqid(&st);
         break;
@@ -172,7 +212,7 @@ static int handle(const uint8_t *msg, size_t len)
         }
         out[qpos] = walked;
         out[qpos + 1] = walked >> 8;
-        if (walked == n && !fid_new(newfid, cur)) { err = ENOMEM; goto fail; }
+        if (walked == n && !fid_new(newfid, cur, f->uid)) { err = ENOMEM; goto fail; }
         break;
     }
     case Tgetattr: {

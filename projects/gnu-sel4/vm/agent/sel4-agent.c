@@ -24,7 +24,10 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <grp.h>
 #include <linux/vm_sockets.h>
+
+#define DOCKER_GID 999             /* the docker group in the VM (vm/rootfs/overlay/etc/group) */
 #include "sel4posix/bridge.h"
 
 #define NSESS 64
@@ -118,6 +121,14 @@ static void spawn(int id, const char *data, uint32_t len)
      * forwarded over this session to 9pd. */
     if (!strcmp(argv[0], "@9p-mount") && argc == 2) {
         int sv[2];
+        if (op.uid != 0) {                          /* only native root (9pd) mounts */
+            static const char msg[] = "sel4-agent: @9p-mount: only root\n";
+            send_frame(BR_STDERR, id, msg, sizeof msg - 1);
+            int32_t code = 126;
+            send_frame(BR_EXIT, id, &code, 4);
+            s->used = 0;
+            return;
+        }
         if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv)) {
             int32_t code = 126;
             send_frame(BR_EXIT, id, &code, 4);
@@ -131,7 +142,7 @@ static void spawn(int id, const char *data, uint32_t len)
             char opts[160];
             int fd = dup(sv[1]);                    /* no CLOEXEC: the kernel will use it */
             mkdir_p(s->mnt);
-            snprintf(opts, sizeof opts, "trans=fd,rfdno=%d,wfdno=%d,version=9p2000.L,msize=131072,access=any", fd, fd);
+            snprintf(opts, sizeof opts, "trans=fd,rfdno=%d,wfdno=%d,version=9p2000.L,msize=131072,access=user", fd, fd);
             if (mount("sel4", s->mnt, "9p", 0, opts)) {
                 fprintf(stderr, "sel4-agent: mount 9p on %s: %s\n", s->mnt, strerror(errno));
                 _exit(1);
@@ -163,6 +174,22 @@ static void spawn(int id, const char *data, uint32_t len)
         return;
     }
 
+    /* The command runs as the native caller (posix_server stamped its IDs in the request): the
+     * same uid and groups in the VM, plus the docker group so `docker` works. The VM's root is
+     * not native root: 9pd squashes it to nobody on /mnt/sel4 */
+    char home[64];
+    if (op.uid == 0) {
+        snprintf(home, sizeof home, "/root");
+    } else {
+        snprintf(home, sizeof home, "/tmp/home-%u", op.uid);
+        mkdir(home, 0700);
+        if (chown(home, op.uid, op.gid)) { /* it may exist already: the checks below decide */ }
+    }
+    gid_t groups[BR_MAX_GROUPS + 1];
+    uint32_t ng = op.ngroups < BR_MAX_GROUPS ? op.ngroups : BR_MAX_GROUPS;
+    for (uint32_t i = 0; i < ng; i++) groups[i] = op.groups[i];
+    if (op.uid != 0) groups[ng++] = DOCKER_GID;
+
     pid_t pid = fork();
     if (pid == 0) {
         signal(SIGCHLD, SIG_DFL);
@@ -178,10 +205,15 @@ static void spawn(int id, const char *data, uint32_t len)
             close(in[0]); close(in[1]); close(out[0]); close(out[1]); close(err[0]); close(err[1]);
         }
         close(chan);
+        if (s->tty) fchown(0, op.uid, op.gid);     /* the terminal belongs to the user */
+        if (setgroups(ng, groups) || setgid(op.gid) || setuid(op.uid)) {
+            fprintf(stderr, "linux: cannot become uid %u: %s\n", op.uid, strerror(errno));
+            _exit(126);
+        }
         setenv("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", 1);
-        setenv("HOME", "/root", 1);
+        setenv("HOME", home, 1);
         setenv("TERM", "xterm", 1);
-        chdir("/root");
+        if (chdir(home)) chdir("/tmp");
         execvp(argv[0], argv);
         fprintf(stderr, "linux: %s: %s\n", argv[0], strerror(errno));
         _exit(errno == ENOENT ? 127 : 126);

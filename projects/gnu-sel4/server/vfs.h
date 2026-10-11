@@ -140,6 +140,7 @@ struct k_pollfd { int fd; short events, revents; };
 /* sockets (vfs_net.c, vfs_unix.c) */
 #define AF_UNIX_      1
 #define S_IFSOCK_     0140000
+#define WHEEL_GID     10              /* /etc/group: may use the Linux VM (/dev/linux) */
 #define FIONREAD     0x541B
 #define FIONBIO      0x5421
 #define SOCK_NONBLOCK 04000

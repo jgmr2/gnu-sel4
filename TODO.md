@@ -118,16 +118,16 @@ Principles the plan follows:
 
 ## Pending, in order (higher priority and dependencies first)
 
-1. [ ] **Security of the boundaries** (S). Needs: nothing. Today a normal user is root in the VM
-       and, through 9P, over the native files (checked: `user` read /etc/shadow)
-   - [ ] `/dev/linux` only for a group (wheel or a `linux` group), as Docker's group is
-         root-equivalent on Linux: say so explicitly
-   - [ ] The agent runs each command with the caller's native uid/gids (a matching account in
-         the VM), not as root
-   - [ ] 9pd serves each session with the credentials of whoever opened it, and the VM's mount
-         uses them (`access=user` and a uid map) instead of 9pd's root
-   - [ ] reboot(2) and the other privileged server operations (network configuration, the
-         clock, mounts) check that the caller is root
+1. [x] **Security of the boundaries** (S). It was: a normal user was root in the VM and, through
+       9P, over the native files (`user` read /etc/shadow). Test `vm-bounds`, usertest checks
+   - [x] `/dev/linux` only for root and the wheel group (Docker's group is root-equivalent too)
+   - [x] posix_server stamps the caller's effective uid, gid and groups on every BR_OPEN; the
+         agent runs the command with them (plus the VM's docker group, HOME in /tmp/home-<uid>);
+         only root may ask for the internal @9p-mount
+   - [x] 9P per user: the VM mounts with access=user and 9pd serves each attach with that user's
+         native credentials (it switches its effective IDs); the VM's root is squashed to nobody,
+         so root inside the VM (Docker) has no power over native files
+   - [x] reboot(2) and the network configuration ioctl need root; writing /dev/kmsg needs root
 2. [ ] **Reliability, reproducibility and CI** (S–M). Needs: 1 (tests for it)
    - [ ] The rare (about 1 boot in 12) SIGABRT of s6rc-oneshot-runner while s6-rc starts it
          (the `net` oneshot does not run; the `s6-rc` test prints /tmp/s6-svscan.log)
