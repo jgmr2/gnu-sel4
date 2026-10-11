@@ -98,6 +98,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
         }
     }
     if (n >= 0 && n < PERF_NSYS) perf_add(&perf_sys[n], 1, t0);
+    procfs_load_tick();
     /* A call that would block with signals pending ends with EINTR */
     if (r == POSIX_RETRY && cur->sig_pending) r = -EINTR;
     cur->blocked = r == POSIX_RETRY;          /* for /proc: state S (sleeping) */

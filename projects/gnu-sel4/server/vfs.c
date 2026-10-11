@@ -1329,3 +1329,25 @@ long vfs_read_file(uint32_t ino, uint64_t off, void *dst, size_t len)
     }
     return done;
 }
+
+/* What descriptor fd of p is, as /proc/<pid>/fd/<fd> shows it (Linux names); -EBADF if closed */
+long vfs_fd_describe(struct proc *p, int fd, char *out, size_t max)
+{
+    if (fd < 0 || fd >= NFD || p->fdt[fd].of < 0) return -EBADF;
+    struct ofile *f = &ofiles[p->fdt[fd].of];
+    int n;
+    switch (f->type) {
+    case OF_PIPE_R: case OF_PIPE_W:
+        n = f->path[0] ? sddf_snprintf(out, max, "%s", f->path) : sddf_snprintf(out, max, "pipe:[%u]", f->ino);
+        break;
+    case OF_SOCKET:  n = sddf_snprintf(out, max, "socket:[%u]", f->ino); break;
+    case OF_USOCK:   n = sddf_snprintf(out, max, "socket:[%u]", 0x10000 + f->ino); break;
+    case OF_EVENTFD: n = sddf_snprintf(out, max, "anon_inode:[eventfd]"); break;
+    case OF_TIMERFD: n = sddf_snprintf(out, max, "anon_inode:[timerfd]"); break;
+    case OF_EPOLL:   n = sddf_snprintf(out, max, "anon_inode:[eventpoll]"); break;
+    case OF_SHM:     n = sddf_snprintf(out, max, "/memfd: (deleted)"); break;
+    case OF_TTY:     n = sddf_snprintf(out, max, "%s", f->path[0] ? f->path : "/dev/console"); break;
+    default:         n = sddf_snprintf(out, max, "%s", f->path[0] ? f->path : "?"); break;
+    }
+    return n < (int)max ? n : (long)max;
+}

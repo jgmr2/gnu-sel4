@@ -201,7 +201,10 @@ long procfs_read(const char *abs, uint64_t off, char *dst, size_t len);
 long procfs_getdents(const char *abs, uint64_t *pos, char *dst, size_t len);
 long procfs_stat(const char *abs, void *kstat);                       /* Linux struct stat */
 long procfs_readlink(const char *abs, char *dst, size_t len);
-void procfs_account(struct proc *p);                                  /* adds up the CPU it consumed */
+void procfs_account(struct proc *p);
+void procfs_load_tick(void);                                         /* load average sampling */
+size_t mem_maps_text(int s, const char *exe, char *out, size_t max); /* /proc/<pid>/maps */
+long vfs_fd_describe(struct proc *p, int fd, char *out, size_t max); /* /proc/<pid>/fd/<n> target */                                  /* adds up the CPU it consumed */
 
 /* clock.c */
 extern uint64_t clock_epoch, clock_tsc0, clock_tsc_hz;

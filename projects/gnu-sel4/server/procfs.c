@@ -2,7 +2,8 @@
  * posix_server's virtual /proc, with the files procps-ng reads (ps, top,
  * free, uptime, pgrep, kill...). Everything is generated on read, in Linux format:
  *
- *   /proc/<pid>/{stat,statm,status,cmdline,environ,comm}, exe and cwd (links)
+ *   /proc/<pid>/{stat,statm,status,cmdline,environ,comm,maps}, exe and cwd (links),
+ *   fd/<n> (links to what each descriptor is)
  *   /proc/self -> <pid> of the caller
  *   /proc/{meminfo,stat,uptime,loadavg,version,mounts}, /proc/net/dhcp
  *   /proc/perf: performance counters (perf.c)
@@ -54,6 +55,7 @@ enum {
     F_SYS, F_SYS_KERNEL, F_OSRELEASE, F_PIDMAX, F_HOSTNAME, F_NET, F_NET_DHCP, F_PERF,
     /* per process */
     F_PID, F_P_STAT, F_P_STATM, F_P_STATUS, F_P_CMDLINE, F_P_ENVIRON, F_P_COMM, F_P_EXE, F_P_CWD,
+    F_P_MAPS, F_P_FD, F_P_FDLINK,
 };
 
 static const struct { const char *name; int id, kind, dt; } root_ents[] = {
@@ -82,6 +84,8 @@ static const struct { const char *name; int id, kind, dt; } root_ents[] = {
     { "comm", F_P_COMM, PROCFS_FILE, DT_REG },
     { "exe", F_P_EXE, PROCFS_LINK, DT_LNK },
     { "cwd", F_P_CWD, PROCFS_LINK, DT_LNK },
+    { "maps", F_P_MAPS, PROCFS_FILE, DT_REG },
+    { "fd", F_P_FD, PROCFS_DIR, DT_DIR },
 };
 #define N(a) (sizeof(a) / sizeof(*(a)))
 
@@ -97,6 +101,8 @@ static const char *next(const char *p, char *out, size_t max)
     out[n] = 0;
     return p;
 }
+
+static int lookup_fd;                          /* F_P_FDLINK: which descriptor */
 
 /* Identifies abs (which starts with /proc); *pp = the process if it belongs to one */
 static int lookup(const char *abs, struct proc **pp, int *kind)
@@ -123,6 +129,21 @@ static int lookup(const char *abs, struct proc **pp, int *kind)
         *pp = proc;
         p = next(p, c, sizeof c);
         if (!*c) { *kind = PROCFS_DIR; return F_PID; }
+        if (!strcmp(c, "fd")) {
+            p = next(p, c, sizeof c);
+            if (!*c) { *kind = PROCFS_DIR; return F_P_FD; }
+            if (*p && p[1]) return F_NONE;
+            int fd = 0;
+            for (const char *d = c; *d; d++) {
+                if (*d < '0' || *d > '9' || fd > NFD) return F_NONE;
+                fd = fd * 10 + (*d - '0');
+            }
+            char tmp[8];
+            if (vfs_fd_describe(proc, fd, tmp, sizeof tmp) < 0) return F_NONE;
+            lookup_fd = fd;
+            *kind = PROCFS_LINK;
+            return F_P_FDLINK;
+        }
         if (*p && p[1]) return F_NONE;
         for (unsigned i = 0; i < N(pid_ents); i++)
             if (!strcmp(c, pid_ents[i].name)) { *kind = pid_ents[i].kind; return pid_ents[i].id; }
@@ -184,6 +205,24 @@ static int count_running(int *total, int *maxpid)
     return run;
 }
 
+/* Load average as Linux computes it: every 5 s, avg = avg * e^(-5/60|300|900) + n * (1 - that),
+ * in fixed point with 11 bits, n = runnable processes. Sampled from the system call path */
+static uint64_t load_avg[3], load_next_ns;
+static const uint64_t load_exp[3] = { 1884, 2014, 2037 };        /* 2048 * e^(-5 s / 1, 5, 15 min) */
+
+void procfs_load_tick(void)
+{
+    uint64_t now = timer_now_ns();
+    if (now < load_next_ns) return;
+    int total, maxpid, run = count_running(&total, &maxpid);
+    uint64_t n = (uint64_t)run << 11;
+    int steps = load_next_ns ? (int)((now - load_next_ns) / 5000000000ULL) + 1 : 1;
+    if (steps > 200) steps = 200;
+    while (steps--)
+        for (int k = 0; k < 3; k++) load_avg[k] = (load_avg[k] * load_exp[k] + n * (2048 - load_exp[k])) >> 11;
+    load_next_ns = now + 5000000000ULL;
+}
+
 static size_t generate(int id, struct proc *p)
 {
     size_t n = 0, max = sizeof gen;
@@ -218,7 +257,10 @@ static size_t generate(int id, struct proc *p)
     }
     case F_LOADAVG: {
         int total, maxpid, run = count_running(&total, &maxpid);
-        OUT("0.00 0.00 0.00 %d/%d %d\n", run, total, maxpid);
+        procfs_load_tick();
+        for (int k = 0; k < 3; k++)                  /* fixed point, 11 bits, as Linux */
+            OUT("%lu.%02lu ", load_avg[k] >> 11, ((load_avg[k] & 2047) * 100) >> 11);
+        OUT("%d/%d %d\n", run, total, maxpid);
         break;
     }
     case F_VERSION:   OUT("Linux version " OSRELEASE " (GNU/seL4 posix_server) #1\n"); break;
@@ -227,6 +269,7 @@ static size_t generate(int id, struct proc *p)
     case F_PIDMAX:    OUT("32768\n"); break;
     case F_HOSTNAME:  OUT("gnu-sel4\n"); break;
     case F_NET_DHCP:  n = net_info_text(gen, max); break;
+    case F_P_MAPS:    n = p->slot >= 0 ? mem_maps_text(p->slot, p->exe, gen, max) : 0; break;
     case F_PERF:      n = perf_text(gen, max); break;
 
     case F_P_STAT: {
@@ -297,6 +340,7 @@ long procfs_readlink(const char *abs, char *dst, size_t len)
     char tmp[FS_PATH_MAX];
     size_t n;
     if (id == F_SELF) n = sddf_snprintf(tmp, sizeof tmp, "%d", cur->pid);
+    else if (id == F_P_FDLINK) { long r = vfs_fd_describe(p, lookup_fd, tmp, sizeof tmp); n = r < 0 ? 0 : r; }
     else n = sddf_snprintf(tmp, sizeof tmp, "%s", id == F_P_EXE ? p->exe : p->cwd);
     if (n > len) n = len;
     memcpy(dst, tmp, n);
@@ -369,6 +413,12 @@ long procfs_getdents(const char *abs, uint64_t *pos, char *dst, size_t len)
             sddf_snprintf(name, sizeof name, "%d", q->pid);
             nm = name;
             type = DT_DIR;
+        } else if (id == F_P_FD && i - 2 < NFD) {
+            char tmp[8];
+            if (vfs_fd_describe(p, i - 2, tmp, sizeof tmp) < 0) { (*pos)++; continue; }
+            sddf_snprintf(name, sizeof name, "%d", (int)(i - 2));
+            nm = name;
+            type = DT_LNK;
         } else if (id == F_PID && i - 2 < N(pid_ents)) {
             nm = pid_ents[i - 2].name;
             type = pid_ents[i - 2].dt;

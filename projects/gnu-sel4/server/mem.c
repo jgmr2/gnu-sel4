@@ -26,6 +26,7 @@
  */
 #include <microkit.h>
 #include <string.h>
+#include <sddf/util/printf.h>
 #include <sel4/sel4_arch/mapping.h>
 #include "server.h"
 
@@ -601,4 +602,36 @@ uint64_t mem_free(void) { return SRV_POOL_BYTES - ut_used + (uint64_t)nfree * 40
 void mem_init(void)
 {
     if (!new_cnode()) tty_puts("[mem] ERROR: could not create the first CNode\n");
+}
+
+/* /proc/<pid>/maps: runs of existing pages, by region */
+size_t mem_maps_text(int s, const char *exe, char *out, size_t max)
+{
+    struct slot *sl = &slots[s];
+    size_t n = 0;
+    uintptr_t start = 0, prev = 0;
+    int kind = -1;                          /* 0 image, 1 buffer, 2 heap, 3 stack, 4 mmap, 5 shared */
+    for (uintptr_t v = 0; v <= (1UL << 32); v += 4096) {
+        int k = -1;
+        if (v < (1UL << 32) && sl->dir[v >> 22]) {
+            uint32_t e = sl->dir[v >> 22][(v >> 12) & 1023];
+            if (e) k = (e & SHARED) ? 5
+                     : v >= PROC_IMG_BASE && v < PROC_IMG_BASE + PROC_IMG_SIZE ? 0
+                     : keep(v) ? 1
+                     : v >= PROC_HEAP_BASE && v < PROC_HEAP_BASE + PROC_HEAP_SIZE ? 2
+                     : v >= PROC_STACK_BASE && v < PROC_STACK_BASE + PROC_STACK_SIZE ? 3 : 4;
+        } else if (v < (1UL << 32) && !sl->dir[v >> 22]) {
+            v = (v | 0x3fffff) + 1 - 4096;  /* no leaf: skip the whole 4 MiB (next turn adds 4 KiB) */
+        }
+        if (k == kind && v == prev + 4096) { prev = v; continue; }
+        if (kind >= 0 && n < max) {
+            static const char *const names[] = { "", "[posix-buffer]", "[heap]", "[stack]", "", "/memfd: (deleted)" };
+            static const char *const perms[] = { "rwxp", "rw-s", "rw-p", "rw-p", "rw-p", "rw-s" };
+            n += sddf_snprintf(out + n, max - n, "%08lx-%08lx %s 00000000 00:00 0                          %s\n",
+                               start, prev + 4096, perms[kind], kind == 0 ? exe : names[kind]);
+        }
+        kind = k;
+        start = prev = v;
+    }
+    return n < max ? n : max;
 }

@@ -164,14 +164,18 @@ Pending:
    - [x] Release build: `make RELEASE=1` (also `run`, `test`), in build-release/. Measured ~10 %
          faster on fork/exec/exit, the same elsewhere; it loses the components' debug messages,
          so debug stays the default
-9. [ ] **Server structure** (M): the base for rings, threads, isolation and splitting the server
-   - [ ] Split `server/vfs.c` (2300+ lines) into modules: pipes and FIFOs, AF_UNIX sockets,
-         eventfd/timerfd, network sockets, paths
-   - [ ] Dynamic tables instead of fixed ones (today: 32 processes, 64 descriptors per process,
-         256 open files, 64 pipes, 64 AF_UNIX sockets, 32 eventfd and 32 timerfd, 16 VM bridge
-         sessions) and real wait queues instead of the 32-bit masks of waiting processes; a
-         desktop exceeds them
-   - [ ] /proc: real loadavg, /proc/<pid>/maps and /proc/<pid>/fd
+9. [x] **Server structure** (M): the base for rings, threads, isolation and splitting the server
+   - [x] `server/vfs.c` split into modules (vfs.h): pipes and FIFOs (vfs_pipe.c), eventfd and
+         timerfd (vfs_evfd.c), network sockets and configuration (vfs_net.c), AF_UNIX
+         (vfs_unix.c); vfs.c keeps descriptors, paths, permissions, files and the dispatch
+   - [x] Wait sets are 64-bit (waitmask_t) and the tables larger: 64 processes (the most the
+         6-bit PPC badge can name; beyond that, a second endpoint or the split of item "Long
+         term"), 256 descriptors per process, 512 open files, 128 pipes, 128 AF_UNIX sockets,
+         64 eventfd and 64 timerfd, 32 VM bridge sessions. Truly dynamic tables (allocated on
+         demand from the untyped pool) are left for the posix_server split
+   - [x] /proc: real load average (Linux's fixed-point averages, sampled every 5 s),
+         /proc/<pid>/maps (runs of present pages: with lazy loading the program shows in
+         32 KiB pieces) and /proc/<pid>/fd (Linux names: pipe:[n], socket:[n], anon_inode:...)
 10. [ ] **Rings and asynchronous I/O** (L)
    - [ ] Own ring ABI (submission/completion rings in the shared buffer, the sDDF model): many
          operations per notification, nothing blocking; epoll, kqueue and poll become thin layers
