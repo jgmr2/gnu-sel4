@@ -195,7 +195,23 @@ static uint32_t nslots, lru_head = NO_SLOT, lru_tail = NO_SLOT;
 static uint32_t dirty_list[MAX_SLOTS], ndirty;
 static uint32_t stage_first;           /* first block of the staging area in the data region */
 
+#ifdef FS_RAMDISK
+/* Live systems on real hardware (make PLATFORM=...): no disk driver at all. The file system is
+ * an ext2 image linked into this component (fs/ext2/ramdisk.S) and lives in RAM; nothing is ever
+ * written to a real disk. The block "requests" below are memcpys between it and the cache */
+extern uint8_t ramdisk_start[], ramdisk_end[];
+#define RAM_CACHE_SIZE 0x400000             /* the disk is RAM too: a small cache is enough */
+static uint8_t ram_cache[RAM_CACHE_SIZE] __attribute__((aligned(4096)));
+static uint8_t *slot_data(int s) { return ram_cache + (uintptr_t)s * BS; }
+static void ram_copy(blk_req_code_t code, uintptr_t offset, uint64_t blk, uint32_t count)
+{
+    uint8_t *disk = ramdisk_start + blk * BS, *mem = ram_cache + offset;
+    if (code == BLK_REQ_READ) memcpy(mem, disk, (size_t)count * BS);
+    else memcpy(disk, mem, (size_t)count * BS);
+}
+#else
 static uint8_t *slot_data(int s) { return (uint8_t *)blk_config.data.vaddr + (uintptr_t)s * BS; }
+#endif
 static uint8_t *stage_data(uint32_t i) { return slot_data(stage_first + i); }
 static uint32_t hash_of(uint64_t blk) { return (uint32_t)(blk * 0x9E3779B1u) % HASH_SIZE; }
 
@@ -240,6 +256,13 @@ static int blk_io(blk_req_code_t code, int s, uint64_t blk)
 {
     if (blk >= disk_blocks) return -EIO;
     uint64_t t0 = tsc();
+#ifdef FS_RAMDISK
+    ram_copy(code, (uintptr_t)s * BS, blk, 1);
+    struct ctr *rc = code == BLK_REQ_READ ? &st_disk_read : &st_disk_write;
+    rc->n++;
+    rc->cyc += tsc() - t0;
+    return 0;
+#endif
     if (blk_enqueue_req(&blkq, code, (uintptr_t)s * BS, blk, 1, 0)) return -EIO;
     sddf_notify(blk_config.virt.id);
     while (blk_queue_empty_resp(&blkq)) __asm__ volatile("pause" ::: "memory");
@@ -280,6 +303,11 @@ static void batch_begin(struct ctr *c) { batch_err = 0; batch_ctr = c; batch_t0 
 static void batch_add(blk_req_code_t code, uintptr_t offset, uint64_t blk, uint16_t count)
 {
     if (blk + count > disk_blocks) { batch_err = -EIO; return; }
+#ifdef FS_RAMDISK
+    ram_copy(code, offset, blk, count);
+    batch_ctr->n++;
+    return;
+#endif
     /* At most MAX_INFLIGHT requests: the driver's queue is shared with the Linux VM's disk */
     if (blk_queue_full_req(&blkq) || batch_inflight >= MAX_INFLIGHT) batch_wait_all();
     if (blk_enqueue_req(&blkq, code, offset, blk, count, 0)) { batch_err = -EIO; return; }
@@ -1720,6 +1748,16 @@ static void mount(void)
 
 void init(void)
 {
+#ifdef FS_RAMDISK
+    nslots = RAM_CACHE_SIZE / BS - STAGE_BLOCKS;
+    if (nslots > MAX_SLOTS) nslots = MAX_SLOTS;
+    stage_first = RAM_CACHE_SIZE / BS - STAGE_BLOCKS;
+    cache_init();
+    disk_blocks = (ramdisk_end - ramdisk_start) / BS;
+    log_("fs_ext2: live system: the file system is in RAM (no disk is touched)\n");
+    mount();
+    return;
+#endif
     if (!blk_config_check_magic(&blk_config)) {
         log_("fs_ext2: invalid block configuration\n");
         return;
@@ -1739,5 +1777,8 @@ void init(void)
 
 void notified(microkit_channel ch)
 {
+#ifdef FS_RAMDISK
+    (void)blkq;
+#endif
     (void)ch;   /* blk_virt's replies are handled by polling in blk_io() */
 }

@@ -67,12 +67,23 @@ GUEST_RAM_SIZE = 0x3000_0000          # 768 MiB
 GUEST_RAM_VMM_VADDR = 0x1_0000_0000
 VM_DISK_DATA_SIZE = 0x100_0000        # 16 MiB disk buffer for the VM
 
+# Platform (make PLATFORM=..., system.mk): "qemu", or "latitude7390": a live system in RAM for
+# the real Dell Latitude 7390 2-in-1 (no disk subsystem: fs_ext2 holds the file system; a network
+# driver with no card; the firmware's framebuffer; no QEMU-only I/O ports)
+PLATFORM = os.environ.get("PLATFORM", "qemu")
+LIVE = PLATFORM != "qemu"
+
 # Console: "graphical" (screen + PS/2 keyboard, console/fbcon.c) or "serial" (UART COM1).
 # Both are the sDDF "serial driver": the rest of the system does not change. make CONSOLE=serial
 CONSOLE = os.environ.get("CONSOLE", "graphical")
 # bochs-display screen in slot 5 (make run): BAR0 framebuffer, BAR2 registers
 FB_PADDR, FB_SIZE = 0xFD00_0000, 0x40_0000            # 1280x800x32 fits in 4 MiB
 FB_REGS_PADDR = 0xFEBC_A000
+if PLATFORM == "latitude7390":
+    # UHD Graphics 620 (00:02.0): BAR2 is the 256 MiB aperture at 0x60000000, where UEFI's GOP
+    # framebuffer starts; 1920x1080x32, stride 7680 bytes (read from the running laptop)
+    FB_PADDR, FB_SIZE = 0x6000_0000, 0x80_0000
+    FB_REGS_PADDR = None
 KBD_IRQ_CH = 10                       # KBD_IRQ_CH in console/fbcon.c
 
 # ---- QEMU q35 devices (fixed PCI slots: the firmware assigns these BARs and IRQs) ----
@@ -103,9 +114,10 @@ def generate(sdf, sdf_file, output_dir):
         fb = MemoryRegion(sdf, "fb", FB_SIZE, paddr=FB_PADDR)
         sdf.add_mr(fb)
         serial_driver.add_map(Map(fb, 0x4000_0000, "rw", setvar_vaddr="fb_base"))
-        fb_regs = MemoryRegion(sdf, "fb_regs", 0x1000, paddr=FB_REGS_PADDR)
-        sdf.add_mr(fb_regs)
-        serial_driver.add_map(Map(fb_regs, 0x5000_0000, "rw", cached=False, setvar_vaddr="fb_regs"))
+        if FB_REGS_PADDR:
+            fb_regs = MemoryRegion(sdf, "fb_regs", 0x1000, paddr=FB_REGS_PADDR)
+            sdf.add_mr(fb_regs)
+            serial_driver.add_map(Map(fb_regs, 0x5000_0000, "rw", cached=False, setvar_vaddr="fb_regs"))
         serial_driver.add_ioport(SystemDescription.IoPort(0x60, 1, 0))   # i8042: data
         serial_driver.add_ioport(SystemDescription.IoPort(0x64, 1, 1))   # i8042: status/commands
         serial_driver.add_irq(IrqIoapic(0, 1, 3, id=KBD_IRQ_CH))         # keyboard: IRQ 1
@@ -114,24 +126,27 @@ def generate(sdf, sdf_file, output_dir):
         serial_driver.add_ioport(SystemDescription.IoPort(0x3F8, 8, 0))  # COM1
         serial_driver.add_irq(IrqIoapic(0, 4, 0, id=1))
 
-    # ------------------------------------------------------------ disk
-    blk_driver = ProtectionDomain("blk_driver", "blk_driver.elf", priority=200, stack_size=0x2000)
-    blk_virt = ProtectionDomain("blk_virt", "blk_virt.elf", priority=199, stack_size=0x2000)
-    add_region(sdf, blk_driver, "virtio_requests", 0x10000, VIRTIO_BLK_REQUESTS_PADDR, 0x2020_0000, True)
-    add_region(sdf, blk_driver, "virtio_metadata", 0x10000, VIRTIO_BLK_METADATA_PADDR, 0x2021_0000, True)
-    add_region(sdf, blk_driver, "virtio_blk_regs", 0x4000, BLK_BAR, 0x6000_0000, False)
-    blk_driver.add_irq(IrqIoapic(ioapic_id=0, pin=BLK_IRQ, vector=2, id=17,
-                                 trigger=IrqIoapic.Trigger.LEVEL, polarity=IrqIoapic.Polarity.ACTIVELOW))
+    # ------------------------------------------------------------ disk (none in a live system)
+    if not LIVE:
+        blk_driver = ProtectionDomain("blk_driver", "blk_driver.elf", priority=200, stack_size=0x2000)
+        blk_virt = ProtectionDomain("blk_virt", "blk_virt.elf", priority=199, stack_size=0x2000)
+        add_region(sdf, blk_driver, "virtio_requests", 0x10000, VIRTIO_BLK_REQUESTS_PADDR, 0x2020_0000, True)
+        add_region(sdf, blk_driver, "virtio_metadata", 0x10000, VIRTIO_BLK_METADATA_PADDR, 0x2021_0000, True)
+        add_region(sdf, blk_driver, "virtio_blk_regs", 0x4000, BLK_BAR, 0x6000_0000, False)
+        blk_driver.add_irq(IrqIoapic(ioapic_id=0, pin=BLK_IRQ, vector=2, id=17,
+                                     trigger=IrqIoapic.Trigger.LEVEL, polarity=IrqIoapic.Polarity.ACTIVELOW))
 
     # ------------------------------------------------------------ network (for the VM)
-    eth_driver = ProtectionDomain("eth_driver", "eth_driver.elf", priority=195, budget=100, period=400)
+    eth_driver = ProtectionDomain("eth_driver", "net_null.elf" if LIVE else "eth_driver.elf",
+                                  priority=195, budget=100, period=400)
     net_virt_tx = ProtectionDomain("net_virt_tx", "network_virt_tx.elf", priority=194, budget=20000)
     net_virt_rx = ProtectionDomain("net_virt_rx", "network_virt_rx.elf", priority=193)
     vm_net_copier = ProtectionDomain("vm_net_copier", "network_copy.elf", priority=192, budget=20000)
-    add_region(sdf, eth_driver, "hw_net_rings", 0x10000, VIRTIO_NET_VQUEUES_PADDR, 0x7000_0000, False)
-    add_region(sdf, eth_driver, "virtio_net_regs", 0x4000, NET_BAR, 0x6000_0000, False)
-    eth_driver.add_irq(IrqIoapic(ioapic_id=0, pin=NET_IRQ, vector=1, id=16,
-                                 trigger=IrqIoapic.Trigger.LEVEL, polarity=IrqIoapic.Polarity.ACTIVELOW))
+    if not LIVE:
+        add_region(sdf, eth_driver, "hw_net_rings", 0x10000, VIRTIO_NET_VQUEUES_PADDR, 0x7000_0000, False)
+        add_region(sdf, eth_driver, "virtio_net_regs", 0x4000, NET_BAR, 0x6000_0000, False)
+        eth_driver.add_irq(IrqIoapic(ioapic_id=0, pin=NET_IRQ, vector=1, id=16,
+                                     trigger=IrqIoapic.Trigger.LEVEL, polarity=IrqIoapic.Polarity.ACTIVELOW))
 
     # ------------------------------------------------------------ native GNU/seL4
     # Priorities: processes < posix_server < fs_ext2 < drivers (the PPC rule: the callee
@@ -139,7 +154,8 @@ def generate(sdf, sdf_file, output_dir):
     fs = ProtectionDomain("fs_ext2", "fs_ext2.elf", priority=160, stack_size=0x8000)
     server = ProtectionDomain("posix_server", "posix_server.elf", priority=150, stack_size=0x10000)
     server.add_ioport(SystemDescription.IoPort(0x70, 2, 0))       # CMOS clock (RTC_IOPORT in clock.c)
-    server.add_ioport(SystemDescription.IoPort(0x604, 2, 1))      # ACPI PM1a control (power off; q35)
+    if not LIVE:
+        server.add_ioport(SystemDescription.IoPort(0x604, 2, 1))  # ACPI PM1a control (power off; q35)
     server.add_ioport(SystemDescription.IoPort(0xCF9, 1, 2))      # reset control register (reboot)
 
     fs_buf = MemoryRegion(sdf, "fs_buf", FS_BUF_SIZE)
@@ -178,10 +194,12 @@ def generate(sdf, sdf_file, output_dir):
     timer_system.add_client(netstack)        # TCP/IP stack clock
     add_x86_hpet(sdf, timer_driver)
 
-    for pd in (serial_driver, serial_virt_tx, serial_virt_rx, blk_driver, blk_virt,
-               eth_driver, net_virt_tx, net_virt_rx, vm_net_copier, fs, server, vmm, timer_driver,
-               netstack, netstack_copier):
+    for pd in (serial_driver, serial_virt_tx, serial_virt_rx, eth_driver, net_virt_tx, net_virt_rx,
+               vm_net_copier, fs, server, vmm, timer_driver, netstack, netstack_copier):
         sdf.add_pd(pd)
+    if not LIVE:
+        sdf.add_pd(blk_driver)
+        sdf.add_pd(blk_virt)
 
     sdf.add_channel(Channel(server, fs, a_id=SERVER_FS_CHANNEL_ID, pp_a=True))
     sdf.add_channel(Channel(server, netstack, a_id=SERVER_NET_CHANNEL_ID, b_id=NETSTACK_SERVER_CHANNEL_ID, pp_a=True))
@@ -208,9 +226,12 @@ def generate(sdf, sdf_file, output_dir):
     serial.add_client(server)        # 0: GNU/seL4
     serial.add_client(vmm)           # 1: VM
 
-    blk = Sddf.Blk(sdf, None, blk_driver, blk_virt)
-    blk.add_client(fs, partition=0, data_size=FS_CACHE_SIZE)          # partition 1: GNU/seL4 ext2
-    blk.add_client(vmm, partition=1, data_size=VM_DISK_DATA_SIZE)     # partition 2: the VM's /var/lib/docker
+    systems = [serial, timer_system, vmm_system]
+    if not LIVE:
+        blk = Sddf.Blk(sdf, None, blk_driver, blk_virt)
+        blk.add_client(fs, partition=0, data_size=FS_CACHE_SIZE)      # partition 1: GNU/seL4 ext2
+        blk.add_client(vmm, partition=1, data_size=VM_DISK_DATA_SIZE) # partition 2: the VM's /var/lib/docker
+        systems.append(blk)
 
     net = Sddf.Net(sdf, None, eth_driver, net_virt_tx, net_virt_rx)
     # Fixed MACs (otherwise sdfgen makes one up on every build and DHCP hands out a new lease);
@@ -218,7 +239,8 @@ def generate(sdf, sdf_file, output_dir):
     net.add_client_with_copier(vmm, vm_net_copier, mac_addr="02:5e:14:00:00:0a")
     net.add_client_with_copier(netstack, netstack_copier, mac_addr="02:5e:14:00:00:10")
 
-    for system in (serial, blk, net, timer_system, vmm_system):
+    systems.append(net)
+    for system in systems:
         assert system.connect()
         assert system.serialise_config(output_dir)
 
@@ -246,6 +268,7 @@ if __name__ == "__main__":
     board = next(filter(lambda b: b.name == args.board, BOARDS))
     # As in libvmm/examples/virtio_pci: the physical regions sdfgen allocates on its own
     # go below this address, away from the fixed ones of the virtio drivers
-    sdf = SystemDescription(board.arch, 0x5000_0000)
+    # The laptop has RAM only up to 0x3554_0000 in that area (its memory map), so lower there
+    sdf = SystemDescription(board.arch, 0x3000_0000 if LIVE else 0x5000_0000)
     Sddf(args.sddf)
     generate(sdf, args.sdf, args.output)

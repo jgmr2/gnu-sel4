@@ -11,6 +11,7 @@
 tar  sdk/microkit-sdk-2.3.1        https://github.com/seL4/microkit/releases/download/2.3.1/microkit-sdk-2.3.1-linux-x86-64.tar.gz  b1b285b8785db7557eba6d0665dd4fbf2f265ea5c0b39d6f91ae3dcc43d2c424
 git  third_party/microkit          https://github.com/seL4/microkit             ec86afdcd662b5976d11d4994acf1b11a2979882  patches=projects/gnu-sel4/microkit
 git  libvmm                        https://github.com/au-ts/libvmm              d2e37165285a28c7eae95501594d0807ea482c9c  submodules patches=projects/gnu-sel4/libvmm
+git  third_party/qrcodegen         https://github.com/nayuki/QR-Code-generator 7ad95cedd8464a87f82221283612732ae4f3f305  only=c,Readme.markdown
 git  third_party/f-stack           https://github.com/F-Stack/f-stack           761639943bdda33103aa98241ca6a3079f1c1b7e  only=lib,freebsd,mk,LICENSE
 
 # Native userland

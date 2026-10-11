@@ -1,5 +1,5 @@
 # GNU/seL4 build environment, in stages:
-#   toolchain  compiler (clang/LLVM 18), make, sdfgen, e2fsprogs. The dependencies stay on the
+#   toolchain  compiler (clang/LLVM 18), make, sdfgen, e2fsprogs, GRUB tools. The dependencies stay on the
 #              host next to the repository (./dev.sh build uses this stage)
 #   full       toolchain + every dependency (fetch-deps.sh, checked against deps.lock) in /deps,
 #              the patched Microkit tool already built, and QEMU for `make test`
@@ -12,6 +12,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         clang-18 lld-18 llvm-18 libclang-rt-18-dev make device-tree-compiler acpica-tools perl \
         xz-utils bzip2 cpio gdb-multiarch python3 python3-pip git ca-certificates curl less vim-tiny \
         dosfstools gdisk fdisk e2fsprogs \
+    && rm -rf /var/lib/apt/lists/*
+# Live ISOs for real hardware (make PLATFORM=latitude7390 iso): GRUB for UEFI and BIOS
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        grub-common grub-efi-amd64-bin grub-pc-bin xorriso mtools \
     && rm -rf /var/lib/apt/lists/*
 
 # libvmm uses LLVM 18 (clang 19 fails to build its x86_64 code)

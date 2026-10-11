@@ -4,10 +4,16 @@
 # which make test reads from the disk after the final power off, and to /dev/kmsg (QEMU's
 # serial port) to follow them live: the serial port is shared and can lose a line.
 #   /etc/test holds words: "no-net" skips the tests that need the internet; "slow" adds the
-#   expensive ones (make test SLOW=1: bigdisk, which also measures the disk speed).
+#   expensive ones (make test SLOW=1: bigdisk, which also measures the disk speed); "live" is
+#   the live system on real hardware (make PLATFORM=... iso): everything on the screen, hardware
+#   measurements after the tests, the results as QR codes (qrlog), and then the login prompt
+#   instead of powering off.
 #
 # SPDX-License-Identifier: BSD-2-Clause
-exec >/dev/kmsg 2>&1
+case " $(cat /etc/test 2>/dev/null) " in
+*" live "*) LIVE=1; exec >/dev/console 2>&1; printf '\033[2J\033[H' ;;
+*)          LIVE=; exec >/dev/kmsg 2>&1 ;;
+esac
 RESULTS=/var/log/test-results
 : > $RESULTS
 say() { echo "$1"; echo "$1" >> $RESULTS; }
@@ -102,11 +108,15 @@ check licenses    sh -c 'test -f /usr/share/licenses/gnu-sel4/LICENSE && test -f
 check vim         vim -es -c 'qa!'
 check vim-netrw   vim -N -es -c 'packadd netrw' -c 'if exists(":Explore") | qa! | else | cquit | endif'
 check procps      sh -c 'ps -e | wc -l | test "$(cat)" -ge 3 && free >/dev/null && uptime >/dev/null'
+[ -n "$LIVE" ] ||   # live on real hardware: no network card driver yet
 check dhcp        sh -c 'case "$(cat /proc/net/dhcp)" in *bound*10.0.2.16/24*) ;; *) cat /proc/net/dhcp; exit 1;; esac'
+[ -n "$LIVE" ] ||   # live on real hardware: no network card driver yet
 check resolv      sh -c 'case "$(cat /etc/resolv.conf)" in *"nameserver 10.0.2.3"*) ;; *) cat /etc/resolv.conf; exit 1;; esac'
 check nc          sh -c '(nc -l 7007 >/tmp/nc.out &) ; sleep 1; echo "hello nc" | nc 127.0.0.1 7007; sleep 1; test "$(cat /tmp/nc.out)" = "hello nc"'
 check ssh-key     sh -c 'rm -f /tmp/k && dropbearkey -t ed25519 -f /tmp/k >/dev/null && ssh -V 2>&1 | head -1 | test -n "$(cat)"'
+[ -n "$LIVE" ] ||   # live on real hardware: no network card driver yet
 check net-static  sh -c 'netcfg static 10.0.2.40/24 gateway 10.0.2.2 dns 10.0.2.3 && case "$(netcfg)" in *static*10.0.2.40/24*) ;; *) netcfg; exit 1;; esac && nettest >/dev/null'
+[ -n "$LIVE" ] ||   # live on real hardware: no network card driver yet
 check net-dhcp    sh -c 'netcfg dhcp && sleep 1 && case "$(netcfg)" in *bound*) ;; *) netcfg; exit 1;; esac'
 check s6          sh -c 'svstat() { s6-svstat -p /run/service/9pd; }; i=0; while [ "$(svstat)" -le 0 ] 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
                          p1=$(svstat); kill "$p1"; i=0; while { p2=$(svstat); [ "$p2" = "$p1" ] || [ "$p2" -le 0 ]; } && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
@@ -149,6 +159,38 @@ fi
 
 say "== TESTS: END ($failures failures, $total tests) =="
 sync
+
+if [ -n "$LIVE" ]; then
+    # Real hardware: what QEMU cannot tell (the numbers under QEMU are in TODO.md)
+    say "== HARDWARE =="
+    ms() { a=$(date +%s%N); "$@" >/dev/null 2>&1; b=$(date +%s%N); echo $(( (b - a) / 1000000 )); }
+    say "uname: $(uname -a)"
+    say "uptime at the end of the tests: $(cut -d' ' -f1 /proc/uptime) s"
+    while IFS= read -r l; do say "  $l"; done < /proc/meminfo
+    say "20 x fork+exec of /bin/true: $(ms sh -c 'i=0; while [ $i -lt 20 ]; do /bin/true; i=$((i+1)); done') ms"
+    say "3000 shell loop iterations: $(ms sh -c 'i=0; while [ $i -lt 3000 ]; do i=$((i+1)); done') ms"
+    head -c 8388608 /dev/zero > /tmp/hw.src
+    say "8 MiB written to the RAM file system: $(ms cp /tmp/hw.src /tmp/hw.dst) ms"
+    say "8 MiB read back: $(ms cat /tmp/hw.dst) ms"
+    rm -f /tmp/hw.src /tmp/hw.dst
+    say "Linux VM (VT-x on real hardware): first command after $(ms linux true) ms"
+    say "  $(linux uname -a </dev/null 2>&1 | head -1)"
+    linux sh -c 'grep -m1 "model name" /proc/cpuinfo; grep -c ^processor /proc/cpuinfo; free -m | head -2' </dev/null 2>&1 | \
+        while IFS= read -r l; do say "  vm: $l"; done
+    say "  10 x a VM command: $(ms sh -c 'i=0; while [ $i -lt 10 ]; do linux true </dev/null; i=$((i+1)); done') ms"
+    say "  4 MiB VM -> native: $(ms sh -c 'linux head -c 4194304 /dev/zero </dev/null | wc -c') ms"
+    say "  docker: $(linux docker version --format '{{.Server.Version}}' </dev/null 2>&1 | head -1)"
+    say "== /proc/perf (count, cycles) =="
+    grep -E '^(tsc_hz|sys\.(fork|execve|exit_group|read|write|openat)|mem\.|ext2\.(cache|disk|op\.read|op\.write))' /proc/perf | \
+        while IFS= read -r l; do say "  $l"; done
+    say "== END =="
+    sync
+    printf '\n%s\n' "Tests finished: $failures failures, $total tests. Press Enter to see the log as QR codes."
+    read -r _ </dev/console
+    qrlog $RESULTS </dev/console
+    printf '%s\n' "The log is in $RESULTS (qrlog $RESULTS shows it again). Log in as user (you choose its password)."
+    exit 0
+fi
 
 # Last: an orderly power off (make test checks that QEMU exits on its own and the disk is clean)
 exec /sbin/poweroff

@@ -153,13 +153,23 @@ Principles the plan follows:
 5. [ ] **Memory limits** (S). Needs: nothing (fork copies, so counting pages is simple)
    - [ ] A page budget per process and per user (like RLIMIT_AS): today one process can take
          the whole 768 MiB pool. Shared (memfd) pages counted once
-6. [ ] **First boot on the real laptop: Dell Latitude 7390 2-in-1, UEFI** (M). Needs: nothing.
+6. [~] **First boot on the real laptop: Dell Latitude 7390 2-in-1, UEFI** (M). Needs: nothing.
        Early on purpose: the QEMU numbers (VM exits ~1 ms, the disk being the host's cache)
        drove several decisions, and surprises are cheaper now than at the end
-   - [ ] Live ISO: GRUB (multiboot2) loads seL4 + the system + an ext2 disk into RAM
-   - [ ] GOP framebuffer for the console (address and format from multiboot2); 2x font for HiDPI
-   - [ ] Measure there what was measured in QEMU (fork/exec, disk, VM exits, the bridge) and
-         revisit the decisions marked "under QEMU"
+   - [x] `make PLATFORM=latitude7390 iso`: a live ISO (GRUB, UEFI or BIOS, e.g. from Ventoy) that
+         runs entirely in RAM: the file system is an ext2 image inside fs_ext2 (no disk driver at
+         all, the machine's disks are never touched), the console on the firmware's 1920x1080
+         framebuffer (0x60000000, read from the running laptop), the PS/2 keyboard, a network
+         driver with no card (net/null_driver.c), the VM without a disk (Docker in its RAM)
+   - [x] At boot: the test suite without network, hardware measurements (fork/exec, the RAM file
+         system, the VM with real VT-x, the bridge, /proc/perf), then the whole log as QR codes
+         (`qrlog`, Nayuki's qrcodegen) and the login prompt. Checked in QEMU, also booting the
+         ISO itself with OVMF (UEFI): under UEFI seL4 finds no serial port by itself, so a second
+         menu entry passes console_port=0x3f8
+   - [ ] Boot it on the laptop and bring back the QR codes; revisit the decisions marked
+         "under QEMU" with them
+   - [ ] Power off through \_S5 from the ACPI tables (today: halt, then the power button)
+
 7. [ ] **Memory server: the first piece out of posix_server** (M–L). Needs: 5 (its budgets)
    - [ ] mem.c moves into its own component that hands pages to posix_server and the VMM (one
          pool, the budgets of item 5); Microkit: a capability to the VM's EPT

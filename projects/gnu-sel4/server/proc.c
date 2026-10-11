@@ -631,8 +631,12 @@ static long sys_reboot(long magic, long cmd)
     for (int i = 0; i < NPROC; i++)                    /* nobody runs (or writes) any more */
         if (procs[i].state == P_RUN && procs[i].slot >= 0) seL4_TCB_Suspend(slot_tcb(procs[i].slot));
     if ((uint32_t)cmd == RB_POWER_OFF) {
+#ifndef NO_ACPI_POWEROFF
         tty_puts("[posix] file system clean; powering off\n");
-        microkit_x86_ioport_write_16(PM1A_IOPORT, 0x604, 0x2000);
+        microkit_x86_ioport_write_16(PM1A_IOPORT, 0x604, 0x2000);       /* QEMU q35's PM1a control */
+#else
+        tty_puts("[posix] file system clean\n");      /* real hardware: no \_S5 from ACPI yet */
+#endif
     } else if ((uint32_t)cmd == RB_AUTOBOOT) {
         tty_puts("[posix] file system clean; restarting\n");
         microkit_x86_ioport_write_8(RESET_IOPORT, 0xCF9, 0x02);

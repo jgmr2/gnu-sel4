@@ -33,8 +33,31 @@ include $(SDDF)/drivers/timer/$(TIMER_DRIV_DIR)/timer_driver.mk
 include $(LIBVMM)/vmm.mk
 vpath %.c $(SDDF) $(LIBVMM)
 
-IMAGES := serial_driver.elf serial_virt_tx.elf serial_virt_rx.elf blk_driver.elf blk_virt.elf \
-	  eth_driver.elf network_virt_rx.elf network_virt_tx.elf network_copy.elf timer_driver.elf \
+# --- platform: where the system runs (meta.py has the same choice) ---
+#   qemu          (default) QEMU q35 with virtio disk and network and bochs-display
+#   latitude7390  a live system for the real Dell Latitude 7390 2-in-1: everything in RAM (the
+#                 file system is an image inside fs_ext2, no disk driver at all), the firmware's
+#                 1920x1080 framebuffer, no network card driver (net/null_driver.c), no ACPI
+#                 power off yet. make iso builds the ISO
+PLATFORM ?= qemu
+export PLATFORM
+ifeq ($(PLATFORM),qemu)
+ETH_ELF := eth_driver.elf
+BLK_ELFS := blk_driver.elf blk_virt.elf
+else ifeq ($(PLATFORM),latitude7390)
+ETH_ELF := net_null.elf
+BLK_ELFS :=
+LIVE := 1
+FBCON_FLAGS := -DFB_LINEAR -DFB_W=1920 -DFB_H=1080 -DFB_STRIDE=1920
+SERVER_FLAGS := -DNO_ACPI_POWEROFF
+VMM_FLAGS := -DNO_VM_DISK
+FS_FLAGS := -DFS_RAMDISK
+else
+$(error unknown PLATFORM $(PLATFORM): qemu or latitude7390)
+endif
+
+IMAGES := serial_driver.elf serial_virt_tx.elf serial_virt_rx.elf $(BLK_ELFS) \
+	  $(ETH_ELF) network_virt_rx.elf network_virt_tx.elf network_copy.elf timer_driver.elf \
 	  fs_ext2.elf posix_server.elf client_vmm.elf netstack.elf netstack_copy.elf fbcon.elf
 $(IMAGES): libsddf_util_debug.a
 
@@ -52,7 +75,7 @@ SPLEEN := $(TP)/spleen/spleen-8x16.bdf
 font_spleen.h: $(SPLEEN) $(POSIX)/tools/bdf2c.py
 	python3 $(POSIX)/tools/bdf2c.py $< $@
 console_%.o: $(POSIX)/console/%.c $(POSIX)/console/term.h font_spleen.h
-	$(CC) $(CFLAGS) -I. -c $< -o $@
+	$(CC) $(CFLAGS) $(FBCON_FLAGS) -I. -c $< -o $@
 fbcon.elf: console_fbcon.o console_term.o
 	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@
 
@@ -61,14 +84,28 @@ SERVER_SRCS := posix_server proc tty vfs vfs_pipe vfs_evfd vfs_net vfs_unix cloc
 SERVER_DEPS := $(wildcard $(POSIX)/server/*.h) $(wildcard $(POSIX)/include/sel4posix/*.h) \
 	       syscall_nr.h syscall_names.h
 server_%.o: $(POSIX)/server/%.c $(SERVER_DEPS)
-	$(CC) $(CFLAGS) -I$(POSIX)/include -I. -c $< -o $@
+	$(CC) $(CFLAGS) $(SERVER_FLAGS) -I$(POSIX)/include -I. -c $< -o $@
 posix_server.elf: $(addprefix server_,$(addsuffix .o,$(SERVER_SRCS)))
 	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@
 
 # --- ext2 file server ---
 fs_ext2.o: $(POSIX)/fs/ext2/fs_ext2.c $(POSIX)/include/sel4posix/fs_protocol.h
-	$(CC) $(CFLAGS) -I$(POSIX)/include -DBUILD_TIME=$(shell date +%s) -c $< -o $@
+	$(CC) $(CFLAGS) $(FS_FLAGS) -I$(POSIX)/include -DBUILD_TIME=$(shell date +%s) -c $< -o $@
+ifdef LIVE
+# The live file system: the installed partition (see install.stamp), linked into fs_ext2
+fs_ext2_ramdisk.o: $(POSIX)/fs/ext2/ramdisk.S live-part1.img
+	$(CC) -c -x assembler-with-cpp -DRAMDISK_IMAGE=\"live-part1.img\" -target $(TARGET) $< -o $@
+fs_ext2.elf: fs_ext2.o fs_ext2_ramdisk.o
+	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@
+else
 fs_ext2.elf: fs_ext2.o
+	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@
+endif
+
+# --- network driver without a network card (live systems on hardware with no driver yet) ---
+net_null.o: $(POSIX)/net/null_driver.c
+	$(CC) $(CFLAGS) -c $< -o $@
+net_null.elf: net_null.o
 	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@
 
 # --- virtual machine VMM (libvmm): minimal Linux VM with Docker ---
@@ -80,7 +117,7 @@ $(VM_KERNEL) $(VM_INITRD):
 vm_dsdt.aml: $(VM)/virtio_pci_dsdt.dsl
 	iasl -p $@ $< >/dev/null
 vm_%.o: $(VM)/%.c $(wildcard $(VM)/*.h)
-	$(CC) $(CFLAGS) -I$(VM) -c $< -o $@
+	$(CC) $(CFLAGS) $(VMM_FLAGS) -I$(VM) -c $< -o $@
 vm_images.o: $(LIBVMM)/tools/package_guest_images.S $(VM_KERNEL) $(VM_INITRD) vm_dsdt.aml
 	$(CC) -c -g3 -x assembler-with-cpp -DGUEST_KERNEL_IMAGE_PATH=\"$(VM_KERNEL)\" \
 		-DGUEST_DSDT_AML_PATH=\"vm_dsdt.aml\" -DGUEST_INITRD_IMAGE_PATH=\"$(VM_INITRD)\" \
@@ -143,6 +180,11 @@ SETUID_APPS := passwd sudo
 APPS := $(notdir $(wildcard $(POSIX)/apps/*))
 BINS := $(addprefix bin/,$(APPS))
 .SECONDEXPANSION:
+# qrlog: with Project Nayuki's QR encoder (MIT)
+QRCODEGEN := $(TP)/qrcodegen/c
+bin/qrlog: $(SYSROOT_READY) $(POSIX)/apps/qrlog/qrlog.c $(QRCODEGEN)/qrcodegen.c
+	mkdir -p bin
+	$(SEL4CC) -O2 -g -Wall -I$(QRCODEGEN) -o $@ $(POSIX)/apps/qrlog/qrlog.c $(QRCODEGEN)/qrcodegen.c
 bin/%: $(SYSROOT_READY) $$(wildcard $(POSIX)/apps/%/*.c)
 	mkdir -p bin
 	$(SEL4CC) -O2 -g -Wall -I$(POSIX)/include -o $@ $(wildcard $(POSIX)/apps/$*/*.c)
@@ -257,7 +299,7 @@ LICENSE_FILES := gnu-sel4:$(POSIX)/../../LICENSE gnu-sel4:$(POSIX)/../../THIRD_P
 	microkit:$(MICROKIT_SDK)/LICENSES/BSD-2-Clause.txt sddf:$(SDDF)/LICENSES/BSD-2-Clause.txt \
 	libvmm:$(LIBVMM)/LICENSES/BSD-2-Clause.txt musl:$(TP)/musl-1.2.6/COPYRIGHT \
 	f-stack:$(TP)/f-stack/LICENSE dash:$(TP)/dash-0.5.13.5/COPYING zsh:$(TP)/zsh-5.9.2/LICENCE \
-	vim:$(TP)/vim-9.2.1172/LICENSE ncurses:$(TP)/ncurses-6.6/COPYING \
+	vim:$(TP)/vim-9.2.1172/LICENSE ncurses:$(TP)/ncurses-6.6/COPYING qrcodegen:$(TP)/qrcodegen/Readme.markdown \
 	coreutils:$(TP)/coreutils-9.12/COPYING $(foreach p,$(GNU_PKGS),$(call gnu_dir,$(p)):$(TP)/$(p)/COPYING) \
 	less:$(TP)/less-710/LICENSE procps-ng:$(TP)/procps-ng-4.0.7/COPYING procps-ng:$(TP)/procps-ng-4.0.7/COPYING.LIB \
 	curl:$(TP)/curl-8.22.0/COPYING mbedtls:$(TP)/mbedtls-3.6.7/LICENSE \
@@ -307,19 +349,21 @@ $(SYSTEM_FILE): $(POSIX)/meta.py $(IMAGES) console.$(CONSOLE)
 	$(OBJCOPY) --update-section .serial_virt_tx_config=serial_virt_tx.data serial_virt_tx.elf
 	$(OBJCOPY) --update-section .serial_client_config=serial_client_posix_server.data posix_server.elf
 	$(OBJCOPY) --update-section .timer_client_config=timer_client_posix_server.data posix_server.elf
-	$(OBJCOPY) --update-section .device_resources=blk_driver_device_resources.data blk_driver.elf
-	$(OBJCOPY) --update-section .blk_driver_config=blk_driver.data blk_driver.elf
-	$(OBJCOPY) --update-section .blk_virt_config=blk_virt.data blk_virt.elf
-	$(OBJCOPY) --update-section .blk_client_config=blk_client_fs_ext2.data fs_ext2.elf
-	$(OBJCOPY) --update-section .device_resources=eth_driver_device_resources.data eth_driver.elf
-	$(OBJCOPY) --update-section .net_driver_config=net_driver.data eth_driver.elf
+	if [ -z "$(LIVE)" ]; then \
+	  $(OBJCOPY) --update-section .device_resources=blk_driver_device_resources.data blk_driver.elf && \
+	  $(OBJCOPY) --update-section .blk_driver_config=blk_driver.data blk_driver.elf && \
+	  $(OBJCOPY) --update-section .blk_virt_config=blk_virt.data blk_virt.elf && \
+	  $(OBJCOPY) --update-section .blk_client_config=blk_client_fs_ext2.data fs_ext2.elf && \
+	  $(OBJCOPY) --update-section .blk_client_config=blk_client_CLIENT_VMM.data client_vmm.elf && \
+	  $(OBJCOPY) --update-section .device_resources=eth_driver_device_resources.data $(ETH_ELF); \
+	fi
+	$(OBJCOPY) --update-section .net_driver_config=net_driver.data $(ETH_ELF)
 	$(OBJCOPY) --update-section .net_virt_rx_config=net_virt_rx.data network_virt_rx.elf
 	$(OBJCOPY) --update-section .net_virt_tx_config=net_virt_tx.data network_virt_tx.elf
 	$(OBJCOPY) --update-section .net_copy_config=net_copy_vm_net_copier.data network_copy.elf
 	$(OBJCOPY) --update-section .device_resources=timer_driver_device_resources.data timer_driver.elf
 	$(OBJCOPY) --update-section .timer_client_config=timer_client_CLIENT_VMM.data client_vmm.elf
 	$(OBJCOPY) --update-section .serial_client_config=serial_client_CLIENT_VMM.data client_vmm.elf
-	$(OBJCOPY) --update-section .blk_client_config=blk_client_CLIENT_VMM.data client_vmm.elf
 	$(OBJCOPY) --update-section .net_client_config=net_client_CLIENT_VMM.data client_vmm.elf
 	$(OBJCOPY) --update-section .vmm_config=vmm_CLIENT_VMM.data client_vmm.elf
 	$(OBJCOPY) --update-section .net_client_config=net_client_netstack.data netstack.elf
@@ -335,9 +379,17 @@ $(IMAGE_FILE) $(REPORT_FILE): $(IMAGES) $(SYSTEM_FILE)
 #   1: GNU/seL4 ext2 (initial contents: rootfs/)         -> fs_ext2
 #   2: the VM's /var/lib/docker (the VM formats it ext4)  -> CLIENT_VMM
 # Created only once (persistent). To recreate it: make disk-reset
+ifdef LIVE
+# Live system: its own disk in the build directory (never disk.img); partition 1 becomes the
+# RAM file system inside fs_ext2 (live-part1.img). /etc/test turns the boot into the test battery
+DISK := $(BUILD_DIR)/live-disk.img
+EXT2_MB := 96
+DOCKER_GB := 1
+else
 DISK := $(POSIX)/disk.img
 EXT2_MB := 512
 DOCKER_GB := 8
+endif
 $(DISK):
 	set -e; \
 	truncate -s $(EXT2_MB)M part.img; \
@@ -354,7 +406,8 @@ $(DISK):
 SYSFILES := etc/motd etc/profile etc/rc etc/mtab etc/zshrc etc/zprofile etc/shells \
 	    etc/resolv.conf usr/share/vim/vimrc etc/tests.sh bin/nc
 # INITFILES: the user's own configuration (accounts, passwords, network): installed only when
-# missing, never overwritten ("path:mode")
+# missing, never overwritten ("path:mode"); but always root's with that mode (a disk made by
+# mke2fs -d copies the build host's owner: /etc/passwd would belong to uid 1000 = user)
 INITFILES := etc/passwd:0644 etc/group:0644 etc/shadow:0600 etc/sudoers:0440 etc/netcfg.conf:0644 etc/hosts:0644
 # Everything installed belongs to root (mke2fs -d keeps the build host's owners); the system
 # directories get standard modes, and each home directory its user ("name:uid")
@@ -398,8 +451,9 @@ install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EX
 	  for f in $(SYSFILES); do echo "rm /$$f"; echo "write $(POSIX)/rootfs/$$f /$$f"; \
 	    echo "sif /$$f uid 0"; echo "sif /$$f gid 0"; done; \
 	  for i in $(INITFILES); do f=$${i%%:*}; \
-	    debugfs -R "stat /$$f" part.img 2>&1 | grep -q "not found" || continue; \
-	    echo "write $(POSIX)/rootfs/$$f /$$f"; echo "sif /$$f mode 0100$${i##*:}"; done; \
+	    if debugfs -R "stat /$$f" part.img 2>&1 | grep -q "not found"; then \
+	      echo "write $(POSIX)/rootfs/$$f /$$f"; fi; \
+	    echo "sif /$$f mode 0100$${i##*:}"; echo "sif /$$f uid 0"; echo "sif /$$f gid 0"; done; \
 	} > install.cmds.0; \
 	awk '{ print } $$1 == "write" { print "sif " $$3 " uid 0"; print "sif " $$3 " gid 0" } \
 	     $$1 == "mkdir" { print "sif " $$2 " uid 0"; print "sif " $$2 " gid 0" }' install.cmds.0 > install.cmds; \
@@ -410,6 +464,17 @@ install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EX
 	dd if=part.img of=$(DISK) bs=1M seek=1 conv=notrunc status=none; \
 	rm part.img; touch $@; \
 	echo "installed in /bin: $(APPS) $(foreach b,$(EXTRA_BINS),$(lastword $(subst :, ,$(b)))) + $$(wc -l < coreutils/programs.txt) coreutils programs"
+
+ifdef LIVE
+live-part1.img: install.stamp
+	set -e; \
+	dd if=$(DISK) of=$@.tmp bs=1M skip=1 count=$(EXT2_MB) status=none; \
+	printf 'live no-net\n' > live-marker; \
+	debugfs -w -R "write live-marker /etc/test" $@.tmp >/dev/null 2>&1; \
+	debugfs -w -R "sif /etc/test uid 0" $@.tmp >/dev/null 2>&1; \
+	e2fsck -fy $@.tmp >/dev/null 2>&1 || true; \
+	rm -f live-marker; mv $@.tmp $@
+endif
 
 all: $(IMAGE_FILE) install.stamp
 .PHONY: all sysroot

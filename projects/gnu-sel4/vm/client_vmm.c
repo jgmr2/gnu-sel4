@@ -47,7 +47,9 @@ struct virtio_net_device virtio_net;
 void init(void)
 {
     assert(serial_config_check_magic(&serial_config));
+#ifndef NO_VM_DISK
     assert(blk_config_check_magic(&blk_config));
+#endif
     assert(vmm_config_check_magic(&vmm_config));
     assert(net_config_check_magic(&net_config));
 
@@ -60,12 +62,14 @@ void init(void)
         return;
     }
 
+#ifndef NO_VM_DISK
     /* Initialise sDDF Block subsystem. */
     blk_queue_init(&blk_queue, blk_config.virt.req_queue.vaddr, blk_config.virt.resp_queue.vaddr,
                    blk_config.virt.num_buffers);
     /* Busy wait until blk device is ready */
     blk_storage_info_t *storage_info = blk_config.virt.storage_info.vaddr;
     while (!blk_storage_is_ready(storage_info));
+#endif
 
     /* Initialise sDDF Serial subsystem. */
     serial_queue_init(&bridge_rx, (serial_queue_t *)bridge_rx_queue, BRIDGE_DATA_SIZE, (char *)bridge_rx_data);
@@ -103,8 +107,10 @@ void notified(microkit_channel ch)
         virtio_console_queue_notify(&virtio_console);
     } else if (ch == serial_config.tx.id || ch == net_config.tx.id) {
         /* Nothing to do */
+#ifndef NO_VM_DISK
     } else if (ch == blk_config.virt.id) {
         virtio_blk_handle_resp(&virtio_blk);
+#endif
     } else if (ch == net_config.rx.id) {
         virtio_net_handle_rx(&virtio_net);
     } else {

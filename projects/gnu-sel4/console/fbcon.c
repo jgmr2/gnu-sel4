@@ -29,8 +29,18 @@ uintptr_t fb_regs;                  /* bochs-display MMIO registers */
 #define IOPORT_DATA  0              /* 0x60 */
 #define IOPORT_CMD   1              /* 0x64 */
 
+/* The screen (meta.py's platform, make PLATFORM=...): QEMU's bochs-display is set to this mode
+ * through its registers; on real hardware (FB_LINEAR) the firmware's GOP mode is used as it is */
+#ifndef FB_W
 #define FB_W 1280
 #define FB_H 800
+#endif
+#ifndef FB_STRIDE
+#define FB_STRIDE FB_W                      /* pixels per line */
+#endif
+#ifndef FONT_SCALE
+#define FONT_SCALE 1
+#endif
 
 static serial_queue_handle_t rx_q, tx_q;
 
@@ -42,6 +52,10 @@ static void vbe(int i, uint16_t v) { *(volatile uint16_t *)(fb_regs + 0x500 + 2 
 
 static void display_init(void)
 {
+#ifdef FB_LINEAR
+    for (size_t i = 0; i < (size_t)FB_STRIDE * FB_H; i++) ((volatile uint32_t *)fb_base)[i] = 0;
+    return;
+#endif
     vbe(VBE_ENABLE, 0);
     vbe(VBE_XRES, FB_W);
     vbe(VBE_YRES, FB_H);
@@ -70,11 +84,12 @@ void fb_draw_cell(int col, int row, uint32_t ch, uint32_t fg, uint32_t bg, int a
         uint32_t t = fg; fg = bg; bg = t;
     }
     const uint8_t *g = glyph(ch);
-    volatile uint32_t *p = (volatile uint32_t *)fb_base + (size_t)row * FONT_H * FB_W + (size_t)col * FONT_W;
-    for (int y = 0; y < FONT_H; y++, p += FB_W) {
-        uint8_t bits = g[y];
-        if ((attrs & ATTR_UNDERLINE) && y == FONT_H - 1) bits = 0xff;
-        for (int x = 0; x < FONT_W; x++) p[x] = (bits & (0x80 >> x)) ? fg : bg;
+    volatile uint32_t *p = (volatile uint32_t *)fb_base + (size_t)row * FONT_H * FONT_SCALE * FB_STRIDE
+                         + (size_t)col * FONT_W * FONT_SCALE;
+    for (int y = 0; y < FONT_H * FONT_SCALE; y++, p += FB_STRIDE) {
+        uint8_t bits = g[y / FONT_SCALE];
+        if ((attrs & ATTR_UNDERLINE) && y / FONT_SCALE == FONT_H - 1) bits = 0xff;
+        for (int x = 0; x < FONT_W * FONT_SCALE; x++) p[x] = (bits & (0x80 >> (x / FONT_SCALE))) ? fg : bg;
     }
 }
 
@@ -240,7 +255,7 @@ void init(void)
     serial_queue_init(&rx_q, config.rx.queue.vaddr, config.rx.data.size, config.rx.data.vaddr);
     serial_queue_init(&tx_q, config.tx.queue.vaddr, config.tx.data.size, config.tx.data.vaddr);
     display_init();
-    term_init(FB_W / FONT_W, FB_H / FONT_H);
+    term_init(FB_W / (FONT_W * FONT_SCALE), FB_H / (FONT_H * FONT_SCALE));
     term_render();
     kbd_init();
 }

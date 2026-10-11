@@ -167,6 +167,7 @@ bool virtio_arch_init(void)
         return false;
     }
 
+#ifndef NO_VM_DISK                 /* live systems: no disk (Docker's data stays in the VM's RAM) */
     blk_storage_info_t *storage_info = blk_config.virt.storage_info.vaddr;
     if (!virtio_pci_blk_init(&virtio_blk, 0, VIRTIO_BLK_PCI_DEVICE_SLOT,
                              X86_IOAPIC_IRQ_ROUTE(0, VIRTIO_BLK_PCI_IOAPIC_PIN), (uintptr_t)blk_config.data.vaddr,
@@ -175,6 +176,7 @@ bool virtio_arch_init(void)
         LOG_VMM_ERR("Failed to initialise virtIO PCI Block device\n");
         return false;
     }
+#endif
 
     if (!virtio_pci_net_init(&virtio_net, 0, VIRTIO_NET_PCI_DEVICE_SLOT,
                              X86_IOAPIC_IRQ_ROUTE(0, VIRTIO_NET_PCI_IOAPIC_PIN), &net_rx_queue, &net_tx_queue,

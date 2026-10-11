@@ -35,4 +35,5 @@ image (`docker compose`, see README.md) carries them already fetched.
 | `third_party/s6-rc-0.7.0.0` | https://skarnet.org/software/s6-rc/ | 0.7.0.0 |
 | `third_party/sudo-1.9.17p2` | https://www.sudo.ws/dist/ | 1.9.17p2 |
 | `third_party/spleen` | https://github.com/fcambus/spleen | 2.2.0 (`spleen-8x16.bdf`, LICENSE) |
+| `third_party/qrcodegen` | https://github.com/nayuki/QR-Code-generator | v1.8.0, 7ad95cedd8464a87f82221283612732ae4f3f305 (`c/`, Readme with the MIT license) |
 

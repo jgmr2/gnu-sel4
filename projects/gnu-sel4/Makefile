@@ -24,6 +24,13 @@ ifneq ($(RELEASE),)
 export MICROKIT_CONFIG := release
 export BUILD_DIR       ?= $(abspath build-release)
 endif
+# make PLATFORM=latitude7390 [iso]: the live system for the real laptop, in its own directory
+# (see system.mk); the ISO boots from GRUB (UEFI or BIOS, e.g. from a Ventoy USB stick) and runs
+# entirely in RAM: no disk driver is included, so no disk is ever touched
+export PLATFORM        ?= qemu
+ifneq ($(PLATFORM),qemu)
+export BUILD_DIR       ?= $(abspath build-$(PLATFORM))
+endif
 export MICROKIT_CONFIG ?= debug
 # Our own Microkit tool (third_party/microkit, branch gnu-sel4: <cap_untyped>, <cap_cnode>...)
 export MICROKIT_TOOL   := $(DEPS)/third_party/microkit/target/release/microkit
@@ -82,10 +89,21 @@ test:
 disk-grow:
 	tools/disk-grow.py
 
+# The live ISO (inside the development image: ../../dev.sh make PLATFORM=latitude7390 iso)
+ISO := $(BUILD_DIR)/gnu-sel4-live-$(PLATFORM).iso
+iso: all
+	@test "$(PLATFORM)" != qemu || { echo "make iso needs PLATFORM=latitude7390"; exit 1; }
+	rm -rf $(BUILD_DIR)/iso && mkdir -p $(BUILD_DIR)/iso/boot/grub
+	cp $(BUILD_DIR)/sel4_32.elf $(BUILD_DIR)/iso/boot/sel4.elf
+	cp $(BUILD_DIR)/loader.img $(BUILD_DIR)/iso/boot/loader.img
+	cp tools/grub-live.cfg $(BUILD_DIR)/iso/boot/grub/grub.cfg
+	grub-mkrescue -o $(ISO) $(BUILD_DIR)/iso -- -volid GNU-SEL4-LIVE >/dev/null 2>&1
+	@ls -l $(ISO)
+
 disk-reset:
 	rm -f disk.img $(BUILD_DIR)/install.stamp
 
 clean:
 	rm -rf $(BUILD_DIR)
 
-.PHONY: all run test clean disk-grow disk-reset vm-rootfs microkit-tool
+.PHONY: all run test clean disk-grow disk-reset iso vm-rootfs microkit-tool

@@ -46,6 +46,7 @@ On the installed system, the license texts of the programs on the disk are in
 | [skalibs, execline, s6, s6-rc](https://skarnet.org/software/) | Laurent Bercot (skarnet.org) | ISC | service supervision (`s6-svscan`, `s6-svc`…), the execline language |
 | [sudo](https://www.sudo.ws) | Todd C. Miller and contributors | ISC-style (sudo license) | root work from a normal account |
 | [Spleen](https://github.com/fcambus/spleen) | Frederic Cambus | BSD-2-Clause | the console font |
+| [QR Code generator](https://www.nayuki.io/page/qr-code-generator-library) | Project Nayuki | MIT | `qrlog`: test logs out of the live system as QR codes |
 
 ## Linux VM
 
