@@ -78,7 +78,7 @@ cheap and unlock a lot; later ones are expensive or only pay off once the earlie
 Related work is grouped into one item so it is done once. Real hardware stays last on purpose:
 first the system has to be worth booting.
 
-Finished (from the previous order):
+Finished:
 
 1. [x] **Everyday tools** (S): GNU grep 3.12, sed 4.10, findutils 4.11 (find, xargs), diffutils
        3.12, tar 1.35, gzip 1.15 and less 710, built by one generic script (`ports/gnu/build-gnu.sh`,
@@ -99,7 +99,7 @@ Finished (from the previous order):
          Tests `s6` (kill 9pd -> restarted; s6-svc -d/-u) and `s6-rc` (down/up through s6-rc)
    - [x] On the way: AF_UNIX names are socket inodes in ext2 (connect resolves symlinks); chdir
          keeps the physical directory and `..` after a symlink goes to the target's parent
-   - Next services as they appear: the console login and sshd (item 13), the compositor (item 15)
+   - Next services as they appear: the console login and sshd (item 11), the compositor (item 14)
 5. [x] **Clean shutdown and disk safety** (S–M)
    - [x] `/sbin/poweroff` (`reboot`, `halt`): s6-rc brings the services down, the Linux VM runs
          its shutdown (Docker stopped, its disk synced and unmounted), SIGTERM then SIGKILL to the
@@ -124,12 +124,10 @@ Finished (from the previous order):
          `passwd` (set-user-ID root) and `chpasswd`; root is locked, `user` is in wheel; init
          runs login on the console. Accounts and network settings are never overwritten
    - [x] sudo 1.9.17p2 (static, no PAM, no plugins), wheel may run anything, its own log;
-         `!use_pty` until there are pseudo-terminals (item 13). `su` is not ported: `sudo -s`
-   - The login session as a service: item 13; memory limits per user: item 14
+         `!use_pty` until there are pseudo-terminals (item 11). `su` is not ported: `sudo -s`
+   - The login session as a service: item 11; memory limits per user: item 12
    - Later: users from the network: musl asks an nscd-protocol daemon for users it does not
          find in /etc/passwd (or skarnet's nsss): the hook for item 21
-
-Pending:
 
 7. [x] **A bigger system disk** (S): 512 MB ext2 partition (`EXT2_MB`; it was 64 MB and 72 % full).
        `make disk-grow` grows an existing disk keeping everything: it moves the Docker partition
@@ -176,37 +174,40 @@ Pending:
    - [x] /proc: real load average (Linux's fixed-point averages, sampled every 5 s),
          /proc/<pid>/maps (runs of present pages: with lazy loading the program shows in
          32 KiB pieces) and /proc/<pid>/fd (Linux names: pipe:[n], socket:[n], anon_inode:...)
-10. [~] **Rings and asynchronous I/O** (L). Measured first (2026-10-11), with these findings:
-   - [x] Asynchronous file reads were built and measured, then left out (the patch is not in the
-         tree): a read that misses the cache returned -EAGAIN, fs_ext2 read the blocks in the
-         background (in runs of up to 32) and notified posix_server, which put the process to
-         sleep meanwhile. No gain: small cached reads next to a cold 24 MiB read took 186 ms
-         against 183 ms synchronous, because each 64 KiB operation waits only ~0.3 ms for the
-         disk and posix_server already serves other processes between them; what slows them
-         down is CPU, not waiting. Worth it again with slow disks or once posix_server is split
-   - [x] Zero copy measured: a cached 64 KiB read costs 28 us in posix_server + fs_ext2
-         (~2.3 GB/s, two copies); for `cat` of 8 MiB that is 3.7 of 14 ms (the rest is starting
-         the process). Mapping cache pages would save ~2 ms per 8 MiB: later, for large files
-   - [ ] Own ring ABI (submission/completion rings in the shared buffer, the sDDF model): many
-         operations per notification, nothing blocking; epoll, kqueue and poll become thin layers
-         on top. A subset of the io_uring ABI on top of it only if some program needs liburing
-   - [ ] Asynchronous I/O in fs_ext2: today it serves one disk request at a time and busy-waits
-         for the reply (`blk_io`), so nothing else touching files makes progress. A ring between
-         posix_server and fs_ext2: several requests in flight, sleep until the disk notifies
-   - [ ] Zero copy where it pays off: shared `mmap` of files mapping the fs_ext2 cache pages
-         into the process (today: private copy, or shared read-only); large read/write
-         (>= 64 KiB) passing page capabilities instead of copying. Small transfers keep copying:
-         mapping + unmapping costs more than copying 4 KiB
-   - [ ] kqueue as the native event API (epoll stays for compatibility), on top of the rings
-   - [ ] Large pages (2 MiB) for large regions (fork, exec and faults pay per 4 KiB page today);
-         free unused page tables
-11. [~] **Linux VM integration** (M–L; the VM runs Linux at native speed with VT-x; what is slow
-        is the current bridge: serial-port-style queues with byte-by-byte copies)
-   - [x] The bridge travels over virtio-vsock (vm/virtio_vsock.c, a minimal device in the VMM:
-         one stream connection from the agent to the host's port 5000) instead of a virtio
-         console, whose tty layer handed over 2 KiB per VM exit: 4 MiB native -> VM
-         1.44 s -> 286 ms, VM -> native 2.47 s -> 527 ms. libvmm's console copied received data
-         byte by byte (patched: projects/gnu-sel4/libvmm). 9P with 128 KiB messages
+
+Pending:
+
+10. [~] **Reliability and CI** (S–M): every later change gets checked on its own. First now: the
+        flaky s6 failure still shows up in make test
+   - [x] A watchdog per test in /etc/tests.sh: a test that takes over 60 s fails as hung and
+         dumps every process (`ps`), instead of the whole run ending as "did not finish"
+   - [x] The VM agent deadlocked when 9pd was restarted after the VM had mounted /mnt/sel4: it
+         unmounted (waiting for 9P replies) before closing the transport it forwards itself.
+         Only showed up once make test got fast enough for the VM to be up before the `s6` test
+   - [ ] The rare (about 1 boot in 12) SIGABRT of s6rc-oneshot-runner while s6-rc starts it (the
+         `net` oneshot does not run; the `s6-rc` test prints /tmp/s6-svscan.log when it happens)
+   - [ ] GitHub Actions runs `make test NO_NET=1` (KVM on the runner) on every push, with the
+         jgmr2/gnu-sel4-dev image; after the flaky failures are gone
+11. [ ] **Terminals, sessions and job control** (M): what makes daily use (and ssh) real
+   - [ ] Pseudo-terminals: `/dev/ptmx`, `/dev/pts/N`, openpty, grantpt/unlockpt, TIOCSWINSZ
+   - [ ] Sessions and controlling terminals: setsid, TIOCSCTTY, tcsetpgrp/tcgetpgrp, SIGHUP when
+         the terminal goes away; terminal signals go to the foreground process group
+   - [ ] Job control: `Ctrl-Z` (SIGTSTP), stopped processes, SIGCONT, `fg`/`bg`, SIGTTIN/SIGTTOU;
+         `Ctrl-C` in the middle of dash's prompt is processed with the next line (today)
+   - [ ] Asynchronous signals to processes that make no syscalls (pure loops): suspend the TCB and
+         redirect it to the handler
+   - [ ] Services that come with it: the console login as an s6-rc longrun (a getty-like
+         service, instead of init's loop); the dropbear ssh server as a longrun; sudo without
+         `!use_pty`; /proc shows the tty name (today "?"); tmux or screen
+12. [ ] **Memory limits** (S): fork copies pages (no copy-on-write, see item 8), so the
+        accounting is simple: count the pages of each process and user
+   - [ ] Per process and per user (a page budget, like RLIMIT_AS): today one
+         process can take the whole 768 MiB pool (a native denial of service). Shared (memfd) pages
+         counted once
+13. [~] **Linux VM integration II** (M–L). Done in the first round: the bridge over
+        virtio-vsock (4 MiB native -> VM 1.44 s -> 286 ms, VM -> native 2.47 s -> 527 ms),
+        libvmm's console copying in chunks (patch in projects/gnu-sel4/libvmm), 9P with 128 KiB
+        messages
    - [ ] What is left is latency: a 9P round trip costs ~4.5 ms under QEMU (several VM exits
          per message at ~1 ms each in nested virtualisation: queue kick, interrupt status read,
          EOI), so `find /mnt/sel4/...` or small writes are slow; on real hardware an exit costs
@@ -221,35 +222,10 @@ Pending:
          (EPT fault in libvmm -> page from the pool) and goes back to the pool when Linux frees
          it (virtio-balloon with "free page reporting"). A cap per VM and a reserve for native
    - [ ] Memory server: move mem.c out of posix_server into a component that hands pages to
-         posix_server and the VMM (a single pool, with item 14's budgets); Microkit: capability
+         posix_server and the VMM (a single pool, with item 12's budgets); Microkit: capability
          to the VM's EPT
    - [ ] The VM's system on disk instead of an initramfs in RAM (252 MB fixed today)
-12. [ ] **Reliability and CI** (S–M): every later change gets checked on its own
-   - [x] A watchdog per test in /etc/tests.sh: a test that takes over 60 s fails as hung and
-         dumps every process (`ps`), instead of the whole run ending as "did not finish"
-   - [x] The VM agent deadlocked when 9pd was restarted after the VM had mounted /mnt/sel4: it
-         unmounted (waiting for 9P replies) before closing the transport it forwards itself.
-         Only showed up once make test got fast enough for the VM to be up before the `s6` test
-   - [ ] The rare (about 1 boot in 12) SIGABRT of s6rc-oneshot-runner while s6-rc starts it (the
-         `net` oneshot does not run; the `s6-rc` test prints /tmp/s6-svscan.log when it happens)
-   - [ ] GitHub Actions runs `make test NO_NET=1` (KVM on the runner) on every push, with the
-         jgmr2/gnu-sel4-dev image; after the flaky failures are gone
-13. [ ] **Terminals, sessions and job control** (M): what makes daily use (and ssh) real
-   - [ ] Pseudo-terminals: `/dev/ptmx`, `/dev/pts/N`, openpty, grantpt/unlockpt, TIOCSWINSZ
-   - [ ] Sessions and controlling terminals: setsid, TIOCSCTTY, tcsetpgrp/tcgetpgrp, SIGHUP when
-         the terminal goes away; terminal signals go to the foreground process group
-   - [ ] Job control: `Ctrl-Z` (SIGTSTP), stopped processes, SIGCONT, `fg`/`bg`, SIGTTIN/SIGTTOU;
-         `Ctrl-C` in the middle of dash's prompt is processed with the next line (today)
-   - [ ] Asynchronous signals to processes that make no syscalls (pure loops): suspend the TCB and
-         redirect it to the handler
-   - [ ] Services that come with it: the console login as an s6-rc longrun (a getty-like
-         service, instead of init's loop); the dropbear ssh server as a longrun; sudo without
-         `!use_pty`; /proc shows the tty name (today "?"); tmux or screen
-14. [ ] **Memory limits** (S–M), on top of item 8's copy-on-write page accounting
-   - [ ] Per process and per user (a page budget, like RLIMIT_AS): today one
-         process can take the whole 768 MiB pool (a native denial of service). Shared and COW
-         pages counted once
-15. [ ] **Graphical desktop: our own Wayland compositor** (L), after items 8, 9 and 13. It does
+14. [ ] **Graphical desktop: our own Wayland compositor** (L), after items 8, 9 and 11. It does
         not need threads: libwayland runs single-threaded (musl's mutexes work without threads).
         Sway/wlroots dropped: cairo, pango, glib, harfbuzz, freetype, fontconfig, libdrm,
         libinput... would multiply the native attack surface. Heavy GUI applications run in the
@@ -266,21 +242,47 @@ Pending:
          CPU rendering of damaged regions only (AVX2 alpha blending, if seL4 saves the AVX
          state: check XSAVE in the kernel configuration); bitmap fonts (Spleen) for decorations;
          resizes through xdg-shell configure/ack and sway-style transactions (no flicker)
-   - [ ] Phase 4: a native terminal (foot or our own, needs item 13); VM windows through waypipe
-         (needs item 11's vsock to be fast); per-origin border colours (native / VM), Qubes-style
-16. [ ] **Threads, then software that needs them** (L)
+   - [ ] Phase 4: a native terminal (foot or our own, needs item 11); VM windows through waypipe
+         (needs item 13's vsock to be fast); per-origin border colours (native / VM), Qubes-style
+15. [ ] **Threads, then software that needs them** (L)
    - [ ] pthreads and `timer_create`: several seL4 TCBs in one address space. Each thread: its
          own TCB, IPC buffer, syscall buffer and endpoint badge; per-process state stays in the
          server. Private futexes in the server (musl's fast path is atomic in user space).
          posix_server stays single-threaded on purpose (it never waits inside a call); scaling
-         comes from splitting it into servers on several cores with rings (item 10).
+         comes from splitting it into servers on several cores with rings (item 16).
          Blocks browsers, Node.js and almost any large program
    - [ ] Installing software without rebuilding the image: **dpkg + apt** with our own `.deb`
          repository (Debian's binaries are built for glibc and Linux and do not run here: the
          packages are built from our ports, signed, and published e.g. with GitHub Releases or
          Pages). dpkg first (C, possible before threads); apt is C++: libc++ and pthreads.
          Until then, ports organised like FreeBSD's ports tree
-17. [ ] **Native isolation and process restriction** (M–L, easier after items 9 and 10), ideas
+16. [ ] **Performance II: rings, asynchronous I/O, zero copy** (L). Measured (2026-10-11) and
+        not worth it yet, so after threads: what costs today is CPU, not waiting
+   - [x] Asynchronous file reads were built and measured, then left out (the patch is not in the
+         tree): a read that misses the cache returned -EAGAIN, fs_ext2 read the blocks in the
+         background (in runs of up to 32) and notified posix_server, which put the process to
+         sleep meanwhile. No gain: small cached reads next to a cold 24 MiB read took 186 ms
+         against 183 ms synchronous, because each 64 KiB operation waits only ~0.3 ms for the
+         disk and posix_server already serves other processes between them; what slows them
+         down is CPU, not waiting. Worth it again with slow disks or once posix_server is split
+   - [x] Zero copy measured: a cached 64 KiB read costs 28 us in posix_server + fs_ext2
+         (~2.3 GB/s, two copies); for `cat` of 8 MiB that is 3.7 of 14 ms (the rest is starting
+         the process). Mapping cache pages would save ~2 ms per 8 MiB: later, for large files
+   - [ ] Own ring ABI (submission/completion rings in the shared buffer, the sDDF model): many
+         operations per notification, nothing blocking; epoll, kqueue and poll become thin layers
+         on top. A subset of the io_uring ABI on top of it only if some program needs liburing
+   - [ ] Asynchronous I/O in fs_ext2: the requests of one operation are already in flight
+         together (item 8), but fs_ext2 busy-waits for them and posix_server waits for fs_ext2.
+         A ring between them (several operations in flight, sleep until the disk notifies) once
+         the disks are slow enough for it to matter (see the measurement above)
+   - [ ] Zero copy where it pays off: shared `mmap` of files mapping the fs_ext2 cache pages
+         into the process (today: private copy, or shared read-only); large read/write
+         (>= 64 KiB) passing page capabilities instead of copying. Small transfers keep copying:
+         mapping + unmapping costs more than copying 4 KiB
+   - [ ] kqueue as the native event API (epoll stays for compatibility), on top of the rings
+   - [ ] Large pages (2 MiB) for large regions (fork, exec and faults pay per 4 KiB page today);
+         free unused page tables
+17. [ ] **Native isolation and process restriction** (M–L, easier after items 9 and 16), ideas
         from FreeBSD and OpenBSD. Docker is not affected: it keeps running Linux containers in
         the Linux VM
    - [ ] Jails for native programs: their own root, their own visible processes, their own
@@ -295,7 +297,7 @@ Pending:
         autonomously: edit → build → stage → restart the whole userland (not the kernel) →
         read logs and behaviour → commit if it is good
    - [ ] First step: Claude Code + toolchain in the Linux VM, working on the tree through
-         `/mnt/sel4` (needs dynamic VM memory, item 11: the build does not fit in 768 MiB)
+         `/mnt/sel4` (needs dynamic VM memory, item 13: the build does not fit in 768 MiB)
    - [ ] Userland restart: a monitor component with authority over the other PDs that stops
          them, loads new images from a staging area and starts them again (Microkit systems are
          static: there is no restart today)
@@ -324,7 +326,6 @@ Pending:
    - [ ] Alternative to the driver VM for Wi-Fi: the Linux driver inside a component
          (LKL or Genode-style DDE), no VM
    - [ ] Multicore (seL4 runs on a single core today; the laptop has 4)
-
 21. [ ] **Directory services, native: LDAP, Kerberos, Active Directory, Samba** (L), last on purpose
    - [ ] LDAP client (OpenLDAP's libldap; needs OpenSSL or GnuTLS) and a small nscd-protocol daemon
          backed by LDAP, so `id`, `ls -l`, `ps` see directory users unmodified (item 6's nscd hook)
@@ -335,9 +336,9 @@ Pending:
 ## Long term
 
 - [ ] io_uring as an interface for programs: not planned (a Linux-only ABI that almost nothing
-      uses directly; seL4 PPCs are cheap). Our own ring ABI instead (item 10), also between servers
+      uses directly; seL4 PPCs are cheap). Our own ring ABI instead (item 16), also between servers
 - [ ] **posix_server is a single point of failure**: if it goes down, all of native goes down.
-      Split it into servers (processes/memory, files, network, tty) once the rings exist (item 10:
+      Split it into servers (processes/memory, files, network, tty) once the rings exist (item 16:
       with rings between components the split costs little), and make each one restartable by
       keeping the important state outside it, so the monitor (item 18) can bring it back
 - [ ] Our own triple (`x86_64-sel4-musl`) instead of `x86_64-linux-musl` (today programs see `__linux__`)
@@ -345,5 +346,5 @@ Pending:
 
 ## Known issues (small, unscheduled)
 
-- Moved into the items above: /proc details (9), `nice` (8), hard links over 9P (11),
-  the s6rc-oneshot-runner SIGABRT (12)
+- Moved into the items above: /proc details (9), `nice` (8), hard links over 9P (13),
+  the s6rc-oneshot-runner SIGABRT (10)
