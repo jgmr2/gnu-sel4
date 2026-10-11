@@ -3,12 +3,14 @@
 #   docker compose run --rm test         automated tests in headless QEMU (needs /dev/kvm)
 #   docker compose run --rm shell        a shell in the build environment
 #   docker compose run --rm vm-rootfs    kernel + initramfs of the Linux VM (once, before build)
-# The first run builds the image: every dependency is downloaded and checked against deps.lock.
+# The image is pulled from Docker Hub (jgmr2/gnu-sel4-dev, published by .github/workflows);
+# if it cannot be pulled, it is built here: every dependency is fetched and checked against deps.lock.
 # `make run` (QEMU with a window) runs on the host: see README.md.
 #
 # SPDX-License-Identifier: BSD-2-Clause
 x-gnu-sel4: &gnu-sel4
-  image: gnu-sel4-dev
+  image: jgmr2/gnu-sel4-dev:latest
+  pull_policy: missing
   build:
     context: .
     target: full

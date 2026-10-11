@@ -60,8 +60,9 @@ Dockerfile, dev.sh, docker-compose.yml   build environment (clang/LLVM 18, make,
 The only requirement on the host is Docker; QEMU with KVM (nested virtualisation) runs the
 system: `sudo apt install qemu-system-x86`.
 
-**With Docker Compose** (simplest: the image carries every dependency, already checked, and the
-patched Microkit tool; the first run builds it, about 7 minutes and 3 GB):
+**With Docker Compose** (simplest: the image `jgmr2/gnu-sel4-dev` from Docker Hub carries every
+dependency, already checked, and the patched Microkit tool, ~3 GB; if it cannot be pulled, it is
+built locally in about 7 minutes):
 
 ```sh
 git clone https://github.com/jgmr2/gnu-sel4 && cd gnu-sel4

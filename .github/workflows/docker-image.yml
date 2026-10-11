@@ -4,7 +4,7 @@
 # Needs two repository secrets (Settings > Secrets and variables > Actions):
 #   DOCKERHUB_USERNAME   your Docker Hub user
 #   DOCKERHUB_TOKEN      a Docker Hub access token with read/write permission
-# Image: <DOCKERHUB_USERNAME>/gnu-sel4-dev, tagged "latest" and with the commit.
+# Image: jgmr2/gnu-sel4-dev (docker-compose.yml pulls it), tagged "latest" and with the commit.
 #
 # SPDX-License-Identifier: BSD-2-Clause
 name: Docker image
@@ -37,7 +37,7 @@ jobs:
           target: full
           push: true
           tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/gnu-sel4-dev:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/gnu-sel4-dev:${{ github.sha }}
+            jgmr2/gnu-sel4-dev:latest
+            jgmr2/gnu-sel4-dev:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
