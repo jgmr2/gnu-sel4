@@ -66,6 +66,9 @@ check s6          sh -c 'svstat() { s6-svstat -p /run/service/9pd; }; i=0; while
 check s6-rc       sh -c 'cat /tmp/s6-rc.log; grep -v "^$" /tmp/s6-svscan.log | tail -15; up=$(s6-rc -a list | sort | xargs echo); echo "up: $up"; case " $up " in *" 9pd "*) ;; *) exit 1;; esac
                          case " $up " in *" net "*) ;; *) exit 1;; esac
                          s6-rc -d change 9pd && [ "$(s6-svstat -p /run/service/9pd)" = -1 ] && s6-rc -u change 9pd && [ "$(s6-svstat -p /run/service/9pd)" -gt 0 ]'
+check s6-user     sh -c 'out=$(printf "s6-rc -a list | grep -qx 9pd && echo LIST-OK\ns6-rc -d change 9pd 2>/dev/null || echo RC-DENIED\ns6-svc -d /run/service/9pd 2>/dev/null || echo SVC-DENIED\nexit\n" | login -f user 2>&1)
+                         echo "$out" | grep -E "OK|DENIED"; [ "$(s6-svstat -p /run/service/9pd)" -gt 0 ] || { echo "user stopped 9pd"; exit 1; }
+                         for w in LIST-OK RC-DENIED SVC-DENIED; do echo "$out" | grep -q $w || exit 1; done'
 check linux-vm    sh -c 'test "$(linux echo hello from the VM)" = "hello from the VM" && linux sh -c "exit 3"; test $? = 3'
 if [ "$(cat /etc/test)" = no-net ]; then
     check nettest-local nettest local
