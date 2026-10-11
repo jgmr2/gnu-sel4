@@ -1,5 +1,6 @@
-# The image only needs the dependency manifest, the fetch script and the Microkit patches
+# The image only needs the dependency manifest, the fetch script and our patches (Microkit, libvmm)
 *
 !deps.lock
 !fetch-deps.sh
 !projects/gnu-sel4/microkit/*.patch
+!projects/gnu-sel4/libvmm/*.patch
