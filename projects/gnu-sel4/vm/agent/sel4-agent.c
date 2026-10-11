@@ -1,6 +1,6 @@
 /*
  * sel4-agent: runs inside the Linux VM and executes the commands GNU/seL4
- * requests over the bridge (/dev/hvc1), like WSL "interop".
+ * requests over the bridge (a vsock connection to the host, port BR_VSOCK_PORT), like WSL "interop".
  * Protocol: include/sel4posix/bridge.h.
  *
  * For each BR_OPEN it starts the command: with a pty if a terminal was
@@ -24,6 +24,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <linux/vm_sockets.h>
 #include "sel4posix/bridge.h"
 
 #define NSESS 64
@@ -269,13 +270,24 @@ static int forward(int id, int fd, int type)
 
 int main(int argc, char **argv)
 {
-    const char *dev = argc > 1 ? argv[1] : "/dev/hvc1";
-    chan = open(dev, O_RDWR | O_NOCTTY);
-    if (chan < 0) { perror(dev); return 1; }
-    struct termios t;
-    if (!tcgetattr(chan, &t)) {                     /* byte channel: no translations */
-        cfmakeraw(&t);
-        tcsetattr(chan, TCSANOW, &t);
+    /* The channel: vsock to the host (default), or a byte device given as argument */
+    if (argc > 1) {
+        chan = open(argv[1], O_RDWR | O_NOCTTY);
+        if (chan < 0) { perror(argv[1]); return 1; }
+        struct termios t;
+        if (!tcgetattr(chan, &t)) {                 /* byte channel: no translations */
+            cfmakeraw(&t);
+            tcsetattr(chan, TCSANOW, &t);
+        }
+    } else {
+        struct sockaddr_vm addr = { .svm_family = AF_VSOCK, .svm_cid = VMADDR_CID_HOST, .svm_port = BR_VSOCK_PORT };
+        for (int tries = 0;; tries++) {             /* the driver may still be loading */
+            chan = socket(AF_VSOCK, SOCK_STREAM | SOCK_CLOEXEC, 0);
+            if (chan >= 0 && connect(chan, (struct sockaddr *)&addr, sizeof addr) == 0) break;
+            if (chan >= 0) close(chan);
+            if (tries == 50) { perror("sel4-agent: vsock"); return 1; }
+            usleep(100000);
+        }
     }
     pipe2(sigpipe_fds, O_CLOEXEC | O_NONBLOCK);
     signal(SIGCHLD, on_sigchld);

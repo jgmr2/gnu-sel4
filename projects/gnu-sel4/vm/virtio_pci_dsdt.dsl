@@ -54,7 +54,7 @@ DefinitionBlock ("", "DSDT", 2, "libvmm", "libvmm", 0x1)
                     // Virtio blk:
                     // Device 0x5, function 0, INTA -> GSI 11
                     Package() { 0x00050000, 0, 0, 11 },
-                    // Bridge to GNU/seL4 (second virtio console, /dev/hvc1):
+                    // Bridge to GNU/seL4 (virtio vsock):
                     // Device 0x6, function 0, INTA -> GSI 12
                     Package() { 0x00060000, 0, 0, 12 },
                 })

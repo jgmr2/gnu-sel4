@@ -25,6 +25,7 @@ struct br_frame {
 };
 
 #define BR_MAX_DATA   32768        /* maximum data per frame/record */
+#define BR_VSOCK_PORT 5000         /* the agent connects to the host (CID 2) on this vsock port */
 
 enum br_type {
     /* agent -> server */

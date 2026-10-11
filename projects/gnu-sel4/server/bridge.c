@@ -2,7 +2,8 @@
  * Bridge to the Linux VM (see include/sel4posix/bridge.h).
  *
  * The channel is two byte queues in sDDF serial format, in memory shared with
- * CLIENT_VMM, which presents them to Linux as the virtio console /dev/hvc1:
+ * CLIENT_VMM, which carries them over a vsock connection from the VM's agent
+ * (vm/virtio_vsock.c):
  *   br_rx: posix_server produces, the VM consumes (towards the agent)
  *   br_tx: the VM produces, posix_server consumes (from the agent)
  *

@@ -16,6 +16,7 @@
 #include <sddf/network/config.h>
 #include <sddf/timer/config.h>
 #include "guest_arch_init.h"
+#include "virtio_vsock.h"
 
 /* Device slot of the virtio console device on bus 0.
  * Host bridge = 0, ISA bridge = 1 so we must avoid these.
@@ -31,9 +32,9 @@
 #define VIRTIO_BLK_PCI_DEVICE_SLOT 5
 #define VIRTIO_BLK_PCI_IOAPIC_PIN 11
 
-/* Second console: the bridge to GNU/seL4 (/dev/hvc1) */
-#define BRIDGE_CONSOLE_PCI_DEVICE_SLOT 6
-#define BRIDGE_CONSOLE_PCI_IOAPIC_PIN 12
+/* The bridge to GNU/seL4: a vsock device (vm/virtio_vsock.c) */
+#define BRIDGE_VSOCK_PCI_DEVICE_SLOT 6
+#define BRIDGE_VSOCK_PCI_IOAPIC_PIN 12
 
 /* Data from sdfgen */
 __attribute__((__section__(".timer_client_config"))) timer_client_config_t timer_config;
@@ -60,7 +61,7 @@ extern struct virtio_net_device virtio_net;
 /* sDDF data */
 extern serial_queue_handle_t serial_rx_queue;
 extern serial_queue_handle_t bridge_rx, bridge_tx;
-extern struct virtio_console_device bridge_console;
+extern struct virtio_vsock_device bridge_vsock;
 extern serial_queue_handle_t serial_tx_queue;
 
 extern blk_queue_handle_t blk_queue;
@@ -159,10 +160,10 @@ bool virtio_arch_init(void)
         return false;
     }
 
-    if (!virtio_pci_console_init(&bridge_console, 0, BRIDGE_CONSOLE_PCI_DEVICE_SLOT,
-                                 X86_IOAPIC_IRQ_ROUTE(0, BRIDGE_CONSOLE_PCI_IOAPIC_PIN), &bridge_rx,
-                                 &bridge_tx, BRIDGE_CH, BRIDGE_CH)) {
-        LOG_VMM_ERR("Failed to initialise bridge virtIO PCI Console device\n");
+    if (!virtio_pci_vsock_init(&bridge_vsock, 0, BRIDGE_VSOCK_PCI_DEVICE_SLOT,
+                               X86_IOAPIC_IRQ_ROUTE(0, BRIDGE_VSOCK_PCI_IOAPIC_PIN), &bridge_rx, &bridge_tx,
+                               BRIDGE_CH)) {
+        LOG_VMM_ERR("Failed to initialise the bridge's virtIO PCI vsock device\n");
         return false;
     }
 

@@ -85,7 +85,7 @@ vm_images.o: $(LIBVMM)/tools/package_guest_images.S $(VM_KERNEL) $(VM_INITRD) vm
 	$(CC) -c -g3 -x assembler-with-cpp -DGUEST_KERNEL_IMAGE_PATH=\"$(VM_KERNEL)\" \
 		-DGUEST_DSDT_AML_PATH=\"vm_dsdt.aml\" -DGUEST_INITRD_IMAGE_PATH=\"$(VM_INITRD)\" \
 		-target $(TARGET) $< -o $@
-client_vmm.elf: vm_client_vmm.o vm_guest_arch_init.o vm_images.o libvmm.a
+client_vmm.elf: vm_client_vmm.o vm_guest_arch_init.o vm_virtio_vsock.o vm_images.o libvmm.a
 	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@
 
 # --- sysroot for programs: ported musl + runtime + sel4-cc ---

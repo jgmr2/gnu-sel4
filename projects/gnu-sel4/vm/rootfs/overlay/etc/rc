@@ -19,7 +19,7 @@ done
 # virtio drivers (disk and network) and what Docker needs for its networks
 for m in virtio_blk virtio_net ext4 overlay bridge br_netfilter veth \
          nf_tables nft_compat nf_nat nf_conntrack xt_MASQUERADE xt_conntrack xt_addrtype \
-         9pnet 9pnet_fd 9p; do
+         9pnet 9pnet_fd 9p vmw_vsock_virtio_transport; do
     modprobe -q $m
 done
 hostname -F /etc/hostname

@@ -15,6 +15,7 @@
 #include <sddf/network/config.h>
 #include <sddf/util/printf.h>
 #include "guest_arch_init.h"
+#include "virtio_vsock.h"
 
 /* Data from sdfgen */
 __attribute__((__section__(".serial_client_config"))) serial_client_config_t serial_config;
@@ -39,7 +40,7 @@ struct virtio_console_device virtio_console;
 uintptr_t bridge_rx_queue, bridge_rx_data, bridge_tx_queue, bridge_tx_data;
 #define BRIDGE_DATA_SIZE 0x10000
 serial_queue_handle_t bridge_rx, bridge_tx;
-struct virtio_console_device bridge_console;
+struct virtio_vsock_device bridge_vsock;
 struct virtio_blk_device virtio_blk;
 struct virtio_net_device virtio_net;
 
@@ -97,7 +98,7 @@ void init(void)
 void notified(microkit_channel ch)
 {
     if (ch == BRIDGE_CH) {
-        if (!virtio_console_queue_notify(&bridge_console)) LOG_VMM_ERR("bridge: interrupt injection failed\n");
+        if (!virtio_vsock_notified(&bridge_vsock)) LOG_VMM_ERR("bridge: interrupt injection failed\n");
     } else if (ch == serial_config.rx.id) {
         virtio_console_queue_notify(&virtio_console);
     } else if (ch == serial_config.tx.id || ch == net_config.tx.id) {
