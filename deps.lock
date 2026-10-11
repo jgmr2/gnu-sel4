@@ -4,6 +4,8 @@
 #   tar   <destination>  <url>  <sha256>  [only=a,b]   archive with one top directory
 #   file  <destination>  <url>  <sha256>
 #   git   <destination>  <url>  <commit>  [only=a,b] [submodules] [patches=dir]
+#   image <name>  <reference>  <digest>   a container image, pulled by docker (not by fetch-deps.sh)
+# The option "vm" marks the VM image's pieces (fetch-deps.sh --no-vm leaves them out).
 #
 # SPDX-License-Identifier: BSD-2-Clause
 
@@ -11,7 +13,7 @@
 tar  sdk/microkit-sdk-2.3.1        https://github.com/seL4/microkit/releases/download/2.3.1/microkit-sdk-2.3.1-linux-x86-64.tar.gz  b1b285b8785db7557eba6d0665dd4fbf2f265ea5c0b39d6f91ae3dcc43d2c424
 git  third_party/microkit          https://github.com/seL4/microkit             ec86afdcd662b5976d11d4994acf1b11a2979882  patches=projects/gnu-sel4/microkit
 git  libvmm                        https://github.com/au-ts/libvmm              d2e37165285a28c7eae95501594d0807ea482c9c  submodules patches=projects/gnu-sel4/libvmm
-git  third_party/qrcodegen         https://github.com/nayuki/QR-Code-generator 7ad95cedd8464a87f82221283612732ae4f3f305  only=c,Readme.markdown
+git  third_party/qrcodegen         https://github.com/nayuki/QR-Code-generator 720f62bddb7226106071d4728c292cb1df519ceb  only=c,Readme.markdown
 git  third_party/f-stack           https://github.com/F-Stack/f-stack           761639943bdda33103aa98241ca6a3079f1c1b7e  only=lib,freebsd,mk,LICENSE
 
 # Native userland
@@ -40,3 +42,89 @@ tar  third_party/s6-2.15.1.0       https://skarnet.org/software/s6/s6-2.15.1.0.t
 tar  third_party/s6-rc-0.7.0.0     https://skarnet.org/software/s6-rc/s6-rc-0.7.0.0.tar.gz             bf5b8ce0da5a4ee70d642b818b61d9916a7a9b64a457595f388113e54a188688
 tar  third_party/sudo-1.9.17p2      https://www.sudo.ws/dist/sudo-1.9.17p2.tar.gz                      4a38a1ab3adb1199257edc2a7c4a2bd714665eb605b04368843b06dada2cfcfb
 tar  third_party/spleen            https://github.com/fcambus/spleen/releases/download/2.2.0/spleen-2.2.0.tar.gz  ec42925c6b56d2138c862b2f97147c872e472f674bf03423417d827a08d69a89  only=spleen-8x16.bdf,LICENSE
+
+# The VM image: the base image that builds it, the Alpine packages (tools: what builds the
+# image; vm: what goes into it) and Docker's static binaries. Between the two marks, written by
+# make vm-lock (projects/gnu-sel4/vm/rootfs/lock.sh): do not edit by hand
+# >>> VM image
+image alpine alpine:3.24 sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 vm
+file third_party/alpine-3.24/tools/cpio-2.15-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/community/x86_64/cpio-2.15-r0.apk 7e48a4cfd91a4c4011ccf942fd9d3270841e384bd07b39321b232d02df83e114 vm
+file third_party/alpine-3.24/tools/alpine-baselayout-3.7.2-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/alpine-baselayout-3.7.2-r1.apk b41ddec2088fd7c794ab4fcd79945016d61eadcab56d2414c51463c8c13e7c65 vm
+file third_party/alpine-3.24/tools/alpine-baselayout-data-3.7.2-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/alpine-baselayout-data-3.7.2-r1.apk 2eaa18c8535f6c50bd5846b1a3c27edd9b45a2672d81f13e1f8bf79bd18c41e3 vm
+file third_party/alpine-3.24/tools/alpine-keys-2.6-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/alpine-keys-2.6-r0.apk dd211936d544f4050924ce8aec078d24e7b1b036ae70b30bd07867349587c708 vm
+file third_party/alpine-3.24/tools/alpine-release-3.24.2-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/alpine-release-3.24.2-r0.apk cdeb2b79bc63abe70a90007db9cfad8630f1c24db354c8de7a574953f784feab vm
+file third_party/alpine-3.24/tools/apk-tools-3.0.8-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/apk-tools-3.0.8-r0.apk 91cb7303b27da01364550daa767b85cbe88fc5f7e37b9adae0f847ec7e0890d9 vm
+file third_party/alpine-3.24/tools/binutils-2.45.1-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/binutils-2.45.1-r1.apk 15682887459d216585feb438bbfb7ec63e1f33e77c453f44637d2d9d8c35977d vm
+file third_party/alpine-3.24/tools/build-base-0.5-r4.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/build-base-0.5-r4.apk 3ac72e74e96150995e8d797b6c33fc3b46d69e3667c47bd0ff25ce89f9fc4eaf vm
+file third_party/alpine-3.24/tools/busybox-1.37.0-r31.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/busybox-1.37.0-r31.apk 0e626fa97cf937fda7bba4ed4dde8e2f2dbb5083ac34e02180cec0c4eba9351b vm
+file third_party/alpine-3.24/tools/busybox-binsh-1.37.0-r31.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/busybox-binsh-1.37.0-r31.apk 93f803ae5db6b729c0f66f4afba6e907ccc17d7d5f8b8c3d25bdb4636de2c48a vm
+file third_party/alpine-3.24/tools/ca-certificates-bundle-20260909-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/ca-certificates-bundle-20260909-r0.apk a35f8cf2366d90294d0bb089af565fd17f3fa03721e61bcc7f02ed3d8334e7ea vm
+file third_party/alpine-3.24/tools/e2fsprogs-1.47.4-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/e2fsprogs-1.47.4-r0.apk c7a99a18206827b09f0cfa2373e6f1db0963845ad8468a378a3b99a7e716a0e8 vm
+file third_party/alpine-3.24/tools/e2fsprogs-libs-1.47.4-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/e2fsprogs-libs-1.47.4-r0.apk 2e067395a6981b06cfd2cd3abf0e6c6574f7ef64d02e01f75fc5323d4a337fb9 vm
+file third_party/alpine-3.24/tools/file-5.47-r2.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/file-5.47-r2.apk 4681c153c509aec126e2b9ea2c959730309b24a792d49fc8cc26fa5fa87e8fdd vm
+file third_party/alpine-3.24/tools/fortify-headers-3.0.1-r2.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/fortify-headers-3.0.1-r2.apk 5ffaebd9f141ac3e3fa0cc99f798f64b4c0aa16fb06a7a77e68f63f350fe23aa vm
+file third_party/alpine-3.24/tools/g++-15.2.0-r5.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/g++-15.2.0-r5.apk 35c39e8d3667d8603fe209dbafe67681c64b1cda66bf9c836bfb4d05b19a71fd vm
+file third_party/alpine-3.24/tools/gcc-15.2.0-r5.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/gcc-15.2.0-r5.apk d1d482472ed91240731c60dbae8176bc1e32e1dfb694856da6759f6d32716325 vm
+file third_party/alpine-3.24/tools/gmp-6.3.0-r4.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/gmp-6.3.0-r4.apk 85323ef5bce8ff234736dc2d6592ea37aebdc6348a531e27430bdfe38364d256 vm
+file third_party/alpine-3.24/tools/iptables-1.8.13-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/iptables-1.8.13-r0.apk af3aaf9303c829ccee795725965ee6894816a98f9afa62b5dd52b25e6e62e8f0 vm
+file third_party/alpine-3.24/tools/isl26-0.26-r2.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/isl26-0.26-r2.apk 30999fb66e296c8ea7aa102cad0d3095519b3022abb622d2951dd29367310ea9 vm
+file third_party/alpine-3.24/tools/jansson-2.15.0-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/jansson-2.15.0-r0.apk 7681b41486e1f2b2efce11875c839533464ae8857d30fc49130f0039c6585fdb vm
+file third_party/alpine-3.24/tools/kmod-34.2-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/kmod-34.2-r1.apk 8ea87ae02fa3b72acc841959d8e1d4b6f376f593da68b8fd877d07d87bd2cc67 vm
+file third_party/alpine-3.24/tools/libapk-3.0.8-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libapk-3.0.8-r0.apk e7f59edfee903d17291eb67b8ce86eae87370b0ffb6902384d2e096c64962cc7 vm
+file third_party/alpine-3.24/tools/libatomic-15.2.0-r5.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libatomic-15.2.0-r5.apk c5ec550c73dd7b4e81e206fdff3cf4c46b0ae1b29fec1db5cd4e12d88416abbf vm
+file third_party/alpine-3.24/tools/libblkid-2.42.3-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libblkid-2.42.3-r1.apk 2512c2bff496ac2b8561a3c814d21d35ce10cda579b3d410f9f96da93a5aaac1 vm
+file third_party/alpine-3.24/tools/libcom_err-1.47.4-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcom_err-1.47.4-r0.apk 4723d0fb8e286dc6adb54dd3cdaedcd8db54260f75ee778a5acb4c16922c0f52 vm
+file third_party/alpine-3.24/tools/libcrypto3-3.5.9-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcrypto3-3.5.9-r0.apk 6632d758d8f5e9ea3b650fe966f23bbf9a202f8b8dceecac93da135dec5e3689 vm
+file third_party/alpine-3.24/tools/libeconf-0.8.3-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libeconf-0.8.3-r0.apk 2a791c7957961f830cf31b04f35f814a63afcf633badc9052425ff1cf2f64380 vm
+file third_party/alpine-3.24/tools/libgcc-15.2.0-r5.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libgcc-15.2.0-r5.apk 393dcd32629f06d7d85409c272d142d0c082772d10b87ef55ee82f47de3be637 vm
+file third_party/alpine-3.24/tools/libgcc-static-15.2.0-r5.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libgcc-static-15.2.0-r5.apk 563244a562f5c48b921f7f0b4a571e373cfcba65175fe2d4f752c5f975738bcd vm
+file third_party/alpine-3.24/tools/libgomp-15.2.0-r5.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libgomp-15.2.0-r5.apk e7204aad00e31d544e0a34eac5a7eb7d3586d2b7b22afd6e5907189c4e0337cc vm
+file third_party/alpine-3.24/tools/libmagic-5.47-r2.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libmagic-5.47-r2.apk 1820acd299025619a848b19ac98c7996fd92c06965255898800b6a790a8b03a2 vm
+file third_party/alpine-3.24/tools/libmnl-1.0.5-r2.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libmnl-1.0.5-r2.apk 3693162ff7c27998dbbb2da1c4bd9072079cd55af1fa3d6d2ade51d276e20157 vm
+file third_party/alpine-3.24/tools/libnftnl-1.3.1-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libnftnl-1.3.1-r0.apk 2f4cf35959fde00fdba0dd35ef12a6739739b504e8319c97e30bd4834f98d924 vm
+file third_party/alpine-3.24/tools/libssl3-3.5.9-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libssl3-3.5.9-r0.apk 05e3393fb95aa5751ca2f9d242f659f6cff82c1cc7767cc2df4a086f7ad01877 vm
+file third_party/alpine-3.24/tools/libstdc++-15.2.0-r5.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libstdc++-15.2.0-r5.apk 14c987b556f5385a5db18376e788c75f37d85321b8dc1920d926ea7daac1d6f6 vm
+file third_party/alpine-3.24/tools/libstdc++-dev-15.2.0-r5.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libstdc++-dev-15.2.0-r5.apk 62ce308cdbf127dcac6eee1520a4ffec8dc98b30974653908842fe4cc7d90b43 vm
+file third_party/alpine-3.24/tools/libuuid-2.42.3-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libuuid-2.42.3-r1.apk 8306e5bb577696c9069fe1dfd9e1dcc39d2d481c6a1b0e707fd03c3e21aa6aa2 vm
+file third_party/alpine-3.24/tools/libxtables-1.8.13-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libxtables-1.8.13-r0.apk 4b5c981a77af40f965debe18f06c0c20268956f141a1bfc1c8ff6a406d914465 vm
+file third_party/alpine-3.24/tools/linux-headers-7.0.0-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/linux-headers-7.0.0-r1.apk c4535f3f0dc6fd4d80efa7ff2a7a72a2d3f8dae31e2587c0785cc3243889cdf2 vm
+file third_party/alpine-3.24/tools/make-4.4.1-r4.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/make-4.4.1-r4.apk a916626a876f64c6b6fb32a6bf0fa93351d09fae0aa7684135642390da647e60 vm
+file third_party/alpine-3.24/tools/mpc1-1.3.1-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/mpc1-1.3.1-r1.apk c2247438e163f1c11646428f07576ceb3cf3167f9a9a5c6526021f778d77adb6 vm
+file third_party/alpine-3.24/tools/mpfr4-4.2.2-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/mpfr4-4.2.2-r0.apk 93620a803d416e8c05150fb14413796df14ea370322dff6bd106455deab15646 vm
+file third_party/alpine-3.24/tools/musl-1.2.6-r2.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/musl-1.2.6-r2.apk 573712e2f49c15bfc20a2699f204acdfc74c772722b15e7353d768057fae0e71 vm
+file third_party/alpine-3.24/tools/musl-dev-1.2.6-r2.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/musl-dev-1.2.6-r2.apk 6831e8b9e4821dae2c9121f0641f81e543f4ac27c03144c4876980ee84e6988f vm
+file third_party/alpine-3.24/tools/musl-utils-1.2.6-r2.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/musl-utils-1.2.6-r2.apk 7e403180261cc3373431efcfb7b8a40b0416c4c5c0f3934a0ad2c3215232d7a3 vm
+file third_party/alpine-3.24/tools/patch-2.8-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/patch-2.8-r0.apk 723c061ea3e2c3e61b457f8f614f0b87724aeae37564ba4c1bdd41c722118187 vm
+file third_party/alpine-3.24/tools/scanelf-1.3.9-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/scanelf-1.3.9-r1.apk 524e1c0b09bbf85a3474f98904dc30628472fcb0d37aa8f7201407f5c5e72c31 vm
+file third_party/alpine-3.24/tools/ssl_client-1.37.0-r31.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/ssl_client-1.37.0-r31.apk e578a140670e4cf9816117b0c2063632bf3754ecbe8fa593a7fd2b4039372bf0 vm
+file third_party/alpine-3.24/tools/xz-libs-5.8.4-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/xz-libs-5.8.4-r0.apk ab362dd515ead04c31a6c302163248da7aa4813e283c971e6dd3f789b453a1d9 vm
+file third_party/alpine-3.24/tools/zlib-1.3.2-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/zlib-1.3.2-r1.apk 63aeea03c15a2f9018f81805cfc8aa926bdf5cd68921f22149c2fbb5d0ee9f47 vm
+file third_party/alpine-3.24/tools/zstd-libs-1.5.7-r2.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/zstd-libs-1.5.7-r2.apk 23c6065b0049b2406441564bcf0032515a43f78e80d76fcb85535a3803ef5d4e vm
+file third_party/alpine-3.24/vm/apk-tools-3.0.8-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/apk-tools-3.0.8-r0.apk 91cb7303b27da01364550daa767b85cbe88fc5f7e37b9adae0f847ec7e0890d9 vm
+file third_party/alpine-3.24/vm/busybox-1.37.0-r31.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/busybox-1.37.0-r31.apk 0e626fa97cf937fda7bba4ed4dde8e2f2dbb5083ac34e02180cec0c4eba9351b vm
+file third_party/alpine-3.24/vm/busybox-binsh-1.37.0-r31.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/busybox-binsh-1.37.0-r31.apk 93f803ae5db6b729c0f66f4afba6e907ccc17d7d5f8b8c3d25bdb4636de2c48a vm
+file third_party/alpine-3.24/vm/busybox-static-1.37.0-r31.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/busybox-static-1.37.0-r31.apk b0d6cfc585d7fdd12df359cc5d38d5e45894e9e9e78c4059eb41577d022ec734 vm
+file third_party/alpine-3.24/vm/ca-certificates-bundle-20260909-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/ca-certificates-bundle-20260909-r0.apk a35f8cf2366d90294d0bb089af565fd17f3fa03721e61bcc7f02ed3d8334e7ea vm
+file third_party/alpine-3.24/vm/cryptsetup-libs-2.8.6-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/cryptsetup-libs-2.8.6-r0.apk 4e2803c61f4459800ff9b9b335138a9dfca6aeae2d2ea09d2fe97f8b06c30780 vm
+file third_party/alpine-3.24/vm/device-mapper-libs-2.03.35-r3.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/device-mapper-libs-2.03.35-r3.apk ba6522d2e88296a44b71a7038043552256feb14564a1886030102a262843abac vm
+file third_party/alpine-3.24/vm/json-c-0.18-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/json-c-0.18-r1.apk 22dc7a8fe3eda0d22635615cca682b2a575ef25e8c2f401445e12be4cbf77302 vm
+file third_party/alpine-3.24/vm/kmod-34.2-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/kmod-34.2-r1.apk 8ea87ae02fa3b72acc841959d8e1d4b6f376f593da68b8fd877d07d87bd2cc67 vm
+file third_party/alpine-3.24/vm/kmod-libs-34.2-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/kmod-libs-34.2-r1.apk d6504eb204a47a35e1dd5eaa1018301b2dc0b1809f84d88fab2fdbadfc9c3c73 vm
+file third_party/alpine-3.24/vm/lddtree-1.27-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/lddtree-1.27-r0.apk f7ae234208dc65f1d27e5a2976909fe4039096adfbd7d725b4e0daba7ef31d2d vm
+file third_party/alpine-3.24/vm/libapk-3.0.8-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libapk-3.0.8-r0.apk e7f59edfee903d17291eb67b8ce86eae87370b0ffb6902384d2e096c64962cc7 vm
+file third_party/alpine-3.24/vm/libblkid-2.42.3-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libblkid-2.42.3-r1.apk 2512c2bff496ac2b8561a3c814d21d35ce10cda579b3d410f9f96da93a5aaac1 vm
+file third_party/alpine-3.24/vm/libcrypto3-3.5.9-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libcrypto3-3.5.9-r0.apk 6632d758d8f5e9ea3b650fe966f23bbf9a202f8b8dceecac93da135dec5e3689 vm
+file third_party/alpine-3.24/vm/libeconf-0.8.3-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libeconf-0.8.3-r0.apk 2a791c7957961f830cf31b04f35f814a63afcf633badc9052425ff1cf2f64380 vm
+file third_party/alpine-3.24/vm/libssl3-3.5.9-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libssl3-3.5.9-r0.apk 05e3393fb95aa5751ca2f9d242f659f6cff82c1cc7767cc2df4a086f7ad01877 vm
+file third_party/alpine-3.24/vm/libuuid-2.42.3-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/libuuid-2.42.3-r1.apk 8306e5bb577696c9069fe1dfd9e1dcc39d2d481c6a1b0e707fd03c3e21aa6aa2 vm
+file third_party/alpine-3.24/vm/linux-virt-6.18.55-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/linux-virt-6.18.55-r0.apk a941c15fc5db26b6692fd0140fa0970da76cb12aadf3dc8306c419f21bd39c93 vm
+file third_party/alpine-3.24/vm/mdev-conf-4.10-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/mdev-conf-4.10-r0.apk 093c7e5e4cbc935f286d0cb2f2e4accfa94798d8bea922fb0a91b5d1eb188304 vm
+file third_party/alpine-3.24/vm/mkinitfs-3.14.1-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/mkinitfs-3.14.1-r0.apk b58dd6e2cb21865cc6e581658695652b9f93ae599e4ef872089fad3296d0a55e vm
+file third_party/alpine-3.24/vm/musl-1.2.6-r2.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/musl-1.2.6-r2.apk 573712e2f49c15bfc20a2699f204acdfc74c772722b15e7353d768057fae0e71 vm
+file third_party/alpine-3.24/vm/scanelf-1.3.9-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/scanelf-1.3.9-r1.apk 524e1c0b09bbf85a3474f98904dc30628472fcb0d37aa8f7201407f5c5e72c31 vm
+file third_party/alpine-3.24/vm/ssl_client-1.37.0-r31.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/ssl_client-1.37.0-r31.apk e578a140670e4cf9816117b0c2063632bf3754ecbe8fa593a7fd2b4039372bf0 vm
+file third_party/alpine-3.24/vm/xz-libs-5.8.4-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/xz-libs-5.8.4-r0.apk ab362dd515ead04c31a6c302163248da7aa4813e283c971e6dd3f789b453a1d9 vm
+file third_party/alpine-3.24/vm/zlib-1.3.2-r1.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/zlib-1.3.2-r1.apk 63aeea03c15a2f9018f81805cfc8aa926bdf5cd68921f22149c2fbb5d0ee9f47 vm
+file third_party/alpine-3.24/vm/zstd-libs-1.5.7-r2.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/main/x86_64/zstd-libs-1.5.7-r2.apk 23c6065b0049b2406441564bcf0032515a43f78e80d76fcb85535a3803ef5d4e vm
+file third_party/alpine-3.24/docker-29.9.0.tgz https://download.docker.com/linux/static/stable/x86_64/docker-29.9.0.tgz 33e1ab8b63d14bca449f7a3d30d7f6aa669daa544e60a86b17fec87f61afe2b4 vm
+# <<< VM image

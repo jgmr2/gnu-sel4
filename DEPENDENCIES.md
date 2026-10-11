@@ -35,5 +35,23 @@ image (`docker compose`, see README.md) carries them already fetched.
 | `third_party/s6-rc-0.7.0.0` | https://skarnet.org/software/s6-rc/ | 0.7.0.0 |
 | `third_party/sudo-1.9.17p2` | https://www.sudo.ws/dist/ | 1.9.17p2 |
 | `third_party/spleen` | https://github.com/fcambus/spleen | 2.2.0 (`spleen-8x16.bdf`, LICENSE) |
-| `third_party/qrcodegen` | https://github.com/nayuki/QR-Code-generator | v1.8.0, 7ad95cedd8464a87f82221283612732ae4f3f305 (`c/`, Readme with the MIT license) |
+| `third_party/qrcodegen` | https://github.com/nayuki/QR-Code-generator | v1.8.0, 720f62bddb7226106071d4728c292cb1df519ceb (`c/`, Readme with the MIT license) |
 
+
+## The Linux VM's image
+
+`make vm-rootfs` (in `projects/gnu-sel4`, on the host) builds the VM's kernel and initramfs from
+the "VM image" section of `deps.lock` only: no network inside the build, and the same bytes on
+every build (checked: two builds, one SHA-256). `fetch-deps.sh --no-vm` leaves these out (the
+Docker image does).
+
+| Directory | Source | Version |
+|---|---|---|
+| (container image) | `alpine:3.24` | by digest, the tool that builds the image |
+| `third_party/alpine-3.24/vm/` | https://dl-cdn.alpinelinux.org/alpine/v3.24/main | `linux-virt`, `busybox-static`, `ca-certificates-bundle` and their dependencies, each by exact version and SHA-256: what goes into the VM |
+| `third_party/alpine-3.24/tools/` | same | `build-base`, `linux-headers`, `kmod`, `iptables`, `e2fsprogs`, `cpio` and the base image's packages: what builds it (and the iptables/e2fsprogs files copied in) |
+| `third_party/alpine-3.24/docker-29.9.0.tgz` | https://download.docker.com/linux/static/stable/ | 29.9.0 (static binaries) |
+
+Alpine keeps only the latest build of each package on its mirrors: when a pinned one is
+replaced, `fetch-deps.sh` fails on a fresh clone (copies already downloaded keep working).
+`make vm-lock` then pins the current ones; the versions it picked are in `deps.lock`.

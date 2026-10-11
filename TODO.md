@@ -134,8 +134,9 @@ Principles the plan follows:
 2. [ ] **Reliability, reproducibility and CI** (S–M). Needs: 1 (tests for it)
    - [ ] The rare (about 1 boot in 12) SIGABRT of s6rc-oneshot-runner while s6-rc starts it
          (the `net` oneshot does not run; the `s6-rc` test prints /tmp/s6-svscan.log)
-   - [ ] The VM image pinned: Alpine packages with exact versions and the base image by digest,
-         in deps.lock (today the VM kernel depends on the day it is built)
+   - [x] The VM image pinned: the base image by digest, every Alpine package (what goes in and
+         what builds it) and Docker by SHA-256, in deps.lock (`make vm-lock` moves them on);
+         built with no network, the same bytes every time (sorted cpio, fixed dates, gzip -n)
    - [ ] CI that works: GitHub's runners are VMs themselves, and the full test needs QEMU with
          KVM plus VT-x for the Linux VM inside seL4 (nested twice). A test mode without the Linux
          VM for GitHub Actions on every push, and the full `make test` on a self-hosted runner

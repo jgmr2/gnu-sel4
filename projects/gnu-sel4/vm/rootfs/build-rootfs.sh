@@ -1,25 +1,43 @@
 #!/bin/sh
 # Builds a minimal "distro": Linux kernel + busybox + Docker. Nothing else.
-# It runs INSIDE an alpine container that is only used as a tool
-# (see ../../Makefile, target "vm-rootfs").
-#   Salida: out/vmlinuz  out/initramfs.cpio.gz
+# It runs INSIDE an alpine container that is only used as a tool, with no network
+# (see ../../Makefile, target "vm-rootfs"): everything it installs comes from $PKGS, the files
+# pinned in deps.lock (lock.sh) and fetched by fetch-deps.sh, so the image is the same whatever
+# day it is built.
+#   Output: out/vmlinuz  out/initramfs.cpio.gz
 #
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
 cd "$(dirname "$0")"
-DOCKER_VERSION=29.9.0
+PKGS=${PKGS:-/pkgs}
+LOCK=${LOCK:-/deps.lock}
+# The files deps.lock lists for one set (tools, vm, docker): exactly those, whatever else an
+# older lock left in $PKGS
+pinned() { awk -v s="/$1" '$1 == "file" && $NF == "vm" && index($2, s) { n = split($2, p, "/"); print p[n-1] "/" p[n] }' "$LOCK" |
+           sed "s|^alpine-[^/]*/||; s|^|$PKGS/|"; }
 ROOT=/tmp/rootfs
 TMP=/tmp/pkgs
 OUT=out
 
 rm -rf "$ROOT" "$TMP" && mkdir -p "$ROOT" "$TMP/etc/apk" "$OUT"
-cp -r /etc/apk/keys /etc/apk/repositories "$TMP/etc/apk/"
+cp -r /etc/apk/keys "$TMP/etc/apk/"
+for f in $(pinned tools/) $(pinned vm/) $(pinned docker-); do
+    [ -f "$f" ] || { echo "missing $f: run ../../fetch-deps.sh" >&2; exit 1; }
+done
+OFFLINE="--no-network --no-cache --repositories-file /dev/null"
 
-# 1. Fetch the pieces: linux-virt kernel (binary + modules only), static busybox,
-#    CA certificates and Docker's official static binaries.
-apk add --no-cache curl kmod >/dev/null
-apk add --root "$TMP" --initdb --no-cache --no-scripts linux-virt busybox-static ca-certificates-bundle >/dev/null
-curl -fsSL "https://download.docker.com/linux/static/stable/x86_64/docker-$DOCKER_VERSION.tgz" | tar -xz -C "$TMP"
+# 1. The pieces: the tools that build the image (compiler, kmod, iptables, e2fsprogs) into this
+#    container; the linux-virt kernel (binary + modules only), static busybox and the CA
+#    certificates into $TMP; Docker's official static binaries.
+# shellcheck disable=SC2086
+apk add $OFFLINE $(pinned tools/) >/dev/null
+# shellcheck disable=SC2086
+apk add $OFFLINE --root "$TMP" --initdb --no-scripts $(pinned vm/) >/dev/null
+# shellcheck disable=SC2046
+set -- $(pinned docker-)
+[ $# -eq 1 ] || { echo "deps.lock: expected one docker-*.tgz" >&2; exit 1; }
+DOCKER_VERSION=$(basename "$1" .tgz); DOCKER_VERSION=${DOCKER_VERSION#docker-}
+tar -xzf "$1" -C "$TMP"
 
 # 2. System skeleton
 cd "$ROOT"
@@ -38,13 +56,11 @@ cp "$TMP"/docker/* "$ROOT/usr/bin/"
 cp "$TMP/etc/ssl/certs/ca-certificates.crt" "$ROOT/etc/ssl/certs/"
 
 # Agent for the bridge to GNU/seL4 (vm/agent): static binary
-apk add --no-cache build-base linux-headers >/dev/null
 mkdir -p "$ROOT/sbin"
 gcc -O2 -static -Wall -I../../include -o "$ROOT/sbin/sel4-agent" ../agent/sel4-agent.c
 
 # Tools Docker and the boot need, with their dynamic libraries (musl):
 #   iptables (NAT rules for Docker's networks) and mkfs.ext4/e2fsck (persistent disk)
-apk add --no-cache iptables e2fsprogs >/dev/null
 copy_with_libs() {
     for f in "$@"; do
         mkdir -p "$ROOT$(dirname "$f")"
@@ -86,7 +102,9 @@ depmod -b "$ROOT" "$KVER" 2>/dev/null
 # 3. Our own configuration (init, inittab, rc, daemon.json...)
 cp -a overlay/. "$ROOT/"
 
-# 4. Pack it as an initramfs
-(cd "$ROOT" && find . | cpio -o -H newc --quiet) | gzip -6 > "$OUT/initramfs.cpio.gz"
+# 4. Pack it as an initramfs, the same bytes on every build: files in a fixed order, one fixed
+#    date, GNU cpio's --reproducible (no inode numbers), gzip without a name or a date
+find "$ROOT" -exec touch -h -d "@${SOURCE_DATE_EPOCH:-0}" {} +
+(cd "$ROOT" && find . | LC_ALL=C sort | cpio -o -H newc --quiet --reproducible) | gzip -n -6 > "$OUT/initramfs.cpio.gz"
 echo "kernel $KVER, docker $DOCKER_VERSION"
 du -sh "$ROOT" "$OUT"/*

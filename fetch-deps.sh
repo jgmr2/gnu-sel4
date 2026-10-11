@@ -3,6 +3,8 @@
 # (SHA-256 for archives, exact commits for git), so a fresh clone can be built.
 #   ./fetch-deps.sh              fetch whatever is missing (what is already there is kept)
 #   ./fetch-deps.sh --check      only report what is missing or does not match
+#   ./fetch-deps.sh --no-vm      leave out the VM image's pieces (entries marked "vm"; the Docker
+#                                image does: make vm-rootfs runs on the host)
 # Needs: sh, curl, tar (xz, bzip2, gzip), git, sha256sum. Downloads are cached in .cache/.
 #
 # SPDX-License-Identifier: BSD-2-Clause
@@ -10,8 +12,10 @@ set -eu
 cd "$(dirname "$0")"
 ROOT=$(pwd)
 CACHE=${CACHE:-$ROOT/.cache/downloads}
-CHECK=0
-[ "${1:-}" = --check ] && CHECK=1
+CHECK=0 NOVM=0
+for a in "$@"; do
+    case "$a" in --check) CHECK=1 ;; --no-vm) NOVM=1 ;; *) echo "usage: $0 [--check] [--no-vm]" >&2; exit 2 ;; esac
+done
 missing=0
 
 say() { printf '%-32s %s\n' "$1" "$2"; }
@@ -27,7 +31,10 @@ download() {    # download <url> <sha256> -> path of the verified file in the ca
     f="$CACHE/$2-$(basename "$1")"
     if [ ! -s "$f" ]; then
         mkdir -p "$CACHE"
-        curl -fsSL --retry 3 -o "$f.part" "$1" || { echo "download failed: $1" >&2; exit 1; }
+        curl -fsSL --retry 3 -o "$f.part" "$1" || {
+            echo "download failed: $1" >&2
+            case "$1" in */alpine/*) echo "(Alpine keeps only the latest build of each package: 'make vm-lock' in projects/gnu-sel4 pins the current ones)" >&2 ;; esac
+            exit 1; }
         mv "$f.part" "$f"
     fi
     if [ "$(sha256sum "$f" | cut -d' ' -f1)" != "$2" ]; then
@@ -94,6 +101,8 @@ mkdir -p "$ROOT/.cache"
 grep -v '^\s*#' deps.lock | grep -v '^\s*$' | while read -r kind dest src ref rest; do
     # shellcheck disable=SC2086
     set -- $rest
+    [ $NOVM = 1 ] && [ "$(opt vm "$@")" = yes ] && continue
+    if [ "$kind" = image ]; then say "$dest" "image $src@$ref (docker pulls it)"; continue; fi
     if [ -e "$dest" ]; then
         if present_ok "$kind" "$dest" "$ref" "$@"; then say "$dest" ok; else say "$dest" "DIFFERS from deps.lock"; fi
         continue

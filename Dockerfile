@@ -40,7 +40,7 @@ USER root
 COPY deps.lock fetch-deps.sh /deps/
 COPY projects/gnu-sel4/microkit/*.patch /deps/projects/gnu-sel4/microkit/
 COPY projects/gnu-sel4/libvmm/*.patch /deps/projects/gnu-sel4/libvmm/
-RUN /deps/fetch-deps.sh && rm -rf /deps/.cache /deps/projects
+RUN /deps/fetch-deps.sh --no-vm && rm -rf /deps/.cache /deps/projects
 
 # ---------------------------------------------------------------- the patched Microkit tool
 FROM rust:1.94 AS tool

@@ -2,6 +2,7 @@
 #
 #   make microkit-tool            (host)   Microkit tool with our patch (Rust in Docker)
 #   make vm-rootfs                (host)   kernel + initramfs for the VM (busybox + Docker), with Docker
+#   make vm-lock                  (host)   pins the VM image to today's Alpine packages (deps.lock)
 #   ../../dev.sh make             (Docker) everything: servers, drivers, VMM, sysroot, programs, ports
 #                                          -> build/; installs /bin into the ext2 partition of disk.img
 #   make test                     (host)   automated tests in QEMU (headless, on a copy of the disk)
@@ -55,9 +56,19 @@ $(BUILD_DIR)/Makefile: system.mk
 microkit-tool:
 	microkit/build-tool.sh
 
+# The VM image is pinned in deps.lock ("VM image" section): the base image by digest, every
+# Alpine package and Docker by SHA-256 (fetch-deps.sh puts them in third_party/alpine-*);
+# it is built with no network. make vm-lock moves the pins to today's packages.
+VM_BASE = $(shell awk '$$1 == "image" && $$2 == "alpine" { print $$3 "@" $$4 }' $(DEPS)/deps.lock)
+VM_PKGS = $(firstword $(wildcard $(DEPS)/third_party/alpine-*))
 vm-rootfs:
-	docker run --rm -v "$(CURDIR)":/w -w /w/vm/rootfs alpine:3.24 \
-		sh -c './build-rootfs.sh && chown -R $$(stat -c %u:%g .) out'
+	@test -n "$(VM_BASE)" -a -n "$(VM_PKGS)" || { echo "VM image not fetched: run ../../fetch-deps.sh"; exit 1; }
+	docker run --rm --network none -v "$(CURDIR)":/w -v "$(VM_PKGS)":/pkgs:ro \
+		-v "$(DEPS)/deps.lock":/deps.lock:ro -w /w/vm/rootfs \
+		$(VM_BASE) sh -c './build-rootfs.sh && chown -R $$(stat -c %u:%g .) out'
+
+vm-lock:
+	vm/rootfs/lock.sh
 
 # q35 with the disk in slot 3 and the network in slot 4, and more than 4 GiB of RAM: the sDDF
 # drivers expect the BARs and IRQs that the firmware assigns this way (see meta.py).
@@ -124,4 +135,4 @@ disk-reset:
 clean:
 	rm -rf $(BUILD_DIR)
 
-.PHONY: all run test clean disk-grow disk-reset iso ventoy vm-rootfs microkit-tool
+.PHONY: all run test clean disk-grow disk-reset iso ventoy vm-rootfs vm-lock microkit-tool
