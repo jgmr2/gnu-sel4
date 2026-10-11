@@ -1,6 +1,7 @@
-From 97571b8af68ed3da21da537fe35476bd43fab369 Mon Sep 17 00:00:00 2001
-From: jgmr2 <joseguadalupemr@protonmail.com>
-Date: Sat, 10 Oct 2026 14:39:32 -0600
+From b23c7cbb0cfac53d45fcb6727cd51d9ea15713cb Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jos=C3=A9=20Guadalupe=20Mu=C3=B1oz=20Ram=C3=ADrez?=
+ <joseguadalupemr@protonmail.com>
+Date: Sat, 10 Oct 2026 18:22:39 -0600
 Subject: [PATCH 2/2] tool: <cap_asid_pool>, <cap_sched_pool> and
  <cap_endpoint> (GNU/seL4 dynamic processes)
 

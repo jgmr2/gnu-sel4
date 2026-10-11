@@ -1,6 +1,7 @@
-From be17058fbf328bcdec2fe3b671cf799ee42d6b0d Mon Sep 17 00:00:00 2001
-From: jgmr2 <joseguadalupemr@protonmail.com>
-Date: Sat, 10 Oct 2026 14:39:32 -0600
+From af7512c1a91eab0e09ad032aa38c3c2a1eb43c91 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jos=C3=A9=20Guadalupe=20Mu=C3=B1oz=20Ram=C3=ADrez?=
+ <joseguadalupemr@protonmail.com>
+Date: Sat, 10 Oct 2026 18:22:39 -0600
 Subject: [PATCH 1/2] tool: <cap_untyped> and <cap_cnode> in <cspace> (GNU/seL4
  memory manager)
 
