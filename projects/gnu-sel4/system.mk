@@ -136,7 +136,8 @@ netstack_copy.elf: network_copy.elf
 	cp $< $@
 
 # --- programs from apps/<name>/*.c -> bin/<name> (in /bin, or in /sbin for SBIN_APPS) ---
-SBIN_APPS := init 9pd
+SBIN_APPS := init 9pd poweroff
+SBIN_LINKS := reboot:poweroff halt:poweroff
 APPS := $(notdir $(wildcard $(POSIX)/apps/*))
 BINS := $(addprefix bin/,$(APPS))
 .SECONDEXPANSION:
@@ -360,6 +361,7 @@ install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EX
 	    echo "sif $$dir/$$name uid 0"; echo "sif $$dir/$$name gid 0"; \
 	  done; \
 	  for l in $(LINKS); do echo "rm /bin/$${l%%:*}"; echo "symlink /bin/$${l%%:*} $${l##*:}"; done; \
+	  for l in $(SBIN_LINKS); do echo "rm /sbin/$${l%%:*}"; echo "symlink /sbin/$${l%%:*} $${l##*:}"; done; \
 	  for p in $$(cat coreutils/programs.txt); do echo "rm /bin/$$p"; echo "symlink /bin/$$p coreutils"; done; \
 	  for f in $(patsubst %/.built,%/bin/*,$(SKARNET_BUILT)); do name=$$(basename $$f); \
 	    echo "rm /bin/$$name"; echo "write $$f /bin/$$name"; echo "sif /bin/$$name mode 0100755"; \

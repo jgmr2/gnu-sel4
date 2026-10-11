@@ -504,7 +504,7 @@ static long sys_kill(long pid, long sig)
         struct proc *q = &procs[i];
         if (q->state != P_RUN) continue;
         bool match = pid > 0 ? q->pid == pid : pid == 0 ? q->pgid == cur->pgid :
-                     pid == -1 ? q->pid != 1 : q->pgid == -pid;
+                     pid == -1 ? q->pid != 1 && q != cur : q->pgid == -pid;   /* -1: all but init and itself */
         if (!match) continue;
         found++;
         proc_signal(q, sig);
@@ -557,6 +557,44 @@ static long sys_itimer(bool set, long which, uint64_t value_ns, uint64_t interva
 }
 
 /* ------------------------------------------------------------------ */
+/* reboot(2): power off, restart or halt the machine                  */
+/* ------------------------------------------------------------------ */
+
+#define REBOOT_MAGIC1     0xfee1deadu
+#define RB_AUTOBOOT       0x01234567u        /* restart */
+#define RB_HALT_SYSTEM    0xcdef0123u
+#define RB_POWER_OFF      0x4321fedcu
+#define RB_ENABLE_CAD     0x89abcdefu        /* Ctrl-Alt-Del: accepted, nothing to do */
+#define RB_DISABLE_CAD    0u
+#define PM1A_IOPORT       1                  /* ioport ids in meta.py */
+#define RESET_IOPORT      2
+
+/* The orderly part (services down, the VM, other processes) is done by /sbin/poweroff in user
+ * space; here the file system is unmounted clean, every process is stopped and the machine goes
+ * off. Power off writes SLP_EN with S5 into PM1a_CNT (QEMU q35: port 0x604, SLP_TYP 0; real
+ * hardware will need \_S5 from the ACPI tables); restart uses the reset control register 0xCF9. */
+static long sys_reboot(long magic, long cmd)
+{
+    if ((uint32_t)magic != REBOOT_MAGIC1) return -EINVAL;
+    if ((uint32_t)cmd == RB_ENABLE_CAD || (uint32_t)cmd == RB_DISABLE_CAD) return 0;
+    if ((uint32_t)cmd != RB_AUTOBOOT && (uint32_t)cmd != RB_HALT_SYSTEM && (uint32_t)cmd != RB_POWER_OFF)
+        return -EINVAL;
+    vfs_unmount();
+    for (int i = 0; i < NPROC; i++)                    /* nobody runs (or writes) any more */
+        if (procs[i].state == P_RUN && procs[i].slot >= 0) seL4_TCB_Suspend(slot_tcb(procs[i].slot));
+    if ((uint32_t)cmd == RB_POWER_OFF) {
+        tty_puts("[posix] file system clean; powering off\n");
+        microkit_x86_ioport_write_16(PM1A_IOPORT, 0x604, 0x2000);
+    } else if ((uint32_t)cmd == RB_AUTOBOOT) {
+        tty_puts("[posix] file system clean; restarting\n");
+        microkit_x86_ioport_write_8(RESET_IOPORT, 0xCF9, 0x02);
+        microkit_x86_ioport_write_8(RESET_IOPORT, 0xCF9, 0x06);
+    }
+    tty_puts("[posix] system halted: the machine can be switched off\n");
+    return 0;                                          /* the caller stays stopped */
+}
+
+/* ------------------------------------------------------------------ */
 /* Slot faults (they arrive through their fault endpoint)            */
 /* ------------------------------------------------------------------ */
 
@@ -602,7 +640,7 @@ bool proc_handles(long nr)
     case __NR_rt_sigaction: case __NR_rt_sigsuspend:
     case __NR_getpriority: case __NR_setpriority:
     case __NR_setitimer: case __NR_getitimer:
-    case __NR_munmap: case __NR_sysinfo:
+    case __NR_munmap: case __NR_sysinfo: case __NR_reboot:
         return true;
     }
     return false;
@@ -662,6 +700,7 @@ long proc_syscall(long nr, long a1, long a2, long a3, long a4, long a5)
         microkit_mr_set(3, n);
         return 0;
     }
+    case __NR_reboot:     return sys_reboot(a1, a3);
     case __NR_munmap:                      /* the runtime already freed the range: give the pages back */
         if ((uintptr_t)a1 >= PROC_HEAP_BASE && (uintptr_t)a1 + a2 <= PROC_MMAP_BASE + PROC_MMAP_SIZE)
             mem_free_range(cur->slot, a1, a2);

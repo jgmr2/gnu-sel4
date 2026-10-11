@@ -317,6 +317,17 @@ static int64_t bitmap_alloc(uint64_t bitmap_blk, uint32_t nbits)
     return -ENOSPC;
 }
 
+/* Free (zero) bits among the first nbits of a bitmap block, or -errno */
+static int64_t bitmap_count_free(uint64_t bitmap_blk, uint32_t nbits)
+{
+    int s = bread(bitmap_blk);
+    if (s < 0) return s;
+    uint8_t *bm = slot_data(s);
+    int64_t n = 0;
+    for (uint32_t i = 0; i < nbits; i++) n += !(bm[i / 8] & (1u << (i % 8)));
+    return n;
+}
+
 static int bitmap_free(uint64_t bitmap_blk, uint32_t bit)
 {
     int s = bread(bitmap_blk);
@@ -1153,6 +1164,8 @@ static long op_statfs(void)
     return 0;
 }
 
+static long op_sync(bool unmount);
+
 static bool is_write_op(long op)
 {
     return op == FS_OP_LINK || op == FS_OP_WRITE || op == FS_OP_TRUNCATE || op == FS_OP_CREATE || op == FS_OP_UNLINK ||
@@ -1235,6 +1248,8 @@ static long dispatch(long op, uint64_t a1, uint64_t a2, uint64_t a3)
         if ((int64_t)a3 >= 0) in.i_mtime = a3;
         in.i_ctime = now();
         return write_inode(a1, &in);
+    case FS_OP_SYNC:
+        return op_sync(a1 == 1);
     case FS_OP_SETCLOCK:
         clk_epoch = a1; clk_tsc0 = a2; clk_hz = a3;
         return 0;
@@ -1271,6 +1286,45 @@ static void log_num(uint64_t v)
     while (i) microkit_dbg_putc(tmp[--i]);
 }
 
+#define EXT2_VALID_FS 1                /* s_state: cleanly unmounted */
+
+/* After an unclean shutdown (power cut, QEMU closed) the free counts in the group descriptors
+ * and the superblock can disagree with the bitmaps, which are the truth (every write goes
+ * straight to disk): recount them, as e2fsck's pass 5 does */
+static int recount_free(void)
+{
+    uint32_t fb = 0, fi = 0;
+    for (uint32_t g = 0; g < ngroups; g++) {
+        uint64_t first = sb->s_first_data_block + (uint64_t)g * sb->s_blocks_per_group;
+        uint32_t nblocks = sb->s_blocks_count - first < sb->s_blocks_per_group
+                         ? sb->s_blocks_count - first : sb->s_blocks_per_group;
+        int64_t b = bitmap_count_free(gd[g].bg_block_bitmap, nblocks);
+        int64_t i = bitmap_count_free(gd[g].bg_inode_bitmap, sb->s_inodes_per_group);
+        if (b < 0 || i < 0) return -EIO;
+        gd[g].bg_free_blocks_count = b;
+        gd[g].bg_free_inodes_count = i;
+        fb += b;
+        fi += i;
+    }
+    sb->s_free_blocks_count = fb;
+    sb->s_free_inodes_count = fi;
+    gd_dirty = sb_dirty = true;
+    return flush_meta();
+}
+
+/* FS_OP_SYNC: everything is already on disk (write-through); unmounting marks it clean */
+static long op_sync(bool unmount)
+{
+    if (read_only) return 0;
+    if (unmount) {
+        sb->s_state |= EXT2_VALID_FS;
+        sb_dirty = true;
+    }
+    if (flush_meta()) return -EIO;
+    if (unmount) read_only = true;
+    return 0;
+}
+
 static void mount(void)
 {
     int s = bread(0);
@@ -1295,6 +1349,15 @@ static void mount(void)
         s = bread(sb->s_first_data_block + 1 + off / BS);
         if (s < 0) { log_("fs_ext2: error reading group descriptors\n"); return; }
         memcpy((uint8_t *)gd + off, slot_data(s), nbytes - off < BS ? nbytes - off : BS);
+    }
+    if (!read_only) {
+        if (!(sb->s_state & EXT2_VALID_FS)) {
+            log_("fs_ext2: the disk was not cleanly unmounted: recounting free blocks and inodes\n");
+            if (recount_free()) { log_("fs_ext2: recount failed: mounting read-only\n"); read_only = true; }
+        }
+        sb->s_state &= ~EXT2_VALID_FS;            /* in use: clean again only after FS_OP_SYNC(1) */
+        sb_dirty = true;
+        if (!read_only && flush_meta()) { log_("fs_ext2: cannot write the superblock: read-only\n"); read_only = true; }
     }
     mounted = true;
     log_("fs_ext2: mounted \"");

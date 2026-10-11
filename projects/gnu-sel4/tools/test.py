@@ -48,6 +48,15 @@ def main():
     if r.returncode:
         sys.exit("debugfs: " + r.stderr)
 
+    # As after a power cut: the disk is marked in use and a free count is off; fs_ext2 must
+    # notice and recount at mount (the e2fsck at the end checks it did)
+    with open(COPY, "r+b") as c:
+        sb = (1 << 20) + 1024
+        c.seek(sb + 12)                              # s_free_blocks_count
+        free = int.from_bytes(c.read(4), "little")
+        c.seek(sb + 12); c.write((free + 7).to_bytes(4, "little"))
+        c.seek(sb + 58); c.write((0).to_bytes(2, "little"))   # s_state: not clean
+
     qemu = ["qemu-system-x86_64", "-machine", "q35", "-accel", "kvm",
             "-cpu", "host,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave,+vmx,+vme",
             "-kernel", os.path.join(BUILD, "sel4_32.elf"), "-initrd", os.path.join(BUILD, "loader.img"),
@@ -74,10 +83,33 @@ def main():
                         results.append(t)
                 elif t.startswith("== TESTS: END"):
                     end = t
+                elif "[posix]" in t and ("powering off" in t or "halted" in t):
+                    print("  [serial] " + t)
+                elif "fs_ext2:" in t and "cleanly" in t:
+                    print("  [serial] " + t)
                 elif "netstack: DHCP" in t:
                     print("  [serial] " + t)
                 elif "PANIC" in t or "faulting PD" in t:
                     print("  [serial] " + t)
+        # The tests end with /sbin/poweroff: QEMU must exit by itself, leaving the disk clean
+        if end is not None:
+            try:
+                p.wait(timeout=60)
+                results.append("TEST poweroff: ok")
+            except subprocess.TimeoutExpired:
+                results.append("TEST poweroff: FAIL (QEMU still running 60 s after the tests)")
+            print(results[-1])
+            with open(COPY, "rb") as c:
+                c.seek((1 << 20) + 1024 + 58)              # partition 1, superblock, s_state
+                clean = int.from_bytes(c.read(2), "little") & 1
+            results.append("TEST clean-unmount: " + ("ok" if clean else "FAIL (the ext2 state is not clean)"))
+            print(results[-1])
+            fsck = ["e2fsck"] if shutil.which("e2fsck") else [os.path.join(top, "dev.sh"), "e2fsck"]
+            r = subprocess.run(fsck + ["-fn", "%s?offset=1048576" % rel(COPY)], cwd=top, capture_output=True, text=True)
+            results.append("TEST e2fsck: " + ("ok" if r.returncode == 0 else "FAIL (exit %d)" % r.returncode))
+            print(results[-1])
+            if r.returncode:
+                for l in (r.stdout + r.stderr).splitlines()[:20]: print("    " + l)
     finally:
         p.kill()
         p.wait()

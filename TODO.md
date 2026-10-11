@@ -95,9 +95,18 @@ Real hardware stays last on purpose: first the system has to be worth booting.
    - [x] On the way: AF_UNIX names are socket inodes in ext2 (connect resolves symlinks); chdir
          keeps the physical directory and `..` after a symlink goes to the target's parent
    - Next services as they appear: sshd (item 7), the login session with `login` (item 6), sway
-5. [ ] **Clean shutdown and disk safety** (S–M)
-   - [ ] Real `poweroff`/`reboot`: stop services, `sync`, shut down the VM, power off (ACPI)
-   - [ ] ext2 fsck at boot if the disk was left dirty (ext2 state flag)
+5. [x] **Clean shutdown and disk safety** (S–M)
+   - [x] `/sbin/poweroff` (`reboot`, `halt`): s6-rc brings the services down, the Linux VM runs
+         its shutdown (Docker stopped, its disk synced and unmounted), SIGTERM then SIGKILL to the
+         rest, then reboot(2): posix_server unmounts the file system clean, stops every process
+         and powers off through ACPI (PM1a_CNT 0x604 on QEMU q35) or restarts through 0xCF9.
+         `-f` skips the orderly part. Real hardware: \_S5 from the ACPI tables (item 17)
+   - [x] ext2 state flag: in use while mounted, clean after the shutdown; mounted dirty (power cut,
+         QEMU closed) -> the free block and inode counts are recounted from the bitmaps (what a
+         write-through file system can get wrong), as e2fsck's pass 5
+   - [x] `make test` starts from a disk marked dirty with a wrong free count, ends with `poweroff`
+         and checks that QEMU exits on its own, that the disk is clean and that e2fsck passes
+   - [ ] A full fsck (port e2fsprogs) for deeper damage; the journal (item 16) avoids most of it
 6. [ ] **Users and permissions** (M): today everything runs as root and nothing is checked
    - [ ] uid/gid per process (real, effective, saved), setuid/setgid, supplementary groups; the
          process owner on created files (today always root)
@@ -230,3 +239,6 @@ Real hardware stays last on purpose: first the system has to be worth booting.
 - [ ] /proc: real loadavg, /proc/<pid>/maps and fd, named tty (today "?")
 - [ ] Make `nice` change the real seL4 priority (today the value is only stored)
 - [ ] Hard links over 9P (`Tlink` in 9pd; fs_ext2 already supports them)
+- [ ] Rare (about 1 boot in 12): s6rc-oneshot-runner dies with SIGABRT while s6-rc starts it,
+      so the `net` oneshot does not run (DHCP still works). The `s6-rc` test prints
+      /tmp/s6-svscan.log when it happens

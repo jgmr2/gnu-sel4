@@ -138,6 +138,8 @@ def generate(sdf, sdf_file, output_dir):
     fs = ProtectionDomain("fs_ext2", "fs_ext2.elf", priority=160, stack_size=0x8000)
     server = ProtectionDomain("posix_server", "posix_server.elf", priority=150, stack_size=0x10000)
     server.add_ioport(SystemDescription.IoPort(0x70, 2, 0))       # CMOS clock (RTC_IOPORT in clock.c)
+    server.add_ioport(SystemDescription.IoPort(0x604, 2, 1))      # ACPI PM1a control (power off; q35)
+    server.add_ioport(SystemDescription.IoPort(0xCF9, 1, 2))      # reset control register (reboot)
 
     fs_buf = MemoryRegion(sdf, "fs_buf", FS_BUF_SIZE)
     sdf.add_mr(fs_buf)

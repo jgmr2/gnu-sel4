@@ -210,6 +210,7 @@ long net_info_text(char *out, size_t max); /* /proc/net/dhcp */
 uint64_t vfs_timerfd_next(void);           /* nearest timerfd deadline (0 = none) */
 void vfs_timerfd_fire(uint64_t now);
 void vfs_set_fs_clock(void);
+void vfs_unmount(void);                   /* shutdown: sync and mark the file system clean */
 bool vfs_handles(long nr);
 long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6);
 void vfs_proc_tty(struct proc *p);         /* 0, 1 and 2 to the terminal */

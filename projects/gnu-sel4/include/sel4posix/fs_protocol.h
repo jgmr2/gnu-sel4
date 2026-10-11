@@ -56,4 +56,7 @@ enum fs_op {
     FS_OP_CHOWN,
     /* buf: existing path, buf+FS_BUF_PATH2: new name (hard link) */
     FS_OP_LINK,
+    /* MR1: 1 = also unmount (shutdown): write everything, mark the file system clean, and refuse
+     * further writes. 0 = sync only */
+    FS_OP_SYNC,
 };

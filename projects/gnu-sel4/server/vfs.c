@@ -1965,7 +1965,7 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
     case __NR_dup3:       return a1 == a2 ? -EINVAL : do_dup(a1, a2, true, a3 & O_CLOEXEC);
     case __NR_fsync:
     case __NR_fdatasync:  return fd_get(a1) ? 0 : -EBADF;   /* fs_ext2 writes immediately */
-    case __NR_sync:       return 0;
+    case __NR_sync:       fs_call(FS_OP_SYNC, 0, 0, 0); return 0;
     case __NR_pipe2:      return do_pipe(a1);
     case __NR_poll:       return do_poll(a1, a2);
     case __NR_utimensat:  return do_utimensat(a1, a3, a4);
@@ -2093,6 +2093,12 @@ void vfs_init(void)
 }
 
 /* Hands the clock to fs_ext2 to timestamp files */
+/* Shutdown: the file system writes everything, marks itself clean and refuses further writes */
+void vfs_unmount(void)
+{
+    fs_call(FS_OP_SYNC, 1, 0, 0);
+}
+
 void vfs_set_fs_clock(void)
 {
     fs_call(FS_OP_SETCLOCK, clock_epoch, clock_tsc0, clock_tsc_hz);
