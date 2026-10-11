@@ -21,7 +21,7 @@
 
 enum fs_op {
     /* buf: path. MR1: 1 = follow the last symbolic link.
-     * -> inode; MR1 = mode (st_mode), MR2 = size */
+     * -> inode; MR1 = mode (st_mode), MR2 = size, MR3 = owner uid, MR4 = gid */
     FS_OP_LOOKUP = 1,
     /* MR1: inode -> buf: Linux x86_64 struct stat (144 bytes) */
     FS_OP_STAT,
@@ -59,4 +59,9 @@ enum fs_op {
     /* MR1: 1 = also unmount (shutdown): write everything, mark the file system clean, and refuse
      * further writes. 0 = sync only */
     FS_OP_SYNC,
+    /* Who the next operations are for (path search permission is checked against it):
+     * MR1: effective uid, MR2: effective gid, MR3: number of supplementary groups, MR4...: the
+     * groups (in registers: the buffer may already hold the next operation's path). uid 0 is
+     * not checked */
+    FS_OP_SETCRED,
 };

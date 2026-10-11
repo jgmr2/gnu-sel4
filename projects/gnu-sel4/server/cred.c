@@ -48,11 +48,24 @@ bool cred_in_group(const struct proc *p, uint32_t gid)
 
 /* May p access a file with this mode and owner? want: 4 read, 2 write, 1 execute/search.
  * Root may do anything, except execute a file that has no x bit at all. */
+static bool may(uint32_t who, uint32_t who_gid, const struct proc *p, uint32_t mode, uint32_t uid, uint32_t gid, int want)
+{
+    if (who == 0) return !(want & 1) || (mode & 0111) || (mode & 0170000) == 0040000;
+    bool member = who_gid == gid;
+    for (int i = 0; i < p->ngroups && !member; i++) member = p->groups[i] == gid;
+    uint32_t bits = who == uid ? mode >> 6 : member ? mode >> 3 : mode;
+    return (bits & want & 7) == (uint32_t)want;
+}
+
 bool cred_may(const struct proc *p, uint32_t mode, uint32_t uid, uint32_t gid, int want)
 {
-    if (p->euid == 0) return !(want & 1) || (mode & 0111) || (mode & 0170000) == 0040000;
-    uint32_t bits = p->euid == uid ? mode >> 6 : cred_in_group(p, gid) ? mode >> 3 : mode;
-    return (bits & want & 7) == (uint32_t)want;
+    return may(p->euid, p->egid, p, mode, uid, gid, want);
+}
+
+/* access(2): with the real IDs, so a set-user-ID program can ask what its user may do */
+bool cred_may_real(const struct proc *p, uint32_t mode, uint32_t uid, uint32_t gid, int want)
+{
+    return may(p->uid, p->gid, p, mode, uid, gid, want);
 }
 
 /* May p signal q? (as Linux: privileged, or the real or effective uid of the sender equals the

@@ -344,6 +344,9 @@ $(DISK):
 # SYSFILES: files from rootfs/ that the system manages and that are updated on every build
 SYSFILES := etc/motd etc/profile etc/rc etc/mtab etc/zshrc etc/zprofile etc/shells etc/passwd \
 	    etc/resolv.conf etc/hosts usr/share/vim/vimrc etc/tests.sh etc/netcfg.conf bin/nc
+# Everything installed belongs to root (mke2fs -d keeps the build host's owners); the system
+# directories get standard modes, and each home directory its user ("name:uid")
+HOMES := user:1000
 # EXTRA_BINS: ported programs (dash...), as "local/path:name"; LINKS: "name:target"
 EXTRA_BINS ?=
 LINKS ?=
@@ -379,7 +382,12 @@ install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EX
 	     find . -type f | while read f; do f=$${f#./}; echo "rm $$dst/$$f"; echo "write $$src/$$f $$dst/$$f"; done); done; \
 	  for f in $(SYSFILES); do echo "rm /$$f"; echo "write $(POSIX)/rootfs/$$f /$$f"; \
 	    echo "sif /$$f uid 0"; echo "sif /$$f gid 0"; done; \
-	} > install.cmds; \
+	} > install.cmds.0; \
+	awk '{ print } $$1 == "write" { print "sif " $$3 " uid 0"; print "sif " $$3 " gid 0" } \
+	     $$1 == "mkdir" { print "sif " $$2 " uid 0"; print "sif " $$2 " gid 0" }' install.cmds.0 > install.cmds; \
+	(cd $(POSIX)/rootfs && find . -mindepth 1 -type d | sed 's|^\.||') | while read d; do \
+	  echo "sif $$d uid 0"; echo "sif $$d gid 0"; echo "sif $$d mode 040755"; done >> install.cmds; \
+	printf '%s\n' "sif /tmp mode 041777" "sif /root mode 040700" $(foreach h,$(HOMES),"sif /home/$(word 1,$(subst :, ,$(h))) uid $(word 2,$(subst :, ,$(h)))" "sif /home/$(word 1,$(subst :, ,$(h))) gid $(word 2,$(subst :, ,$(h)))" "sif /home/$(word 1,$(subst :, ,$(h))) mode 040700") >> install.cmds; \
 	debugfs -w -f install.cmds part.img >/dev/null 2>install.log || { cat install.log; exit 1; }; \
 	dd if=part.img of=$(DISK) bs=1M seek=1 conv=notrunc status=none; \
 	rm part.img; touch $@; \

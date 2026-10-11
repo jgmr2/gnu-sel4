@@ -30,6 +30,7 @@
 #define ENOENT        2
 #define EIO           5
 #define EPERM         1
+#define EACCES       13
 #define EEXIST        17
 #define ENOTDIR       20
 #define EISDIR        21
@@ -781,6 +782,23 @@ static long read_link(uint32_t ino, struct ext2_inode *in, char *out, uint32_t m
     return file_read(ino, in, 0, len, (uint8_t *)out);
 }
 
+/* Credentials of the caller (FS_OP_SETCRED): the search (x) permission of every directory on
+ * a path is checked against them, as a Unix kernel does while it walks the path */
+static uint32_t cred_uid, cred_gid, cred_ngroups, cred_groups[32];
+
+static bool may_search(uint32_t dir_ino)
+{
+    if (cred_uid == 0) return true;
+    struct ext2_inode d;
+    if (read_inode(dir_ino, &d)) return false;
+    uint32_t uid = d.i_uid | (uint32_t)d.i_uid_high << 16, gid = d.i_gid | (uint32_t)d.i_gid_high << 16;
+    uint32_t bits = d.i_mode;
+    if (uid == cred_uid) return bits & 0100;
+    bool member = gid == cred_gid;
+    for (uint32_t i = 0; i < cred_ngroups && !member; i++) member = cred_groups[i] == gid;
+    return member ? bits & 0010 : bits & 0001;
+}
+
 /* Resolves an absolute path. follow_last: follow the last symbolic link. */
 static int64_t resolve(const char *path, bool follow_last)
 {
@@ -799,6 +817,7 @@ static int64_t resolve(const char *path, bool follow_last)
         while (*end && *end != '/') end++;
         uint32_t len = end - p;
         if (len > 255) return -ENAMETOOLONG;
+        if (!may_search(cur)) return -EACCES;
         int64_t next = dir_lookup(cur, p, len);
         if (next < 0) return next;
         if (!next) return -ENOENT;
@@ -850,6 +869,7 @@ static int64_t resolve_parent(const char *path, const char **name, uint32_t *nam
     struct ext2_inode in;
     if (read_inode(parent, &in)) return -EIO;
     if (!S_ISDIR(in.i_mode)) return -ENOTDIR;
+    if (!may_search(parent)) return -EACCES;
     return parent;
 }
 
@@ -1187,6 +1207,8 @@ static long dispatch(long op, uint64_t a1, uint64_t a2, uint64_t a3)
         if (read_inode(ino, &in)) return -EIO;
         microkit_mr_set(1, in.i_mode);
         microkit_mr_set(2, inode_size_of(&in));
+        microkit_mr_set(3, in.i_uid | (uint32_t)in.i_uid_high << 16);
+        microkit_mr_set(4, in.i_gid | (uint32_t)in.i_gid_high << 16);
         return ino;
     }
     case FS_OP_STAT:
@@ -1250,6 +1272,12 @@ static long dispatch(long op, uint64_t a1, uint64_t a2, uint64_t a3)
         if ((int64_t)a3 >= 0) in.i_mtime = a3;
         in.i_ctime = now();
         return write_inode(a1, &in);
+    case FS_OP_SETCRED:
+        cred_uid = a1;
+        cred_gid = a2;
+        cred_ngroups = a3 < 32 ? a3 : 32;
+        for (uint32_t i = 0; i < cred_ngroups; i++) cred_groups[i] = microkit_mr_get(4 + i);
+        return 0;
     case FS_OP_SYNC:
         return op_sync(a1 == 1);
     case FS_OP_SETCLOCK:
@@ -1271,7 +1299,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
         if (flush_meta() && r >= 0) r = -EIO;
     }
     microkit_mr_set(0, r);
-    return microkit_msginfo_new(0, 4);
+    return microkit_msginfo_new(0, 5);
 }
 
 /* ------------------------------------------------------------------ */

@@ -29,6 +29,11 @@ int main(int argc, char **argv)
         uid_t r, e, s;
         getresuid(&r, &e, &s);
         int ok = r == 1000 && e == 0 && s == 0;
+        /* access() answers for the real user; open() acts as the effective one */
+        ok = ok && access("/tmp/ut/rootfile", R_OK) < 0 && errno == EACCES;
+        int fd = open("/tmp/ut/rootfile", O_RDONLY);
+        ok = ok && fd >= 0;
+        if (fd >= 0) close(fd);
         ok = ok && seteuid(1000) == 0 && geteuid() == 1000 && seteuid(0) == 0 && geteuid() == 0;   /* saved uid */
         return ok ? 0 : 1;
     }
@@ -44,6 +49,10 @@ int main(int argc, char **argv)
     while (in >= 0 && out >= 0 && (n = read(in, buf, sizeof buf)) > 0) write(out, buf, n);
     close(in); close(out);
     CHECK(chmod("/tmp/ut/suid", 04755) == 0, "chmod 4755 (set-user-ID)");
+    int rf = open("/tmp/ut/rootfile", O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    close(rf);
+    mkdir("/tmp/ut/private", 0700);
+    close(open("/tmp/ut/private/x", O_WRONLY | O_CREAT, 0644));
 
     pid_t pid = fork();
     if (pid == 0) {
@@ -60,6 +69,16 @@ int main(int argc, char **argv)
         if (fd < 0 || fstat(fd, &st) || st.st_uid != 1000 || st.st_gid != 1000) _exit(15);
         close(fd);
         if (kill(1, SIGTERM) == 0 || errno != EPERM) _exit(16);         /* not someone else's */
+        /* permissions */
+        if (open("/etc/passwd", O_WRONLY) >= 0 || errno != EACCES) _exit(19);
+        if (open("/etc/ut-x", O_WRONLY | O_CREAT, 0644) >= 0 || errno != EACCES) _exit(20);
+        if (open("/tmp/ut/rootfile", O_RDONLY) >= 0 || errno != EACCES) _exit(21);
+        if (unlink("/tmp/ut/rootfile") == 0 || errno != EPERM) _exit(22);   /* sticky /tmp/ut */
+        if (stat("/tmp/ut/private/x", &st) == 0 || errno != EACCES) _exit(23);  /* no search */
+        if (chmod("/tmp/ut/rootfile", 0666) == 0 || errno != EPERM) _exit(24);
+        if (chown("/tmp/ut/mine", 0, 0) == 0 || errno != EPERM) _exit(25);
+        if (access("/tmp/ut/rootfile", R_OK) == 0 || access("/tmp/ut/mine", W_OK) != 0) _exit(26);
+        if (open("/etc/passwd", O_RDONLY) < 0) _exit(27);                    /* 0644: readable */
         pid_t q = fork();
         if (q == 0) execl("/tmp/ut/suid", "suid", "setuid-child", (char *)0), _exit(17);
         int st2;
@@ -72,12 +91,16 @@ int main(int argc, char **argv)
     const char *why[] = { "", "", "", "", "", "", "", "", "", "",
         "setgroups/setgid/setuid", "IDs after setuid(1000)", "setuid(0) back must fail", "getgroups",
         "setgroups without privilege must fail", "a new file belongs to its creator", "kill(init) must fail",
-        "exec of the set-user-ID program", "set-user-ID: euid 0 and the saved uid" };
-    if (code) printf("       child failed at: %s\n", code > 0 && code < 19 ? why[code] : "?");
-    CHECK(code == 0, "a process drops to uid 1000: no way back, owns its files, cannot signal init, set-user-ID works");
+        "exec of the set-user-ID program", "set-user-ID: euid 0, saved uid, access() with the real uid",
+        "writing /etc/passwd must fail", "creating in /etc must fail", "reading a 0600 root file must fail",
+        "deleting someone else's file in a sticky directory must fail", "searching a 0700 root directory must fail",
+        "chmod of someone else's file must fail", "chown to root must fail", "access()", "reading /etc/passwd" };
+    if (code) printf("       child failed at: %s\n", code > 0 && code < 28 ? why[code] : "?");
+    CHECK(code == 0, "uid 1000: no way back, owns its files, cannot signal init, set-user-ID, file permissions");
     struct stat ms;
     CHECK(stat("/tmp/ut/mine", &ms) == 0 && ms.st_uid == 1000, "the file stays owned by 1000");
-    unlink("/tmp/ut/mine"); unlink("/tmp/ut/suid"); rmdir("/tmp/ut");
+    unlink("/tmp/ut/mine"); unlink("/tmp/ut/suid"); unlink("/tmp/ut/rootfile");
+    unlink("/tmp/ut/private/x"); rmdir("/tmp/ut/private"); rmdir("/tmp/ut");
     printf("== %s ==\n", failures ? "THERE ARE FAILURES" : "all good");
     return failures;
 }

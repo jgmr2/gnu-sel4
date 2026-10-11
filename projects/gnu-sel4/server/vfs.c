@@ -228,8 +228,31 @@ static long fd_close(long fd)
 
 /* ---------------- file server ---------------- */
 
+/* fs_ext2 checks the search permission of the directories on a path against the caller: it is
+ * told who that is whenever it changes. The server's own work (writing /etc/resolv.conf from a
+ * notification, when `cur` is whoever ran last) is done as root. */
+static bool fs_as_server;
+static uint32_t fs_cred_uid, fs_cred_gid, fs_cred_n, fs_cred_groups[NGROUPS_];
+
+static void fs_send_cred(void)
+{
+    uint32_t uid = 0, gid = 0, n = 0;
+    const uint32_t *g = fs_cred_groups;
+    if (!fs_as_server && cur) { uid = cur->euid; gid = cur->egid; n = cur->ngroups; g = cur->groups; }
+    if (uid == fs_cred_uid && gid == fs_cred_gid && n == fs_cred_n && !memcmp(g, fs_cred_groups, n * 4)) return;
+    microkit_mr_set(0, FS_OP_SETCRED);
+    microkit_mr_set(1, uid);
+    microkit_mr_set(2, gid);
+    microkit_mr_set(3, n);
+    for (uint32_t i = 0; i < n; i++) microkit_mr_set(4 + i, g[i]);
+    microkit_ppcall(FS_CH, microkit_msginfo_new(0, 4 + n));
+    fs_cred_uid = uid; fs_cred_gid = gid; fs_cred_n = n;
+    memmove(fs_cred_groups, g, n * 4);
+}
+
 static long fs_call(long op, uint64_t a1, uint64_t a2, uint64_t a3)
 {
+    fs_send_cred();
     microkit_mr_set(0, op);
     microkit_mr_set(1, a1);
     microkit_mr_set(2, a2);
@@ -245,6 +268,8 @@ static void fs_set_path(uint32_t off, const char *abs)
 }
 
 /* Looks up an absolute path. Returns the inode and, optionally, mode and size. */
+static uint32_t last_uid, last_gid;          /* owner of what fs_lookup found last */
+
 static long fs_lookup(const char *abs, bool follow, uint32_t *mode, uint64_t *size)
 {
     fs_set_path(0, abs);
@@ -252,9 +277,55 @@ static long fs_lookup(const char *abs, bool follow, uint32_t *mode, uint64_t *si
     if (ino >= 0) {
         if (mode) *mode = microkit_mr_get(1);
         if (size) *size = microkit_mr_get(2);
+        last_uid = microkit_mr_get(3);
+        last_gid = microkit_mr_get(4);
     }
     return ino;
 }
+
+/* ---------------- permissions ---------------- */
+
+/* The directory that contains abs (abs is normalised, not "/") */
+static void parent_of(const char *abs, char *out)
+{
+    size_t n = strlen(abs);
+    while (n > 1 && abs[n - 1] != '/') n--;
+    if (n > 1) n--;                                    /* drop the slash, except for "/" itself */
+    memcpy(out, abs, n);
+    out[n] = 0;
+}
+
+/* Write and search permission on the directory that will hold a new name (or lose one) */
+static long may_change_dir(const char *abs)
+{
+    char dir[FS_PATH_MAX];
+    parent_of(abs, dir);
+    uint32_t mode;
+    long ino = fs_lookup(dir, true, &mode, NULL);
+    if (ino < 0) return ino;
+    return cred_may(cur, mode, last_uid, last_gid, 3) ? 0 : -EACCES;
+}
+
+/* Removing or renaming abs: as above, plus the sticky bit (/tmp): then only the file's owner,
+ * the directory's owner or root */
+static long may_remove(const char *abs)
+{
+    char dir[FS_PATH_MAX];
+    parent_of(abs, dir);
+    uint32_t dmode;
+    long d = fs_lookup(dir, true, &dmode, NULL);
+    if (d < 0) return d;
+    uint32_t duid = last_uid;
+    if (!cred_may(cur, dmode, duid, last_gid, 3)) return -EACCES;
+    if (!(dmode & 01000) || cur->euid == 0 || cur->euid == duid) return 0;
+    long f = fs_lookup(abs, false, NULL, NULL);
+    if (f < 0) return f;
+    return last_uid == cur->euid ? 0 : -EPERM;
+}
+
+/* Changing the mode, owner or times of a file: only its owner or root */
+static long may_own(uint32_t uid) { return cur->euid == 0 || cur->euid == uid ? 0 : -EPERM; }
+
 
 static long fs_size(uint32_t ino, uint64_t *size)
 {
@@ -436,6 +507,8 @@ static long do_open(long dirfd, uint32_t flags, uint32_t mode)
         bool created = false;
         long res = fs_lookup(abs, !(flags & O_NOFOLLOW), &fmode, &size);
         if (res == -ENOENT && (flags & O_CREAT)) {
+            long p = may_change_dir(abs);
+            if (p) return p;
             fs_set_path(0, abs);
             res = fs_call(FS_OP_CREATE, S_IFREG | (mode & 07777 & ~cur->umask), cur->euid, cur->egid);
             fmode = S_IFREG;
@@ -447,6 +520,11 @@ static long do_open(long dirfd, uint32_t flags, uint32_t mode)
         if (res < 0) return res;
         ino = res;
         if (S_ISLNK(fmode)) return -ELOOP;
+        if (!created) {                                /* read/write permission on what exists */
+            uint32_t acc = flags & O_ACCMODE;
+            int want = (acc != O_WRONLY ? 4 : 0) | (acc != O_RDONLY || (flags & O_TRUNC) ? 2 : 0);
+            if (!cred_may(cur, fmode, last_uid, last_gid, want)) return -EACCES;
+        }
         if ((fmode & S_IFMT) == S_IFIFO) return fifo_open(ino, flags, abs);
         if ((fmode & S_IFMT) == S_IFSOCK_) return -ENXIO;          /* sockets are not opened */
         if (S_ISDIR(fmode)) {
@@ -805,16 +883,19 @@ static bool net_info(struct net_info *ni)
 /* Replaces a whole file from the server */
 static long write_file(const char *abs, const char *data, size_t len)
 {
+    fs_as_server = true;                               /* the server's own write: as root */
     long ino = fs_lookup(abs, true, NULL, NULL);
     if (ino == -ENOENT) {
         fs_set_path(0, abs);
         ino = fs_call(FS_OP_CREATE, S_IFREG | 0644, 0, 0);
     }
-    if (ino < 0) return ino;
-    long r = fs_call(FS_OP_TRUNCATE, ino, 0, 0);
-    if (r < 0) return r;
-    memcpy((void *)fs_buf, data, len);
-    return fs_call(FS_OP_WRITE, ino, 0, len);
+    long r = ino < 0 ? ino : fs_call(FS_OP_TRUNCATE, ino, 0, 0);
+    if (r >= 0) {
+        memcpy((void *)fs_buf, data, len);
+        r = fs_call(FS_OP_WRITE, ino, 0, len);
+    }
+    fs_as_server = false;
+    return r;
 }
 
 /* New or renewed lease: the DNS servers the DHCP server gave go to /etc/resolv.conf */
@@ -1205,6 +1286,7 @@ static long do_chdir(const char *abs)
     long ino = fs_lookup(abs, true, &mode, NULL);
     if (ino < 0) return ino;
     if (!S_ISDIR(mode)) return -ENOTDIR;
+    if (!cred_may(cur, mode, last_uid, last_gid, 1)) return -EACCES;
     return realpath_abs(abs, cur->cwd);                /* the physical directory, as getcwd() shows */
 }
 
@@ -1222,17 +1304,20 @@ static long path_op(long nr, long dirfd, long a, long b)
     case __NR_mknod:                                   /* only FIFOs (and plain files): no device nodes */
         if ((a & S_IFMT) == S_IFIFO || (a & S_IFMT) == S_IFREG || !(a & S_IFMT)) {
             if (dev_type(abs) != OF_FREE || is_proc(abs)) return -EEXIST;
+            if ((r = may_change_dir(abs))) return r;
             fs_set_path(0, abs);
             r = fs_call(FS_OP_CREATE, ((a & S_IFMT) ? (a & S_IFMT) : S_IFREG) | (a & 07777 & ~cur->umask), cur->euid, cur->egid);
             return r < 0 ? r : 0;
         }
         return -EPERM;
     case __NR_mkdir:
+        if ((r = may_change_dir(abs))) return r;
         fs_set_path(0, abs);
         r = fs_call(FS_OP_CREATE, S_IFDIR | (a & 07777 & ~cur->umask), cur->euid, cur->egid);
         return r < 0 ? r : 0;
     case __NR_unlink:
         if (dev_type(abs) != OF_FREE) return -EBUSY;
+        if ((r = may_remove(abs))) return r;
         fs_set_path(0, abs);
         return fs_call(FS_OP_UNLINK, a, 0, 0);       /* a: 1 = rmdir */
     case __NR_readlink: {
@@ -1250,6 +1335,7 @@ static long path_op(long nr, long dirfd, long a, long b)
         long ino = fs_lookup(abs, true, &mode, NULL);
         if (ino < 0) return ino;
         if (S_ISDIR(mode)) return -EISDIR;
+        if (!cred_may(cur, mode, last_uid, last_gid, 2)) return -EACCES;
         return fs_call(FS_OP_TRUNCATE, ino, a, 0);
     }
     case __NR_access: {
@@ -1257,13 +1343,13 @@ static long path_op(long nr, long dirfd, long a, long b)
         if (is_proc(abs)) return procfs_kind(abs) == PROCFS_NONE ? -ENOENT : 0;
         long ino = fs_lookup(abs, true, &mode, NULL);
         if (ino < 0) return ino;
-        /* root: everything is allowed except executing something with no x bit at all */
-        if ((a & X_OK) && !S_ISDIR(mode) && !(mode & 0111)) return -EACCES;
-        return 0;
+        /* with the real IDs (F_OK = 0: it exists) */
+        return cred_may_real(cur, mode, last_uid, last_gid, a & 7) ? 0 : -EACCES;
     }
     case __NR_chmod: {
         long ino = fs_lookup(abs, true, NULL, NULL);
         if (ino < 0) return ino;
+        if ((r = may_own(last_uid))) return r;
         return fs_call(FS_OP_CHMOD, ino, a, 0);
     }
     case __NR_statfs:
@@ -1282,6 +1368,9 @@ static long do_rename(long olddirfd, long newdirfd)
     if (r) return r;
     r = normalize(newdirfd, client_path(POSIX_BUF_PATH2), to);
     if (r) return r;
+    if ((r = may_remove(from))) return r;
+    r = fs_lookup(to, false, NULL, NULL) >= 0 ? may_remove(to) : may_change_dir(to);
+    if (r) return r;
     fs_set_path(0, from);
     fs_set_path(FS_BUF_PATH2, to);
     return fs_call(FS_OP_RENAME, 0, 0, 0);
@@ -1296,6 +1385,7 @@ static long do_link(long olddirfd, long newdirfd)
     r = normalize(newdirfd, client_path(POSIX_BUF_PATH2), to);
     if (r) return r;
     if (dev_type(from) != OF_FREE || is_proc(from) || is_proc(to)) return -EXDEV;
+    if ((r = may_change_dir(to))) return r;
     fs_set_path(0, from);
     fs_set_path(FS_BUF_PATH2, to);
     return fs_call(FS_OP_LINK, 0, 0, 0);
@@ -1308,6 +1398,10 @@ static long do_symlink(long newdirfd)
     if (!*target) return -ENOENT;
     long r = normalize(newdirfd, client_path(POSIX_BUF_PATH2), link);
     if (r) return r;
+    static char saved_target[FS_PATH_MAX];               /* may_change_dir reuses the buffers */
+    memcpy(saved_target, target, strlen(target) + 1);
+    if ((r = may_change_dir(link))) return r;
+    target = saved_target;
     fs_set_path(0, target);
     fs_set_path(FS_BUF_PATH2, link);
     return fs_call(FS_OP_SYMLINK, cur->euid, cur->egid, 0);
@@ -1423,6 +1517,7 @@ static long usock_lookup(const char *name)
         ino = fs_lookup(name, true, &mode, NULL);
         if (ino < 0) return ino;
         if ((mode & S_IFMT) != S_IFSOCK_) return -ECONNREFUSED;
+        if (!cred_may(cur, mode, last_uid, last_gid, 2)) return -EACCES;   /* connect needs write */
     }
     for (int i = 0; i < NUSOCK; i++) {
         if (usocks[i].state != US_LISTEN) continue;
@@ -1485,6 +1580,7 @@ static long usock_bind(struct ofile *f, long alen)
         for (int i = 0; i < NUSOCK; i++)
             if (usocks[i].state != US_FREE && !strcmp(usocks[i].name, name)) return -EADDRINUSE;
     } else {                                            /* a socket file: fails if the path exists */
+        if ((r = may_change_dir(name))) return r;
         fs_set_path(0, name);
         long ino = fs_call(FS_OP_CREATE, S_IFSOCK_ | (0777 & ~cur->umask), cur->euid, cur->egid);
         if (ino == -EEXIST) return -EADDRINUSE;
@@ -1769,24 +1865,50 @@ static long do_utimensat(long dirfd, long have_times, long flags)
         ino = i;
     }
     int64_t t[2] = { (int64_t)clock_now(), (int64_t)clock_now() };
+    bool explicit_time = false;
     if (have_times) {
         const int64_t *ts = (const int64_t *)(client_buf + POSIX_BUF_PATH2);   /* {sec, nsec} x 2 */
         for (int k = 0; k < 2; k++) {
             if (ts[2 * k + 1] == UTIME_OMIT) t[k] = -1;
-            else if (ts[2 * k + 1] != UTIME_NOW) t[k] = ts[2 * k];
+            else if (ts[2 * k + 1] != UTIME_NOW) { t[k] = ts[2 * k]; explicit_time = true; }
         }
+    }
+    /* other times: the owner or root; "now" (touch): also whoever may write the file */
+    if (cur->euid != 0) {
+        long r = fs_call(FS_OP_STAT, ino, 0, 0);
+        if (r < 0) return r;
+        uint32_t fmode, fuid, fgid;
+        memcpy(&fmode, (char *)fs_buf + 24, 4);
+        memcpy(&fuid, (char *)fs_buf + 28, 4);
+        memcpy(&fgid, (char *)fs_buf + 32, 4);
+        if (fuid != cur->euid && (explicit_time || !cred_may(cur, fmode, fuid, fgid, 2)))
+            return explicit_time ? -EPERM : -EACCES;
     }
     return fs_call(FS_OP_SETTIMES, ino, t[0], t[1]);
 }
 
 /* chown/lchown/fchownat: buf = path (empty + AT_EMPTY_PATH = dirfd itself) */
+/* chown: root may give a file to anyone; its owner may only change its group, to one of its own */
+static long may_chown(uint32_t fuid, long uid, long gid)
+{
+    if (cur->euid == 0) return 0;
+    if (cur->euid != fuid) return -EPERM;
+    if ((uint32_t)uid != (uint32_t)-1 && (uint32_t)uid != fuid) return -EPERM;
+    if ((uint32_t)gid != (uint32_t)-1 && !cred_in_group(cur, gid)) return -EPERM;
+    return 0;
+}
+
 static long do_chown(long dirfd, long uid, long gid, long flags)
 {
     const char *path = client_path(0);
     if (!*path && (flags & AT_EMPTY_PATH)) {
         struct ofile *f = fd_get(dirfd);
         if (!f) return -EBADF;
-        return f->type == OF_FILE || f->type == OF_DIR ? fs_call(FS_OP_CHOWN, f->ino, uid, gid) : 0;
+        if (f->type != OF_FILE && f->type != OF_DIR) return 0;
+        uint32_t fuid, fgid;
+        long r = vfs_owner(f->ino, &fuid, &fgid);
+        if (r || (r = may_chown(fuid, uid, gid))) return r;
+        return fs_call(FS_OP_CHOWN, f->ino, uid, gid);
     }
     char abs[FS_PATH_MAX];
     long r = normalize(dirfd, path, abs);
@@ -1794,6 +1916,7 @@ static long do_chown(long dirfd, long uid, long gid, long flags)
     if (dev_type(abs) != OF_FREE) return 0;
     long ino = fs_lookup(abs, !(flags & AT_SYMLINK_NOFOLLOW), NULL, NULL);
     if (ino < 0) return ino;
+    if ((r = may_chown(last_uid, uid, gid))) return r;
     return fs_call(FS_OP_CHOWN, ino, uid, gid);
 }
 
@@ -1927,6 +2050,11 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
         f = fd_get(a1);
         if (!f) return -EBADF;
         if (f->type != OF_FILE && f->type != OF_DIR) return -EINVAL;
+        {
+            uint32_t fuid, fgid;
+            long r = vfs_owner(f->ino, &fuid, &fgid);
+            if (r || (r = may_own(fuid))) return r;
+        }
         return fs_call(FS_OP_CHMOD, f->ino, a2, 0);
     case __NR_umask: {
         long old = cur->umask;
@@ -1976,6 +2104,11 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
         f = fd_get(a1);
         if (!f) return -EBADF;
         if (f->type != OF_FILE && f->type != OF_DIR) return 0;   /* tty, pipes: no owner on disk */
+        {
+            uint32_t fuid, fgid;
+            long r = vfs_owner(f->ino, &fuid, &fgid);
+            if (r || (r = may_chown(fuid, a2, a3))) return r;
+        }
         return fs_call(FS_OP_CHOWN, f->ino, a2, a3);
     }
     switch (nr) {

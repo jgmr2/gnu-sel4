@@ -108,14 +108,20 @@ Real hardware stays last on purpose: first the system has to be worth booting.
          and checks that QEMU exits on its own, that the disk is clean and that e2fsck passes
    - [ ] A full fsck (port e2fsprogs) for deeper damage; the journal (item 16) avoids most of it
 6. [ ] **Users and permissions** (M): today everything runs as root and nothing is checked
-   - [ ] uid/gid per process (real, effective, saved), setuid/setgid, supplementary groups; the
-         process owner on created files (today always root)
-   - [ ] Permission checks in the VFS and fs_ext2 (owner/group/other bits, sticky /tmp, umask)
+   - [x] uid/gid per process (real, effective, saved), setuid/setgid, supplementary groups;
+         set-ID programs; new files belong to their creator; kill checks permission (cred.c)
+   - [x] Permission checks: fs_ext2 checks the search permission of every directory on a path
+         (FS_OP_SETCRED tells it who asks); the VFS checks read/write on open, write on the
+         directory to create, remove or rename, the sticky bit, owner-or-root for chmod/chown/
+         utimes, write to connect to a socket; access() uses the real IDs; installation makes
+         everything root-owned with standard modes (/tmp 1777, /root 700, /home/user 700)
    - [ ] `login` against `/etc/shadow` (musl has `crypt`) and a normal user account by default;
          the login session becomes an s6-rc longrun (a getty-like service) instead of init's
          respawn loop
    - [ ] `sudo` (port of sudo 1.9, works with musl and without PAM, via `/etc/shadow`) for root
          work from the normal account; `/etc/sudoers` with the `wheel` group; `su` as well
+   - [ ] Memory limits per process and per user (a page budget in mem.c, like RLIMIT_AS):
+         today one process can take the whole 768 MiB pool (a native denial of service)
    - [ ] Users from the network later on: musl asks an nscd-protocol daemon for users it does not
          find in /etc/passwd (or skarnet's nsss): the hook for item 18
 7. [ ] **Pseudo-terminals** (M): `/dev/ptmx`, openpty. Unlocks the ssh server (dropbear),
@@ -137,6 +143,11 @@ Real hardware stays last on purpose: first the system has to be worth booting.
        (pure loops); `Ctrl-Z` / stopping processes; `Ctrl-C` in the middle of dash's prompt is
        processed with the next line
 10. [ ] **Threads: pthreads and `timer_create`** (L): several seL4 TCBs in one address space.
+        Each thread: its own TCB, IPC buffer, syscall buffer and endpoint badge; per-process
+        state stays in the server. futex in the server (musl's fast path is atomic in user space).
+        posix_server stays single-threaded on purpose (it never waits inside a call); scaling
+        comes from splitting it into servers on several cores with rings. Better after the async
+        fs_ext2 I/O and the rings (items 12-13), so threads meet a server that never waits.
        Blocks glib (pango, sway), browsers, Node.js and almost any large program
 11. [ ] **Graphical desktop: sway + Wayland** (L), on top of items 7, 8 and 10
    - [ ] Phase 1b: signalfd, shm_open (/dev/shm), AF_UNIX SEQPACKET, nested epoll in poll
@@ -208,7 +219,14 @@ Real hardware stays last on purpose: first the system has to be worth booting.
    - [ ] GOP framebuffer (address and format from multiboot2) for the graphical console;
          2x font scaling for HiDPI; scrollback with Shift+PgUp
    - [ ] Persistent disk with the sDDF NVMe driver
-   - [ ] Wi-Fi (Intel 8265), USB, audio: passthrough (VT-d) to the Linux VM as a "driver VM"
+   - [ ] Wi-Fi (Intel 8265), USB, audio: passthrough (VT-d) to the Linux VM as a "driver VM",
+         Qubes-style: the IOMMU is mandatory (the VM's DMA stays inside its own memory), its
+         network traffic is untrusted (netstack only sees frames on a queue), and USB goes to a
+         separate VM with an input proxy (a compromised VM must not inject keystrokes); the
+         internal keyboard and touchpad (i8042, I²C-HID) stay native
+   - [ ] Side channels (Spectre and others): kernel mitigations on; with multicore the VM on
+         its own cores; seL4's domain scheduler for strict temporal isolation (time protection
+         is research, not in mainline seL4 yet)
    - [ ] Touchpad/touchscreen (I²C-HID)
    - [ ] Native networking through the driver VM: virtio-net between netstack and the VM
    - [ ] Alternative to the driver VM for Wi-Fi: the Linux driver inside a component

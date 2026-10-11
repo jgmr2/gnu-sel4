@@ -149,6 +149,7 @@ void cred_copy(struct proc *to, const struct proc *from);
 void cred_exec(struct proc *p, uint32_t mode, uint32_t file_uid, uint32_t file_gid);
 bool cred_in_group(const struct proc *p, uint32_t gid);
 bool cred_may(const struct proc *p, uint32_t mode, uint32_t uid, uint32_t gid, int want);
+bool cred_may_real(const struct proc *p, uint32_t mode, uint32_t uid, uint32_t gid, int want);
 bool cred_may_signal(const struct proc *p, const struct proc *q);
 bool cred_handles(long nr);
 long cred_syscall(long nr, long a1, long a2, long a3);
