@@ -11,7 +11,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 IMAGE=sel4-dev
 
 if [ "$1" = "build" ]; then
-    exec docker build --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" -t "$IMAGE" "$ROOT"
+    exec docker build --target toolchain --build-arg UID="$(id -u)" --build-arg GID="$(id -g)" -t "$IMAGE" "$ROOT"
 fi
 
 # Current directory relative to the project root (if it is inside it)

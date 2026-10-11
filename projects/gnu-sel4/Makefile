@@ -13,12 +13,14 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 
-export MICROKIT_SDK    ?= $(abspath ../../sdk/microkit-sdk-2.3.1)
+# Dependencies (fetch-deps.sh): next to the repository, or elsewhere (the Docker image uses /deps)
+export DEPS            ?= $(abspath ../..)
+export MICROKIT_SDK    ?= $(DEPS)/sdk/microkit-sdk-2.3.1
 export MICROKIT_BOARD  := x86_64_generic_vtx
 export MICROKIT_CONFIG ?= debug
 # Our own Microkit tool (third_party/microkit, branch gnu-sel4: <cap_untyped>, <cap_cnode>...)
-export MICROKIT_TOOL   := $(abspath ../../third_party/microkit/target/release/microkit)
-export LIBVMM          := $(abspath ../../libvmm)
+export MICROKIT_TOOL   := $(DEPS)/third_party/microkit/target/release/microkit
+export LIBVMM          := $(DEPS)/libvmm
 export SDDF            := $(LIBVMM)/dep/sddf
 export POSIX           := $(abspath .)
 export BUILD_DIR       := $(abspath build)

@@ -8,7 +8,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
 OUT=$(realpath "$1")
-SRC=$(realpath "$(dirname "$0")/../../../../third_party/f-stack")
+SRC=$(realpath "${FSTACK:-$(dirname "$0")/../../../../third_party/f-stack}")
 mkdir -p "$OUT"
 cd "$OUT"
 

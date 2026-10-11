@@ -1,9 +1,11 @@
 #
 # GNU/seL4 build rules (copied to build/Makefile and run there, in Docker).
-# Input variables: MICROKIT_SDK MICROKIT_BOARD MICROKIT_CONFIG SDDF LIBVMM POSIX BUILD_DIR
+# Input variables: MICROKIT_SDK MICROKIT_BOARD MICROKIT_CONFIG SDDF LIBVMM POSIX BUILD_DIR DEPS
 #
 # SPDX-License-Identifier: BSD-2-Clause
 SUPPORTED_BOARDS := x86_64_generic_vtx
+# Third-party sources (fetch-deps.sh puts them in $(DEPS)/third_party)
+TP := $(DEPS)/third_party
 TOOLCHAIN ?= clang
 SDDF_CUSTOM_LIBC := 1
 include $(SDDF)/tools/make/board/common.mk
@@ -37,7 +39,7 @@ IMAGES := serial_driver.elf serial_virt_tx.elf serial_virt_rx.elf blk_driver.elf
 $(IMAGES): libsddf_util_debug.a
 
 # --- syscall tables generated from musl (Linux x86_64 numbers and names) ---
-MUSL_SRC := $(POSIX)/../../third_party/musl-1.2.6
+MUSL_SRC := $(TP)/musl-1.2.6
 syscall_nr.h: $(MUSL_SRC)/arch/x86_64/bits/syscall.h.in
 	cp $< $@
 syscall_names.h: $(MUSL_SRC)/arch/x86_64/bits/syscall.h.in
@@ -46,7 +48,7 @@ syscall_names.h: $(MUSL_SRC)/arch/x86_64/bits/syscall.h.in
 	  echo '};'; } > $@
 
 # --- graphical console: screen + PS/2 keyboard as the sDDF "serial driver" (console/) ---
-SPLEEN := $(POSIX)/../../third_party/spleen/spleen-8x16.bdf
+SPLEEN := $(TP)/spleen/spleen-8x16.bdf
 font_spleen.h: $(SPLEEN) $(POSIX)/tools/bdf2c.py
 	python3 $(POSIX)/tools/bdf2c.py $< $@
 console_%.o: $(POSIX)/console/%.c $(POSIX)/console/term.h font_spleen.h
@@ -110,9 +112,9 @@ SYSROOT_READY := $(LIBC) $(SYSROOT)/lib/crt0.o $(SYSROOT)/lib/libsel4posix.a $(S
 sysroot: $(SYSROOT_READY)
 
 # --- netstack: the FreeBSD TCP/IP stack (F-Stack) as a component, with musl as its libc ---
-FSTACK := $(POSIX)/../../third_party/f-stack
+FSTACK := $(TP)/f-stack
 fstack/fstack.o: $(POSIX)/ports/fstack/build-fstack.sh
-	$< fstack > fstack.log 2>&1 || { tail -20 fstack.log; exit 1; }
+	FSTACK=$(FSTACK) $< fstack > fstack.log 2>&1 || { tail -20 fstack.log; exit 1; }
 NET_CFLAGS := --target=x86_64-none-elf -O2 -g -Wall -fno-pic -fno-stack-protector -mfsgsbase -mrdrnd \
 	      -nostdinc -isystem $(SYSROOT)/include -I$(BOARD_DIR)/include -I$(SDDF)/include \
 	      -I$(SDDF)/include/microkit -I$(FSTACK)/lib -I$(POSIX)/include -I$(POSIX)/net/compat -D_GNU_SOURCE -D__thread= -include fstack_host.h -DINET -DINET6
@@ -145,19 +147,19 @@ bin/%: $(SYSROOT_READY) $$(wildcard $(POSIX)/apps/%/*.c)
 # --- ported programs ---
 # They all depend on $(SYSROOT_READY): if the runtime (libsel4posix.a) or musl changes, they
 # are rebuilt and relinked (otherwise they would keep the old runtime inside).
-DASH_SRC := $(POSIX)/../../third_party/dash-0.5.13.5
+DASH_SRC := $(TP)/dash-0.5.13.5
 dash/src/dash: $(SYSROOT_READY) $(POSIX)/ports/dash/build-dash.sh $(POSIX)/ports/dash/mksignames.c
 	$(POSIX)/ports/dash/build-dash.sh $(DASH_SRC) dash $(SYSROOT)
 
 # GNU coreutils: a multi-call binary; its programs are symlinked at install time
-CU_SRC := $(POSIX)/../../third_party/coreutils-9.12
+CU_SRC := $(TP)/coreutils-9.12
 coreutils/src/coreutils: $(SYSROOT_READY) $(POSIX)/ports/coreutils/build-coreutils.sh
 	$(POSIX)/ports/coreutils/build-coreutils.sh $(CU_SRC) coreutils $(SYSROOT)
 coreutils.bin: coreutils/src/coreutils
 	llvm-strip -o $@ $<
 
 # ncurses: library in the sysroot (used by zsh and vim) + its programs (clear, tput, reset...)
-NC_SRC := $(POSIX)/../../third_party/ncurses-6.6
+NC_SRC := $(TP)/ncurses-6.6
 NCURSES := ncurses/.built
 $(NCURSES): $(SYSROOT_READY) $(POSIX)/ports/ncurses/build-ncurses.sh
 	$(POSIX)/ports/ncurses/build-ncurses.sh $(NC_SRC) ncurses $(SYSROOT)
@@ -167,19 +169,19 @@ ncurses/inst/usr/bin/%: $(NCURSES)
 	@test -f $@
 
 # zsh (static, modules built into the binary)
-ZSH_SRC := $(POSIX)/../../third_party/zsh-5.9.2
+ZSH_SRC := $(TP)/zsh-5.9.2
 zsh/Src/zsh: $(NCURSES) $(SYSROOT_READY) $(POSIX)/ports/zsh/build-zsh.sh
 	$(POSIX)/ports/zsh/build-zsh.sh $(ZSH_SRC) zsh $(SYSROOT)
 
 # vim (text mode) with a trimmed runtime
-VIM_SRC := $(POSIX)/../../third_party/vim-9.2.1172
+VIM_SRC := $(TP)/vim-9.2.1172
 vim/src/vim: $(NCURSES) $(SYSROOT_READY) $(POSIX)/ports/vim/build-vim.sh
 	$(POSIX)/ports/vim/build-vim.sh $(VIM_SRC) vim $(SYSROOT)
 vim.bin: vim/src/vim
 	llvm-strip -o $@ $<
 
 # procps-ng: ps, top, free... read posix_server's /proc (server/procfs.c)
-PROCPS_SRC := $(POSIX)/../../third_party/procps-ng-4.0.7
+PROCPS_SRC := $(TP)/procps-ng-4.0.7
 PROCPS_PROGS := ps top free uptime pgrep pkill pidof watch vmstat pwdx tload
 procps/.built: $(NCURSES) $(SYSROOT_READY) $(POSIX)/ports/procps/build-procps.sh
 	$(POSIX)/ports/procps/build-procps.sh $(PROCPS_SRC) procps $(SYSROOT)
@@ -188,21 +190,21 @@ procps/.built: $(NCURSES) $(SYSROOT_READY) $(POSIX)/ports/procps/build-procps.sh
 $(addprefix procps/bin/,$(PROCPS_PROGS)): procps/.built ;
 
 # curl with HTTPS (mbedTLS in the sysroot) and Mozilla's root certificates
-MBEDTLS_SRC := $(POSIX)/../../third_party/mbedtls-3.6.7
-CURL_SRC := $(POSIX)/../../third_party/curl-8.22.0
-CACERT := $(POSIX)/../../third_party/cacert/cacert.pem
+MBEDTLS_SRC := $(TP)/mbedtls-3.6.7
+CURL_SRC := $(TP)/curl-8.22.0
+CACERT := $(TP)/cacert/cacert.pem
 curl/curl/src/curl: $(SYSROOT_READY) $(POSIX)/ports/curl/build-curl.sh
 	$(POSIX)/ports/curl/build-curl.sh $(MBEDTLS_SRC) $(CURL_SRC) $(CACERT) curl $(SYSROOT)
 curl.bin: curl/curl/src/curl
 	llvm-strip -o $@ $<
 
 # socat (and /bin/nc, a script on top of it) and the dropbear ssh client (ssh, scp, dropbearkey)
-SOCAT_SRC := $(POSIX)/../../third_party/socat-1.8.1.3
+SOCAT_SRC := $(TP)/socat-1.8.1.3
 socat/socat: $(SYSROOT_READY) $(POSIX)/ports/socat/build-socat.sh
 	$(POSIX)/ports/socat/build-socat.sh $(SOCAT_SRC) socat $(SYSROOT)
 socat.bin: socat/socat
 	llvm-strip -o $@ $<
-DROPBEAR_SRC := $(POSIX)/../../third_party/dropbear-2026.94
+DROPBEAR_SRC := $(TP)/dropbear-2026.94
 dropbear/dropbearmulti: $(SYSROOT_READY) $(POSIX)/ports/dropbear/build-dropbear.sh
 	$(POSIX)/ports/dropbear/build-dropbear.sh $(DROPBEAR_SRC) dropbear $(SYSROOT)
 dropbear.bin: dropbear/dropbearmulti
@@ -216,7 +218,7 @@ GNU_PROGS := grep/grep grep/egrep grep/fgrep sed/sed findutils/find findutils/xa
 GNU_ARGS_diffutils := gl_cv_func_strcasecmp_works=yes
 GNU_ARGS_less := --with-regex=posix LIBS=-lncursesw
 gnu-%/.built: $(SYSROOT_READY) $(NCURSES) $(POSIX)/ports/gnu/build-gnu.sh
-	$(POSIX)/ports/gnu/build-gnu.sh $(POSIX)/../../third_party/$(filter $*-%,$(GNU_PKGS)) gnu-$* $(SYSROOT) $(GNU_ARGS_$*)
+	$(POSIX)/ports/gnu/build-gnu.sh $(TP)/$(filter $*-%,$(GNU_PKGS)) gnu-$* $(SYSROOT) $(GNU_ARGS_$*)
 	touch $@
 $(foreach n,$(sort $(dir $(GNU_PROGS))),$(eval gnu-$(n)bin/%: gnu-$(n).built ; @test -f $$@))
 GNU_BINS := $(foreach p,$(GNU_PROGS),gnu-$(dir $(p))bin/$(notdir $(p)):$(notdir $(p)))
@@ -226,7 +228,6 @@ EXTRA_BINS := dash/src/dash:dash coreutils.bin:coreutils zsh/Src/zsh:zsh vim.bin
 	      $(foreach p,$(NC_PROGS),ncurses/inst/usr/bin/$(p):$(p)) \
 	      $(foreach p,$(PROCPS_PROGS),procps/bin/$(p):$(p))
 # License texts of everything on the disk -> /usr/share/licenses/<project>/ (see THIRD_PARTY.md)
-TP := $(POSIX)/../../third_party
 gnu_dir = $(firstword $(subst -, ,$(1)))
 LICENSE_FILES := gnu-sel4:$(POSIX)/../../LICENSE gnu-sel4:$(POSIX)/../../THIRD_PARTY.md \
 	sel4:$(MICROKIT_SDK)/LICENSES/GPL-2.0-only.txt sel4:$(MICROKIT_SDK)/LICENSES/BSD-2-Clause.txt \

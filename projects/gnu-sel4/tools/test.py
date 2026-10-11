@@ -8,7 +8,7 @@ reads the "TEST ..." lines from the serial port. Exits with 0 only if all of the
 
   usage: tools/test.py [--no-net] [--timeout SECONDS]
 """
-import argparse, fcntl, os, select, subprocess, sys, time
+import argparse, fcntl, os, select, shutil, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJ = os.path.dirname(HERE)
@@ -39,11 +39,12 @@ def main():
 
     with open(MARKER, "w") as m:
         m.write("no-net" if a.no_net else "full")
-    rel = lambda p: os.path.relpath(p, os.path.dirname(os.path.dirname(PROJ)))
-    r = subprocess.run([os.path.join(PROJ, "..", "..", "dev.sh"), "debugfs", "-w", "-R",
-                        "write %s /etc/test" % rel(MARKER).replace(os.sep, "/"),
-                        "%s?offset=1048576" % rel(COPY).replace(os.sep, "/")],
-                       cwd=os.path.dirname(os.path.dirname(PROJ)), capture_output=True, text=True)
+    # debugfs: directly if it is here (inside the Docker image), otherwise through dev.sh
+    top = os.path.dirname(os.path.dirname(PROJ))
+    rel = lambda p: os.path.relpath(p, top).replace(os.sep, "/")
+    debugfs = ["debugfs"] if shutil.which("debugfs") else [os.path.join(top, "dev.sh"), "debugfs"]
+    r = subprocess.run(debugfs + ["-w", "-R", "write %s /etc/test" % rel(MARKER), "%s?offset=1048576" % rel(COPY)],
+                       cwd=top, capture_output=True, text=True)
     if r.returncode:
         sys.exit("debugfs: " + r.stderr)
 

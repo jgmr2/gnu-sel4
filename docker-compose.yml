@@ -1,0 +1,37 @@
+# GNU/seL4 with Docker only (no other host setup):
+#   docker compose run --rm build        build everything and install it into disk.img
+#   docker compose run --rm test         automated tests in headless QEMU (needs /dev/kvm)
+#   docker compose run --rm shell        a shell in the build environment
+#   docker compose run --rm vm-rootfs    kernel + initramfs of the Linux VM (once, before build)
+# The first run builds the image: every dependency is downloaded and checked against deps.lock.
+# `make run` (QEMU with a window) runs on the host: see README.md.
+#
+# SPDX-License-Identifier: BSD-2-Clause
+x-gnu-sel4: &gnu-sel4
+  image: gnu-sel4-dev
+  build:
+    context: .
+    target: full
+  volumes:
+    - .:/work
+  working_dir: /work/projects/gnu-sel4
+
+services:
+  build:
+    <<: *gnu-sel4
+    command: make
+  test:
+    <<: *gnu-sel4
+    devices:
+      - /dev/kvm
+    user: root                       # /dev/kvm belongs to the host's kvm group
+    command: make test
+  shell:
+    <<: *gnu-sel4
+    command: bash
+  vm-rootfs:
+    image: alpine:3.24
+    volumes:
+      - .:/work
+    working_dir: /work/projects/gnu-sel4/vm/rootfs
+    command: sh -c './build-rootfs.sh && chown -R "$$(stat -c %u:%g /work)" out'

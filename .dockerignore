@@ -1,0 +1,5 @@
+# The image only needs the dependency manifest, the fetch script and the Microkit patches
+*
+!deps.lock
+!fetch-deps.sh
+!projects/gnu-sel4/microkit/*.patch

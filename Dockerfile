@@ -1,13 +1,16 @@
-# Development environment for seL4 Microkit
-# Contains: compiler (clang/LLVM), make, gdb. (QEMU runs on the host.)
-# The Microkit SDK lives on the host (./sdk) and is mounted at /work/sdk.
+# GNU/seL4 build environment, in stages:
+#   toolchain  compiler (clang/LLVM 18), make, sdfgen, e2fsprogs. The dependencies stay on the
+#              host next to the repository (./dev.sh build uses this stage)
+#   full       toolchain + every dependency (fetch-deps.sh, checked against deps.lock) in /deps,
+#              the patched Microkit tool already built, and QEMU for `make test`
+#              (docker compose uses this stage)
 #
 # SPDX-License-Identifier: BSD-2-Clause
-FROM debian:trixie
+FROM debian:trixie AS toolchain
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        clang-18 lld-18 llvm-18 libclang-rt-18-dev make device-tree-compiler acpica-tools perl xz-utils cpio \
-        gdb-multiarch python3 python3-pip git ca-certificates curl less vim-tiny \
+        clang-18 lld-18 llvm-18 libclang-rt-18-dev make device-tree-compiler acpica-tools perl \
+        xz-utils bzip2 cpio gdb-multiarch python3 python3-pip git ca-certificates curl less vim-tiny \
         dosfstools gdisk fdisk e2fsprogs \
     && rm -rf /var/lib/apt/lists/*
 
@@ -21,10 +24,30 @@ ARG UID=1000
 ARG GID=1000
 RUN groupadd -g ${GID} dev && useradd -m -u ${UID} -g ${GID} -s /bin/bash dev
 
-ENV MICROKIT_SDK=/work/sdk/microkit-sdk-2.3.1 \
-    MICROKIT_BOARD=qemu_virt_aarch64 \
-    MICROKIT_CONFIG=debug \
+ENV MICROKIT_CONFIG=debug \
     LLVM=True
 
 USER dev
 WORKDIR /work
+
+# ---------------------------------------------------------------- dependencies
+FROM toolchain AS deps
+USER root
+COPY deps.lock fetch-deps.sh /deps/
+COPY projects/gnu-sel4/microkit/*.patch /deps/projects/gnu-sel4/microkit/
+RUN /deps/fetch-deps.sh && rm -rf /deps/.cache /deps/projects
+
+# ---------------------------------------------------------------- the patched Microkit tool
+FROM rust:1.94 AS tool
+COPY --from=deps /deps/third_party/microkit /src
+RUN cd /src && cargo build --release -p microkit-tool
+
+# ---------------------------------------------------------------- everything together
+FROM toolchain AS full
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends qemu-system-x86 \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=deps --chown=dev:dev /deps /deps
+COPY --from=tool /src/target/release/microkit /deps/third_party/microkit/target/release/microkit
+ENV DEPS=/deps
+USER dev
