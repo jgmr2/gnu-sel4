@@ -66,7 +66,7 @@ static char line[LINE_MAX_];
 static uint32_t line_len;    /* bytes in the input buffer */
 static uint32_t ready_len;   /* of those, ready for read() (finished line or raw mode) */
 static bool eof_pending;
-static uint32_t reader_waiting, writer_waiting;   /* waiting processes (bit = index) */
+static waitmask_t reader_waiting, writer_waiting;   /* waiting processes (bit = index) */
 static int fg_pgrp = 1;                            /* foreground group (receives Ctrl-C) */
 /* Terminal size: it does not arrive over the serial port; `resize` sets it (TIOCSWINSZ)
  * after asking the terminal with an escape sequence */
@@ -174,7 +174,7 @@ long tty_read(size_t len)
 {
     if (ready_len == 0) {
         if (eof_pending) { eof_pending = false; return 0; }
-        reader_waiting |= 1u << PROC_INDEX(cur);
+        reader_waiting |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
     size_t n = len < ready_len ? len : ready_len;
@@ -199,7 +199,7 @@ long tty_write(const char *data, size_t len)
     /* Queue full: ask serial_virt_tx for a signal when there is room, and check again */
     serial_request_consumer_signal(&tx_queue);
     if (!serial_queue_full(&tx_queue, tx_tail + 1)) return tty_write(data, len);
-    writer_waiting |= 1u << PROC_INDEX(cur);
+    writer_waiting |= WAIT_BIT(cur);
     return POSIX_RETRY;
 }
 
@@ -287,10 +287,10 @@ int tty_poll(bool want_in, bool want_out, bool wait)
     if (want_in && (ready_len || eof_pending)) ready |= 1;
     if (want_out && !serial_queue_full(&tx_queue, tx_tail + 1)) ready |= 4;
     if (!ready && wait) {
-        if (want_in) reader_waiting |= 1u << PROC_INDEX(cur);
+        if (want_in) reader_waiting |= WAIT_BIT(cur);
         if (want_out) {
             serial_request_consumer_signal(&tx_queue);
-            writer_waiting |= 1u << PROC_INDEX(cur);
+            writer_waiting |= WAIT_BIT(cur);
         }
     }
     return ready;

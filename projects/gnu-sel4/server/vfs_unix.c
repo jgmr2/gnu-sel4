@@ -13,7 +13,7 @@
  * Names (bind) are in a server table, not on disk: unlink and stat of the path see
  * them. sendmsg/recvmsg data: the descriptors go at NET_ADDR_OFF of the process's
  * buffer. */
-#define NUSOCK        64
+#define NUSOCK        128
 #define USOCK_BUF     32768
 #define USOCK_MAXFD   32
 #define SO_PEERCRED   17
@@ -36,7 +36,7 @@ static struct usock {
     uint8_t buf[USOCK_BUF];
     int fdq[USOCK_MAXFD], nfdq;            /* open file descriptions in transit (ofiles indices) */
     int pend[8], npend;                    /* US_LISTEN: connections waiting to be accepted */
-    uint32_t rwait, wwait;
+    waitmask_t rwait, wwait;
 } usocks[NUSOCK];
 
 static int usock_alloc(void)
@@ -208,7 +208,7 @@ long usock_accept(struct ofile *f, long flags)
     if (l->state != US_LISTEN) return -EINVAL;
     if (!l->npend) {
         if (f->flags & O_NONBLOCK) return -EAGAIN;
-        l->rwait |= 1u << PROC_INDEX(cur);
+        l->rwait |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
     int s = l->pend[0];
@@ -233,7 +233,7 @@ long usock_send(struct ofile *f, size_t len, long flags, long nfds)
     if (u->dgram && len + 4 > USOCK_BUF) return -EMSGSIZE;
     if (!space || (u->dgram && space < len + 4) || (nfds && p->nfdq + nfds > USOCK_MAXFD)) {
         if ((f->flags & O_NONBLOCK) || (flags & MSG_DONTWAIT)) return -EAGAIN;
-        u->wwait |= 1u << PROC_INDEX(cur);
+        u->wwait |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
     const int *fds = (const int *)(client_buf + NET_ADDR_OFF);
@@ -270,7 +270,7 @@ long usock_recv(struct ofile *f, size_t len, long flags, long maxfds)
     if (!avail) {
         if (u->peer_closed) return 0;
         if ((f->flags & O_NONBLOCK) || (flags & MSG_DONTWAIT)) return -EAGAIN;
-        u->rwait |= 1u << PROC_INDEX(cur);
+        u->rwait |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
     if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
@@ -320,8 +320,8 @@ short usock_poll(struct ofile *f, short events, bool wait)
         r |= POLLOUT;
     }
     if (!(r & (events | POLLHUP)) && wait) {
-        if (events & POLLIN) u->rwait |= 1u << PROC_INDEX(cur);
-        if (events & POLLOUT) u->wwait |= 1u << PROC_INDEX(cur);
+        if (events & POLLIN) u->rwait |= WAIT_BIT(cur);
+        if (events & POLLOUT) u->wwait |= WAIT_BIT(cur);
     }
     return r;
 }

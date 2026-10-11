@@ -85,6 +85,9 @@ check nice        sh -c 'loop() { i=0; while [ $i -lt 3000 ]; do i=$((i+1)); don
                          [ $low -le $((base * 2 + 5)) ] || exit 1
                          out=$(printf "nice -n -5 true\nexit\n" | login -f user 2>&1)
                          echo "$out" | grep -q "Permission denied" || { echo "user lowered its nice: $out"; exit 1; }'
+check many-procs  sh -c 'i=0; while [ $i -lt 50 ]; do sleep 3 & i=$((i+1)); done
+                         n=$(ps -e | grep -c " sleep"); echo "INFO 50 background processes started, $n running"
+                         wait; [ "$n" -ge 50 ]'
 check hardlinks   sh -c 'rm -f /tmp/e1 /tmp/e2; echo x >/tmp/e1 && ln /tmp/e1 /tmp/e2 && [ "$(stat -c %h /tmp/e1)" = 2 ] && rm /tmp/e1 && [ "$(cat /tmp/e2)" = x ] && [ "$(stat -c %h /tmp/e2)" = 1 ] && rm /tmp/e2'
 check coreutils   sh -c '[ "$(ls /bin | wc -l)" -gt 100 ] && [ "$(echo hello | tr a-z A-Z)" = HELLO ]'
 check gnu-tools   sh -c 'set -e; rm -rf /tmp/gt; mkdir /tmp/gt; cd /tmp/gt; printf "a\nb\nc\n" > f

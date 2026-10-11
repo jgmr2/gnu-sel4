@@ -848,14 +848,14 @@ static short fd_poll(int fd, short events, bool wait)
         if (pp->tail != pp->head) r |= POLLIN;
         if (!pp->writers) r |= POLLHUP;
         if ((f->flags & O_ACCMODE) == O_RDWR && pp->tail - pp->head < PIPE_SIZE) r |= POLLOUT;
-        if (!r && wait && in) pp->rwait |= 1u << PROC_INDEX(cur);
+        if (!r && wait && in) pp->rwait |= WAIT_BIT(cur);
         break;
     }
     case OF_PIPE_W: {
         struct pipe *pp = &pipes[f->ino];
         if (!pp->readers) r |= POLLERR;
         else if (pp->tail - pp->head < PIPE_SIZE) r |= POLLOUT;
-        if (!r && wait && out) pp->wwait |= 1u << PROC_INDEX(cur);
+        if (!r && wait && out) pp->wwait |= WAIT_BIT(cur);
         break;
     }
     case OF_LINUX: {

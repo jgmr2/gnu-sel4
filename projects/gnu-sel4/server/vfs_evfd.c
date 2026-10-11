@@ -34,7 +34,7 @@ long evfd_read(struct ofile *f, size_t len)
     if (len < 8) return -EINVAL;
     if (!e->count) {
         if (f->flags & O_NONBLOCK) return -EAGAIN;
-        e->rwait |= 1u << PROC_INDEX(cur);
+        e->rwait |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
     uint64_t v = e->semaphore ? 1 : e->count;
@@ -54,7 +54,7 @@ long evfd_write(struct ofile *f, size_t len)
     if (v == ~0ULL) return -EINVAL;
     if (v > EVFD_MAX - e->count) {
         if (f->flags & O_NONBLOCK) return -EAGAIN;
-        e->wwait |= 1u << PROC_INDEX(cur);
+        e->wwait |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
     e->count += v;
@@ -111,7 +111,7 @@ long tfd_read(struct ofile *f, size_t len)
     tfd_update(t, timer_now_ns());
     if (!t->expirations) {
         if (f->flags & O_NONBLOCK) return -EAGAIN;
-        t->rwait |= 1u << PROC_INDEX(cur);
+        t->rwait |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
     memcpy((void *)client_buf, &t->expirations, 8);
@@ -146,8 +146,8 @@ short evfd_poll(struct ofile *f, short events, bool in, bool out, bool wait)
     if (e->count) r |= POLLIN;
     if (e->count < EVFD_MAX) r |= POLLOUT;
     if (!(r & events) && wait) {
-        if (in) e->rwait |= 1u << PROC_INDEX(cur);
-        if (out) e->wwait |= 1u << PROC_INDEX(cur);
+        if (in) e->rwait |= WAIT_BIT(cur);
+        if (out) e->wwait |= WAIT_BIT(cur);
     }
     return r;
 }
@@ -157,6 +157,6 @@ short tfd_poll(struct ofile *f, bool in, bool wait)
     struct tfd *t = &tfds[f->ino];
     tfd_update(t, timer_now_ns());
     if (t->expirations) return POLLIN;
-    if (wait && in) t->rwait |= 1u << PROC_INDEX(cur);
+    if (wait && in) t->rwait |= WAIT_BIT(cur);
     return 0;
 }

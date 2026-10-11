@@ -23,15 +23,15 @@ uintptr_t br_rx_queue, br_rx_data, br_tx_queue, br_tx_data;
 
 static serial_queue_handle_t rxq, txq;
 static bool agent_ready;
-static uint32_t rx_waiters, hello_waiters;      /* processes waiting for room / for the agent */
+static waitmask_t rx_waiters, hello_waiters;      /* processes waiting for room / for the agent */
 
-#define NSESSION   16
+#define NSESSION   32
 #define INBOX_SIZE 0x10000
 static struct session {
     bool used, dead;
     bool started;                               /* it already sent something to the agent */
     uint32_t head, tail;                        /* circular inbox of records */
-    uint32_t waiters;
+    waitmask_t waiters;
     uint8_t inbox[INBOX_SIZE];
 } sessions[NSESSION];
 
@@ -51,7 +51,7 @@ static long send_frame(uint8_t type, int session, const void *data, uint32_t len
     if (rx_free() < sizeof(struct br_frame) + len) {
         serial_request_consumer_signal(&rxq);
         if (rx_free() < sizeof(struct br_frame) + len) {
-            rx_waiters |= 1u << PROC_INDEX(cur);
+            rx_waiters |= WAIT_BIT(cur);
             return POSIX_RETRY;
         }
     }
@@ -205,7 +205,7 @@ long bridge_write(int sid, const uint8_t *rec, size_t len)
     if (len < 1 || len > 1 + BR_MAX_DATA) return -EINVAL;
     if (s->dead) return -EPIPE;
     if (!agent_ready) {                                    /* the VM is still booting */
-        hello_waiters |= 1u << PROC_INDEX(cur);
+        hello_waiters |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
     long r = send_frame(rec[0], sid, rec + 1, len - 1);
@@ -219,7 +219,7 @@ long bridge_read(int sid, uint8_t *out, size_t len)
     struct session *s = &sessions[sid];
     if (s->tail == s->head) {
         if (s->dead) return 0;
-        s->waiters |= 1u << PROC_INDEX(cur);
+        s->waiters |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
     uint8_t hdr[5];
@@ -241,10 +241,10 @@ int bridge_poll(int sid, bool want_in, bool want_out, bool wait)
     if (want_in && (s->tail != s->head || s->dead)) ready |= 1;
     if (want_out && agent_ready && rx_free() > sizeof(struct br_frame) + 1024) ready |= 4;
     if (!ready && wait) {
-        if (want_in) s->waiters |= 1u << PROC_INDEX(cur);
+        if (want_in) s->waiters |= WAIT_BIT(cur);
         if (want_out) {
-            rx_waiters |= 1u << PROC_INDEX(cur);
-            if (!agent_ready) hello_waiters |= 1u << PROC_INDEX(cur);
+            rx_waiters |= WAIT_BIT(cur);
+            if (!agent_ready) hello_waiters |= WAIT_BIT(cur);
         }
     }
     return ready;

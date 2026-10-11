@@ -31,7 +31,7 @@ Channel = SystemDescription.Channel
 IrqIoapic = SystemDescription.IrqIoapic
 
 # ---- native GNU/seL4 (must match include/sel4posix/*.h and server/server.h) ----
-PROC_SLOTS = 32                       # PROC_SLOTS in procmem.h: scheduling contexts in the pool
+PROC_SLOTS = 64                       # PROC_SLOTS in procmem.h: scheduling contexts in the pool
 SERVER_FS_CHANNEL_ID = 21             # FS_CH
 SERVER_BRIDGE_CHANNEL_ID = 22         # BRIDGE_CH in server/server.h
 SERVER_NET_CHANNEL_ID = 23            # NET_CH in server/server.h

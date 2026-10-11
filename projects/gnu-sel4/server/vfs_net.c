@@ -10,7 +10,7 @@
 /* Inside netstack sockets never block: here we decide whether the call waits
  * (POSIX_RETRY, retried when netstack reports activity) */
 uintptr_t net_buf;                         /* shared with netstack (setvar in meta.py) */
-static uint32_t net_waiters;
+static waitmask_t net_waiters;
 
 
 long net_call(long op, long a1, long a2, long a3, long a4)
@@ -83,7 +83,7 @@ static long sock_wait(struct ofile *f, long r, long flags)
 {
     if (r != -EAGAIN) return r;
     if ((f->flags & O_NONBLOCK) || (flags & MSG_DONTWAIT)) return -EAGAIN;
-    net_waiters |= 1u << PROC_INDEX(cur);
+    net_waiters |= WAIT_BIT(cur);
     return POSIX_RETRY;
 }
 
@@ -131,7 +131,7 @@ long sock_connect(struct ofile *f, long alen)
     if (f->off) {                                     /* blocking connect() already in progress */
         long p = net_call(NET_OP_POLL, f->ino, POLLOUT_, 0, 0);
         if (p >= 0 && !(p & (POLLOUT_ | POLLERR_ | POLLHUP_))) {
-            net_waiters |= 1u << PROC_INDEX(cur);
+            net_waiters |= WAIT_BIT(cur);
             return POSIX_RETRY;
         }
         f->off = 0;
@@ -144,7 +144,7 @@ long sock_connect(struct ofile *f, long alen)
     if (r != -EINPROGRESS) return r;
     if (f->flags & O_NONBLOCK) return r;
     f->off = 1;
-    net_waiters |= 1u << PROC_INDEX(cur);
+    net_waiters |= WAIT_BIT(cur);
     return POSIX_RETRY;
 }
 
@@ -193,7 +193,7 @@ short sock_poll(struct ofile *f, short events, bool wait)
 {
     long p = net_call(NET_OP_POLL, f->ino, events, 0, 0);
     short r = p < 0 ? POLLERR : p;
-    if (!(r & (events | POLLERR | POLLHUP)) && wait) net_waiters |= 1u << PROC_INDEX(cur);
+    if (!(r & (events | POLLERR | POLLHUP)) && wait) net_waiters |= WAIT_BIT(cur);
     return r;
 }
 

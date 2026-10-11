@@ -72,8 +72,8 @@
 
 /* ---------------- processes ---------------- */
 
-#define NPROC 32           /* process records (including zombies) */
-#define NFD   64           /* descriptors per process */
+#define NPROC 64           /* process records (including zombies); = PROC_SLOTS */
+#define NFD   256          /* descriptors per process */
 #define NGROUPS_ 32        /* supplementary groups per process */
 
 enum { P_FREE, P_RUN, P_ZOMBIE };
@@ -133,6 +133,9 @@ extern uintptr_t client_buf;        /* its shared buffer (in its slot's window) 
 #define NET_CH       23             /* SERVER_NET_CHANNEL_ID in meta.py (to netstack) */
 #define NET_LEASE_CH 24             /* SERVER_LEASE_CHANNEL_ID: netstack obtained/renewed the DHCP lease */
 #define PROC_INDEX(p) ((int)((p) - procs))
+/* A set of processes waiting for something: bit = process index */
+typedef uint64_t waitmask_t;
+#define WAIT_BIT(p) ((waitmask_t)1 << PROC_INDEX(p))
 
 /* proc.c */
 void proc_init(void);
@@ -142,7 +145,7 @@ long proc_syscall(long nr, long a1, long a2, long a3, long a4, long a5);
 struct proc *proc_by_slot(int slot);
 struct proc *proc_by_pid(int pid);
 void proc_wake(struct proc *p);
-void proc_wake_mask(uint32_t mask);
+void proc_wake_mask(waitmask_t mask);
 void proc_signal(struct proc *p, int sig);
 void proc_signal_pgrp(int pgid, int sig);
 void proc_exit(struct proc *p, int status);

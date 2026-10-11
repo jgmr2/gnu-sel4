@@ -32,7 +32,7 @@ long pipe_read(struct ofile *f, size_t len)
     if (!avail) {
         if (!pp->writers) return 0;                       /* end of file */
         if (f->flags & O_NONBLOCK) return -EAGAIN;
-        pp->rwait |= 1u << PROC_INDEX(cur);
+        pp->rwait |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
     size_t n = len < avail ? len : avail;
@@ -54,7 +54,7 @@ long pipe_write(struct ofile *f, size_t len)
     uint32_t space = PIPE_SIZE - (pp->tail - pp->head);
     if (!space) {
         if (f->flags & O_NONBLOCK) return -EAGAIN;
-        pp->wwait |= 1u << PROC_INDEX(cur);
+        pp->wwait |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
     size_t n = len < space ? len : space;
@@ -140,7 +140,7 @@ long fifo_open(uint32_t ino, uint32_t flags, const char *abs)
         if (!retry) cur->fifo_wait_opens = other;
         cur->fifo_wait = pi + 1;                        /* keeps its count while it waits */
         cur->fifo_wait_write = !rd;
-        pp->owait |= 1u << PROC_INDEX(cur);
+        pp->owait |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
     cur->fifo_wait = 0;

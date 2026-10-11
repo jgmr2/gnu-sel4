@@ -83,7 +83,7 @@ void proc_wake(struct proc *p)
     if (p && p->state == P_RUN && p->slot >= 0) slot_signal(p->slot);
 }
 
-void proc_wake_mask(uint32_t mask)
+void proc_wake_mask(waitmask_t mask)
 {
     for (int i = 0; mask && i < NPROC; i++, mask >>= 1)
         if (mask & 1) proc_wake(&procs[i]);

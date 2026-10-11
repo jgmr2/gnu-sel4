@@ -90,40 +90,40 @@ struct ofile {
     char path[FS_PATH_MAX];     /* absolute path (for fchdir and the *at calls) */
 };
 
-#define NOFILE 256
+#define NOFILE 512
 extern struct ofile ofiles[NOFILE];
 
 /* Pipes: circular buffer; whoever blocks goes into rwait/wwait (bits = process index).
  * A named pipe (mkfifo) is the same object, found by its inode while someone has it open or
  * is blocked opening it; its data goes away with the last close, as in Linux. */
-#define NPIPE     64
+#define NPIPE     128
 #define PIPE_SIZE 16384
 struct pipe {
     bool used;
     int readers, writers;
     uint32_t head, tail;        /* tail - head = bytes in the buffer */
-    uint32_t rwait, wwait;
+    waitmask_t rwait, wwait;
     uint32_t fifo;              /* named pipe: its inode (0 = anonymous pipe) */
-    uint32_t owait;             /* processes blocked in open() waiting for the other end */
+    waitmask_t owait;             /* processes blocked in open() waiting for the other end */
     uint32_t r_opens, w_opens;  /* opens of each end so far: a waiter returns once the other moved */
     char buf[PIPE_SIZE];
 };
 extern struct pipe pipes[NPIPE];
 
 /* eventfd: a counter; read empties it (or subtracts 1 with EFD_SEMAPHORE), write adds */
-#define NEVFD 32
+#define NEVFD 64
 struct evfd {
     bool used, semaphore;
     uint64_t count;
-    uint32_t rwait, wwait;
+    waitmask_t rwait, wwait;
 };
 
 /* timerfd: deadlines in server timer ns; read returns the expirations */
-#define NTFD 32
+#define NTFD 64
 struct tfd {
     bool used;
     uint64_t next, interval, expirations;
-    uint32_t rwait;
+    waitmask_t rwait;
 };
 extern struct evfd evfds[NEVFD];
 extern struct tfd tfds[NTFD];
