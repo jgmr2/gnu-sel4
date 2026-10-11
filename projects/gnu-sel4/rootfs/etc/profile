@@ -2,9 +2,9 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 export PATH=/bin:/sbin:/usr/bin
-export HOME=/root
+[ -n "$HOME" ] || export HOME=/root
 export TERM=xterm-256color
-PS1='root@gnu-sel4:$PWD# '
+if [ "$(id -u)" = 0 ]; then PS1="$(id -un)@$(hostname):\$PWD# "; else PS1="$(id -un)@$(hostname):\$PWD\$ "; fi
 cd "$HOME"
 # real window size (it does not arrive by itself over the serial port; `resize` measures it again)
 [ -t 0 ] && resize -s

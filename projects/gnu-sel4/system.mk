@@ -138,6 +138,8 @@ netstack_copy.elf: network_copy.elf
 # --- programs from apps/<name>/*.c -> bin/<name> (in /bin, or in /sbin for SBIN_APPS) ---
 SBIN_APPS := init 9pd poweroff
 SBIN_LINKS := reboot:poweroff halt:poweroff
+# Installed set-user-ID root (they act for the user on root's files: /etc/shadow)
+SETUID_APPS := passwd
 APPS := $(notdir $(wildcard $(POSIX)/apps/*))
 BINS := $(addprefix bin/,$(APPS))
 .SECONDEXPANSION:
@@ -271,7 +273,7 @@ DATA_TREES := $(POSIX)/rootfs/etc/s6-rc:/etc/s6-rc zsh/inst/usr/share/zsh:/usr/s
 # Symlinks: "name:target". The coreutils ones come from coreutils/programs.txt
 # Linux VM commands available as native ones (bridge, like WSL interop)
 LINUX_CMDS := docker
-LINKS := sh:dash vi:vim $(foreach c,$(LINUX_CMDS),$(c):linux) \
+LINKS := sh:dash vi:vim chpasswd:passwd $(foreach c,$(LINUX_CMDS),$(c):linux) \
 	 ssh:dropbearmulti dbclient:dropbearmulti scp:dropbearmulti dropbearkey:dropbearmulti
 # terminfo: only the terminals in use (the full database has ~1900)
 TERMINFO := x/xterm x/xterm-256color x/xterm-color v/vt100 v/vt102 v/vt220 l/linux s/screen s/screen-256color d/dumb a/ansi
@@ -342,8 +344,11 @@ $(DISK):
 
 # --- installs the programs into /bin and the system files (leaving everything else alone) ---
 # SYSFILES: files from rootfs/ that the system manages and that are updated on every build
-SYSFILES := etc/motd etc/profile etc/rc etc/mtab etc/zshrc etc/zprofile etc/shells etc/passwd \
-	    etc/resolv.conf etc/hosts usr/share/vim/vimrc etc/tests.sh etc/netcfg.conf bin/nc
+SYSFILES := etc/motd etc/profile etc/rc etc/mtab etc/zshrc etc/zprofile etc/shells \
+	    etc/resolv.conf usr/share/vim/vimrc etc/tests.sh bin/nc
+# INITFILES: the user's own configuration (accounts, passwords, network): installed only when
+# missing, never overwritten ("path:mode")
+INITFILES := etc/passwd:0644 etc/group:0644 etc/shadow:0600 etc/netcfg.conf:0644 etc/hosts:0644
 # Everything installed belongs to root (mke2fs -d keeps the build host's owners); the system
 # directories get standard modes, and each home directory its user ("name:uid")
 HOMES := user:1000
@@ -351,7 +356,7 @@ HOMES := user:1000
 EXTRA_BINS ?=
 LINKS ?=
 install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EXTRA_BINS),$(firstword $(subst :, ,$(b)))) zsh/Src/zsh vim/src/vim procps/.built \
-	       $(addprefix $(POSIX)/rootfs/,$(SYSFILES)) $(shell find $(POSIX)/rootfs/etc/s6-rc -type f)
+	       $(addprefix $(POSIX)/rootfs/,$(SYSFILES)) $(addprefix $(POSIX)/rootfs/,$(foreach i,$(INITFILES),$(firstword $(subst :, ,$(i))))) $(shell find $(POSIX)/rootfs/etc/s6-rc -type f)
 	set -e; \
 	python3 -c 'import fcntl,sys; fcntl.lockf(open(sys.argv[1],"r+b"), fcntl.LOCK_EX | fcntl.LOCK_NB)' $(DISK) 2>/dev/null \
 		|| { echo "ERROR: $(DISK) is in use (QEMU running?): close it and run make again"; exit 1; }; \
@@ -360,7 +365,8 @@ install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EX
 	  for b in $(BINS) $(EXTRA_BINS); do \
 	    src=$${b%%:*}; name=$$(basename $${b##*:}); dir=/bin; \
 	    case " $(SBIN_APPS) " in *" $$name "*) dir=/sbin;; esac; \
-	    echo "rm $$dir/$$name"; echo "write $$src $$dir/$$name"; echo "sif $$dir/$$name mode 0100755"; \
+	    mode=0100755; case " $(SETUID_APPS) " in *" $$name "*) mode=0104755;; esac; \
+	    echo "rm $$dir/$$name"; echo "write $$src $$dir/$$name"; echo "sif $$dir/$$name mode $$mode"; \
 	    echo "sif $$dir/$$name uid 0"; echo "sif $$dir/$$name gid 0"; \
 	  done; \
 	  for l in $(LINKS); do echo "rm /bin/$${l%%:*}"; echo "symlink /bin/$${l%%:*} $${l##*:}"; done; \
@@ -382,6 +388,9 @@ install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EX
 	     find . -type f | while read f; do f=$${f#./}; echo "rm $$dst/$$f"; echo "write $$src/$$f $$dst/$$f"; done); done; \
 	  for f in $(SYSFILES); do echo "rm /$$f"; echo "write $(POSIX)/rootfs/$$f /$$f"; \
 	    echo "sif /$$f uid 0"; echo "sif /$$f gid 0"; done; \
+	  for i in $(INITFILES); do f=$${i%%:*}; \
+	    debugfs -R "stat /$$f" part.img 2>&1 | grep -q "not found" || continue; \
+	    echo "write $(POSIX)/rootfs/$$f /$$f"; echo "sif /$$f mode 0100$${i##*:}"; done; \
 	} > install.cmds.0; \
 	awk '{ print } $$1 == "write" { print "sif " $$3 " uid 0"; print "sif " $$3 " gid 0" } \
 	     $$1 == "mkdir" { print "sif " $$2 " uid 0"; print "sif " $$2 " gid 0" }' install.cmds.0 > install.cmds; \

@@ -24,6 +24,11 @@ check proctest    proctest
 check phase1test  phase1test
 check filetest    filetest
 check usertest    usertest
+check login       sh -c 'echo "user:s3cret" | chpasswd || { echo "chpasswd failed"; exit 1; }
+                         out=$(printf "user\ns3cret\nid -un; id -G; pwd; exit\n" | login 2>&1); echo "$out" | tail -4
+                         case "$out" in *user*1000*10*/home/user*) ;; *) echo "login as user failed"; exit 1;; esac
+                         grep -q "^user:[$]6[$]" /etc/shadow || { echo "no SHA-512 hash:"; cut -c1-12 /etc/shadow; exit 1; }
+                         out=$(printf "user\nwrong\n" | login 2>&1); case "$out" in *"Login incorrect"*) ;; *) echo "$out"; exit 1;; esac'
 check hardlinks   sh -c 'rm -f /tmp/e1 /tmp/e2; echo x >/tmp/e1 && ln /tmp/e1 /tmp/e2 && [ "$(stat -c %h /tmp/e1)" = 2 ] && rm /tmp/e1 && [ "$(cat /tmp/e2)" = x ] && [ "$(stat -c %h /tmp/e2)" = 1 ] && rm /tmp/e2'
 check coreutils   sh -c '[ "$(ls /bin | wc -l)" -gt 100 ] && [ "$(echo hello | tr a-z A-Z)" = HELLO ]'
 check gnu-tools   sh -c 'set -e; rm -rf /tmp/gt; mkdir /tmp/gt; cd /tmp/gt; printf "a\nb\nc\n" > f
