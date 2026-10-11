@@ -18,6 +18,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         grub-common grub-efi-amd64-bin grub-pc-bin xorriso mtools \
     && rm -rf /var/lib/apt/lists/*
 
+# ccache: tools/sel4-cc compiles through it when CCACHE_DIR is set (dev.sh, docker compose)
+RUN apt-get update && apt-get install -y --no-install-recommends ccache \
+    && rm -rf /var/lib/apt/lists/*
+
 # libvmm uses LLVM 18 (clang 19 fails to build its x86_64 code)
 ENV PATH=/usr/lib/llvm-18/bin:$PATH
 

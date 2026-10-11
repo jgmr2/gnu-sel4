@@ -11,6 +11,10 @@
 # SPDX-License-Identifier: BSD-2-Clause
 SYSROOT=$(cd "$(dirname "$0")/.." && pwd)
 CC="clang --target=x86_64-linux-musl"
+# ccache, when there is one and a cache directory (dev.sh, docker compose: .cache/ccache): a port
+# built again from scratch reuses what it compiled before
+CCACHE=
+[ -n "${CCACHE_DIR:-}" ] && command -v ccache >/dev/null 2>&1 && CCACHE=ccache
 FLAGS="-nostdinc -isystem $SYSROOT/include -fno-pic -fno-stack-protector"
 
 link=1
@@ -25,5 +29,5 @@ if [ "$link" = 1 ]; then
         -Wl,--image-base=0x10000000 -Wl,-z,max-page-size=4096 -L"$SYSROOT/lib" \
         "$SYSROOT/lib/crt0.o" "$@" "$SYSROOT/lib/libsel4posix.a" "$SYSROOT/lib/libc.a" "$RT"
 else
-    exec $CC $FLAGS "$@"
+    exec $CCACHE $CC $FLAGS "$@"
 fi

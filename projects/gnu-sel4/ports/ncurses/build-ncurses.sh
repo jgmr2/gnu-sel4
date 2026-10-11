@@ -9,7 +9,8 @@
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 
-rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"
+. "$(dirname "$0")/../port-lib.sh"
+if port_prepare "$SRC" "$BUILD"; then
 # --with-build-cc: the tools ncurses uses while building run on the host
 ./configure --host=x86_64-linux-musl --build=x86_64-pc-linux-gnu \
     CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2" --with-build-cc=clang \
@@ -17,6 +18,7 @@ rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"
     --enable-widec --with-normal --without-shared --without-debug --without-cxx --without-cxx-binding \
     --without-ada --without-tests --without-manpages --disable-stripping --enable-pc-files=no \
     >configure.log 2>&1 || { tail -30 configure.log; exit 1; }
+fi
 make -j"$(nproc)" >make.log 2>&1 || { grep -E "error|Error" make.log | head -30; exit 1; }
 make install DESTDIR="$PWD/inst" >install.log 2>&1 || { tail -20 install.log; exit 1; }
 
@@ -28,3 +30,4 @@ if [ -d "$SYSROOT/include/ncursesw" ]; then
 fi
 for l in ncurses curses tinfo termcap; do ln -sf libncursesw.a "$SYSROOT/lib/lib$l.a"; done
 echo "ncurses: $(ls inst/usr/bin | tr '\n' ' '); terminfo: $(find inst/usr/share/terminfo -type f | wc -l) terminals"
+port_done

@@ -7,8 +7,17 @@
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
-rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"
 NAME=$(basename "$SRC"); NAME=${NAME%-*}
+# the libraries of the packages before it (their headers are in the sysroot)
+case $NAME in
+skalibs)  DEPS= ;;
+execline) DEPS="$SYSROOT/lib/libskarnet.a" ;;
+s6)       DEPS="$SYSROOT/lib/libskarnet.a $SYSROOT/lib/libexecline.a" ;;
+*)        DEPS="$SYSROOT/lib/libskarnet.a $SYSROOT/lib/libexecline.a $SYSROOT/lib/libs6.a" ;;
+esac
+. "$(dirname "$0")/../port-lib.sh"
+# shellcheck disable=SC2086
+if port_prepare "$SRC" "$BUILD" $DEPS; then FRESH=1; else FRESH=; fi
 CC="$SYSROOT/bin/sel4-cc"
 TOOLS="AR=llvm-ar RANLIB=llvm-ranlib STRIP=llvm-strip"     # skalibs would use x86_64-linux-musl-ar...
 
@@ -17,7 +26,7 @@ if [ "$NAME" = skalibs ]; then
     # what musl declares but posix_server does not implement yet, so skalibs uses its portable
     # fallbacks: signalfd (self-pipe), posix_spawn (fork + exec), waitid, splice, sendfile,
     # namespaces, chroot, settimeofday.
-    ./configure --host=x86_64-linux-musl --prefix=/ --libdir=/lib --includedir=/include \
+    [ -z "$FRESH" ] || ./configure --host=x86_64-linux-musl --prefix=/ --libdir=/lib --includedir=/include \
         --sysdepdir=/lib/skalibs/sysdeps --enable-static --disable-shared \
         --with-sysdep-devurandom=yes --with-sysdep-posixspawnearlyreturn=no \
         --with-sysdep-procselfexe=/proc/self/exe --with-sysdep-selectinfinite=yes \
@@ -30,7 +39,7 @@ if [ "$NAME" = skalibs ]; then
     echo "skalibs: $(ls "$SYSROOT/lib/libskarnet.a")"
 else
     MULTI=; [ "$NAME" = execline ] && MULTI=--enable-multicall      # one binary + symlinks
-    ./configure --host=x86_64-linux-musl --prefix=/ --bindir=/bin --libexecdir=/usr/libexec --enable-static-libc --disable-shared $MULTI \
+    [ -z "$FRESH" ] || ./configure --host=x86_64-linux-musl --prefix=/ --bindir=/bin --libexecdir=/usr/libexec --enable-static-libc --disable-shared $MULTI \
         --with-sysdeps="$SYSROOT/lib/skalibs/sysdeps" --with-include="$SYSROOT/include" \
         --with-lib="$SYSROOT/lib" --with-lib="$SYSROOT/lib/skalibs" \
         CC="$CC" CFLAGS="-O2" AR=llvm-ar RANLIB=llvm-ranlib >configure.log 2>&1 || { tail -30 configure.log; exit 1; }
@@ -49,3 +58,4 @@ else
     done
     echo "$NAME: $(ls bin | wc -l) binaries + $(wc -l < links.txt) links, $(du -sh bin | cut -f1)"
 fi
+port_done

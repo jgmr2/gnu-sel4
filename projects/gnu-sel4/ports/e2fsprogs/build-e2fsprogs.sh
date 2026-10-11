@@ -9,7 +9,8 @@
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 
-rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"
+. "$(dirname "$0")/../port-lib.sh"
+if port_prepare "$SRC" "$BUILD"; then
 # No Linux kernel headers in the sysroot: e2fsprogs includes <linux/...> under __linux__, so it
 # is built as a generic Unix (-U__linux__): configure finds no <linux/fs.h> and the library uses
 # its portable paths (the device size comes from lseek(SEEK_END))
@@ -19,6 +20,7 @@ rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"
     --disable-defrag --disable-uuidd --disable-e2initrd-helper --disable-tdb \
     --without-libarchive --with-crond-dir=no --with-systemd-unit-dir=no --with-udev-rules-dir=no \
     >configure.log 2>&1 || { tail -30 configure.log; exit 1; }
+fi
 make -j"$(nproc)" libs >make.log 2>&1 || { grep -E "error|Error" make.log | head -30; exit 1; }
 make -j"$(nproc)" -C e2fsck e2fsck >>make.log 2>&1 || { grep -E "error|Error" make.log | head -30; exit 1; }
 make -j"$(nproc)" -C misc mke2fs tune2fs dumpe2fs >>make.log 2>&1 || { grep -E "error|Error" make.log | head -30; exit 1; }
@@ -28,3 +30,4 @@ for f in e2fsck/e2fsck misc/mke2fs misc/tune2fs misc/dumpe2fs resize/resize2fs; 
     llvm-strip -o "bin/$(basename "$f")" "$f"
 done
 echo "$(basename "$SRC"): $(ls bin | tr '\n' ' ')"
+port_done

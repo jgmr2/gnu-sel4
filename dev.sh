@@ -22,4 +22,6 @@ esac
 
 TTY=(-i); [ -t 0 ] && TTY=(-it)
 [ $# -eq 0 ] && set -- bash
-exec docker run --rm "${TTY[@]}" -v "$ROOT":/work -w "/work$REL" "$IMAGE" "$@"
+# nice: a long build leaves the machine usable; ccache keeps its cache next to the downloads
+exec docker run --rm "${TTY[@]}" -v "$ROOT":/work -w "/work$REL" -e CCACHE_DIR=/work/.cache/ccache \
+    "$IMAGE" nice -n 10 "$@"

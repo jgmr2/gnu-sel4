@@ -7,7 +7,8 @@
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 
-rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"
+. "$(dirname "$0")/../port-lib.sh"
+if port_prepare "$SRC" "$BUILD" "$SYSROOT/lib/libncursesw.a"; then
 # Answers to the checks configure cannot run when cross-compiling.
 # timer_create with SIGEV_THREAD needs threads: vim will use setitimer.
 ./configure --host=x86_64-linux-musl --build=x86_64-pc-linux-gnu \
@@ -21,6 +22,7 @@ rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"
     vim_cv_tty_group=world vim_cv_tty_mode=0620 \
     vim_cv_timer_create=no vim_cv_timer_create_with_lrt=no \
     >configure.log 2>&1 || { tail -30 configure.log; exit 1; }
+fi
 make -j"$(nproc)" >make.log 2>&1 || { grep -E "error|Error" make.log | head -30; exit 1; }
 
 # Trimmed runtime (the full one takes ~40 MB): what is needed for highlighting and common file types
@@ -48,3 +50,4 @@ mkdir -p "$M/plugin" "$M/pack/dist/opt"
 cp "$R"/plugin/netrwPlugin.vim "$R"/plugin/matchparen.vim "$M/plugin/"
 cp -r "$R"/pack/dist/opt/netrw "$M/pack/dist/opt/" && rm -rf "$M/pack/dist/opt/netrw/doc"
 echo "vim: $(du -h src/vim | cut -f1) binary, $(du -sh $M | cut -f1) trimmed runtime"
+port_done

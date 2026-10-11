@@ -90,7 +90,13 @@ make vm-rootfs                  # (host, once) kernel + initramfs for the VM
 make run                        # QEMU + KVM with a graphical console (window); quit: Ctrl-a x in the terminal
 make run CONSOLE=serial         # everything over the serial port (also build with CONSOLE=serial)
 make test                       # automated tests in headless QEMU (does not touch disk.img)
+make test ONLY=ptytest,jobtest  # just those tests (seconds, while working on one thing)
 ```
+
+A change in the runtime (`runtime/`, linked into every program) only relinks the ports: their
+build directories are kept and reused while nothing that goes into compiling them changes
+(`ports/port-lib.sh`; `PORT_FRESH=1` forces a rebuild). `sel4-cc` compiles through ccache
+(`.cache/ccache`), and `dev.sh` runs everything under `nice`.
 
 Without VT-x for seL4 (an AMD host, a CI runner): `../../dev.sh make LINUX_VM=no` and
 `make test LINUX_VM=no` build and test everything but the Linux VM (a kernel without VT-x, in

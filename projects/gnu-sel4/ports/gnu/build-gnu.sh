@@ -8,7 +8,8 @@
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd); shift 3
 
-rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"
+. "$(dirname "$0")/../port-lib.sh"
+if port_prepare "$SRC" "$BUILD" "$@" "$SYSROOT/lib/libncursesw.a"; then
 # No Linux kernel headers in the sysroot: copy_file_range is declared missing so that
 # gnulib uses its portable version (the Linux one checks <linux/version.h>).
 ./configure --host=x86_64-linux-musl --build=x86_64-pc-linux-gnu --prefix=/usr \
@@ -20,6 +21,7 @@ rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"
 for d in gnulib-tests tests; do
     [ -f "$d/Makefile" ] && printf 'all install check clean:\n\t@:\n' > "$d/Makefile"
 done
+fi
 make -j"$(nproc)" >make.log 2>&1 || { grep -E "error|Error" make.log | head -30; exit 1; }
 make install DESTDIR="$PWD/inst" >install.log 2>&1 || { tail -20 install.log; exit 1; }
 mkdir -p bin
@@ -31,3 +33,4 @@ for f in inst/usr/bin/*; do
     esac
 done
 echo "$(basename "$SRC"): $(ls bin | tr '\n' ' ')"
+port_done

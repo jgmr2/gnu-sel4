@@ -7,7 +7,8 @@
 set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 
-rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"
+. "$(dirname "$0")/../port-lib.sh"
+if port_prepare "$SRC" "$BUILD" "$SYSROOT/lib/libncursesw.a"; then
 # When cross-compiling configure cannot run its checks: it is given the answers
 # (all valid for musl + posix_server)
 ./configure --host=x86_64-linux-musl --build=x86_64-pc-linux-gnu \
@@ -20,6 +21,8 @@ rm -rf "$BUILD"; cp -a "$SRC" "$BUILD"; cd "$BUILD"
     >configure.log 2>&1 || { tail -30 configure.log; exit 1; }
 # Every module built into the binary (there is no dynamic loading)
 sed -i 's/^\(.*\)link=dynamic/\1link=static/' config.modules
+fi
 make -j"$(nproc)" >make.log 2>&1 || { grep -E "error|Error" make.log | head -30; exit 1; }
 make install.bin install.fns DESTDIR="$PWD/inst" >install.log 2>&1 || { tail -20 install.log; exit 1; }
 echo "zsh: $(du -h Src/zsh | cut -f1) binary, $(find inst/usr/share/zsh -type f | wc -l) functions"
+port_done
