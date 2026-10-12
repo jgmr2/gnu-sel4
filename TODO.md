@@ -152,6 +152,11 @@ Principles the plan follows:
          the VM
    - [ ] The full `make test` on a self-hosted runner with VT-x (the workflow's "full" job, by
          hand); a cache for the CI build (from scratch: ~11 minutes)
+   - [ ] Reported by José (October 2026, his own disk, not reproduced yet): several programs (vim
+         among them) report problems accessing /tmp; and `sudo poweroff` prints warnings before
+         it runs, though the machine then powers off correctly. Things to look at first: /tmp's
+         mode and owner on older disks (it should be 1777 root), and what prints the warnings
+         (sudo, s6-rc bringing the services down, or the VM's shutdown)
    - [ ] How much of POSIX: the Open POSIX Test Suite (in LTP) for a number per area. Expected
          today: under half overall (no threads: no clone, no futex; timer_create is ENOSYS; no
          mq_* or aio_*), much better in processes, signals, files, mmap and pipes. Certification
