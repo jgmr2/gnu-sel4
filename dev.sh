@@ -21,7 +21,15 @@ case "$PWD/" in
 esac
 
 TTY=(-i); [ -t 0 ] && TTY=(-it)
+# disk.img may be a symbolic link to a disk elsewhere (a faster one): its directory is mounted
+# at the same path, so the link also works inside the container
+EXTRA=()
+DISK="$ROOT/projects/gnu-sel4/disk.img"
+if [ -L "$DISK" ]; then
+    DISK_DIR=$(dirname "$(readlink -f "$DISK")")
+    EXTRA=(-v "$DISK_DIR":"$DISK_DIR")
+fi
 [ $# -eq 0 ] && set -- bash
 # nice: a long build leaves the machine usable; ccache keeps its cache next to the downloads
-exec docker run --rm "${TTY[@]}" -v "$ROOT":/work -w "/work$REL" -e CCACHE_DIR=/work/.cache/ccache \
+exec docker run --rm "${TTY[@]}" -v "$ROOT":/work "${EXTRA[@]}" -w "/work$REL" -e CCACHE_DIR=/work/.cache/ccache \
     "$IMAGE" nice -n 10 "$@"

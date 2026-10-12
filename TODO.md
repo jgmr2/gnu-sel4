@@ -261,11 +261,14 @@ Principles the plan follows:
          remembers where it was in each group (it rescanned the bitmap bit by bit for every block).
          Measured, 64 MiB copied: 7.2 s -> 1.8-2.2 s, 4124 disk requests -> 142; QEMU killed in the
          middle of writes: only lazy counts to fix, e2fsck -p repairs it
+   - [x] Read-ahead as Linux does it: a window that grows while a file is read sequentially
+         (128 KiB doubling to 2 MiB), fetched ahead when it runs low (it was a fixed 128 KiB that
+         in practice asked for 64 KiB at a time). 256 MiB read: 1.05 s -> 0.37 s
    - [ ] Against Linux (tools/fs-bench.py: the same QEMU, 1 CPU, virtio-blk, ext2 4 KiB; Linux is
-         the VM's 6.18 kernel booted alone), October 2026, the disk image on an SD card: 1 GiB
-         written with sync 29-32 s against Linux's 21-28 s (~1.4x; ~5x before write-back); 256 MiB
-         read ~1.05 s against 50-60 ms (~19x: 64 KiB per call, two copies, 128 KiB read-ahead).
-         Next: adaptive read-ahead (1-2 MiB when sequential), a bigger cache, then zero copy
+         the VM's 6.18 kernel booted alone), October 2026, the disk image on the host's NVMe:
+         1 GiB written with sync 3.95 s against 1.57 s (~2.5x; on an SD card both were bound by
+         it: 29-32 s against 21-28 s); 256 MiB read 0.36 s against 0.05 s (~7x). What remains:
+         64 KiB per call and two copies, flushes that wait whole, a 16 MiB cache
    - [ ] Large writes with their size known up front (José's idea): the region delimited from
          the start (start and length), so the file's blocks are reserved in one go, contiguous,
          and the data goes by reference in a shared region instead of 64 KiB copies, each

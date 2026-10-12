@@ -853,9 +853,16 @@ static int truncate_blocks(struct ext2_inode *in, uint64_t new_size)
 /* ------------------------------------------------------------------ */
 
 /* Sequential reads: the last file read and where it stopped, for read-ahead */
+/* Read-ahead, as Linux does it: a window that grows while a file is read sequentially (128 KiB,
+ * doubling up to 2 MiB), fetched ahead when what is already read runs low; any other access
+ * starts it small again. It used to be a fixed 128 KiB recomputed on every call, which in
+ * practice asked the disk for 64 KiB at a time */
 static uint32_t ra_ino;
-static uint64_t ra_next;
-#define READ_AHEAD 32                  /* blocks (128 KiB) */
+static uint64_t ra_next;               /* byte offset a sequential read continues at */
+static uint64_t ra_end;                /* first block not fetched ahead yet */
+static uint32_t ra_win = 32;           /* blocks */
+#define RA_MIN 32                      /* 128 KiB */
+#define RA_MAX 512                     /* 2 MiB */
 
 static long file_read(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32_t len, uint8_t *out)
 {
@@ -866,18 +873,25 @@ static long file_read(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32_
      * that are not cached are read together first */
     {
         static uint32_t pbs[STAGE_BLOCKS * 4];
-        uint64_t first = off / BS, want = (off + len - 1) / BS - first + 1;
-        uint64_t nblk = (size + BS - 1) / BS - first;
-        uint64_t n = want + (ino == ra_ino && off == ra_next ? READ_AHEAD : 0);
-        if (n > nblk) n = nblk;
-        if (n > sizeof pbs / sizeof *pbs) n = sizeof pbs / sizeof *pbs;
-        uint32_t k = 0;
-        for (; k < n; k++) {
-            int64_t pb = bmap(ino, in, first + k, false, NULL);
-            if (pb < 0) break;
-            pbs[k] = pb;
+        uint64_t first = off / BS, last = (off + len - 1) / BS + 1;     /* blocks [first, last) */
+        uint64_t fblocks = (size + BS - 1) / BS;
+        bool seq = ino == ra_ino && off == ra_next;
+        if (!seq) { ra_win = RA_MIN; ra_end = last; }
+        uint64_t to = last;
+        if ((seq || off == 0) && last + ra_win / 2 > ra_end) {         /* the window runs low */
+            to = (ra_end > last ? ra_end : last) + ra_win;
+            if (seq && ra_win < RA_MAX) ra_win *= 2;
         }
-        bread_many(pbs, k);            /* errors show up below, block by block */
+        if (to > fblocks) to = fblocks;
+        if (to > ra_end) ra_end = to;
+        if (to - first > sizeof pbs / sizeof *pbs) to = first + sizeof pbs / sizeof *pbs;
+        uint32_t k = 0;
+        for (uint64_t b = first; b < to; b++) {
+            int64_t pb = bmap(ino, in, b, false, NULL);
+            if (pb < 0) break;
+            pbs[k++] = pb;
+        }
+        bread_many(pbs, k);            /* the cached ones are skipped; errors show up below */
     }
     ra_ino = ino;
     ra_next = off + len;

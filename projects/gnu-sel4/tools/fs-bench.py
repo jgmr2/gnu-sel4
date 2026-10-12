@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
-"""Disk throughput, GNU/seL4 against Linux under the same QEMU (KVM, 1 CPU, virtio-blk on an image in
-the build directory, ext2 with 4 KiB blocks): tools/fs-bench.sh on both. Linux is the VM's own
+"""Disk throughput, GNU/seL4 against Linux under the same QEMU (KVM, 1 CPU, virtio-blk on an image next to
+disk.img, ext2 with 4 KiB blocks): tools/fs-bench.sh on both. Linux is the VM's own
 kernel (vm/rootfs/out) booted on its own with rdinit=/bin/sh.
 
   usage: tools/fs-bench.py [linux|sel4|both]
@@ -14,7 +14,7 @@ BUILD = os.environ.get("BUILD_DIR") or os.path.join(PROJ, "build")
 BENCH = os.path.join(HERE, "fs-bench.sh")
 
 def linux():
-    img = os.path.join(BUILD, "fs-bench-linux.img")
+    img = os.path.join(os.path.dirname(os.path.realpath(os.path.join(PROJ, "disk.img"))), "fs-bench-linux.img")
     with open(img, "wb") as f: f.truncate(1200 << 20)
     mke2fs = "mke2fs" if subprocess.run(["sh", "-c", "command -v mke2fs"], capture_output=True).returncode == 0 else "/sbin/mke2fs"
     subprocess.run([mke2fs, "-q", "-F", "-t", "ext2", "-b", "4096", img], check=True)
