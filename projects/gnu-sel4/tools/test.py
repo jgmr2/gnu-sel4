@@ -79,8 +79,11 @@ def main():
         c.seek(sb + 58); c.write((0).to_bytes(2, "little"))   # s_state: not clean
 
     qemu = ["qemu-system-x86_64", "-machine", "q35", "-accel", "kvm",
-            # VT-x for the Linux VM, unless the system was built without it (make LINUX_VM=no)
-            "-cpu", "host,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave%s,+vme,+invtsc"
+            # VT-x for the Linux VM, unless the system was built without it (make LINUX_VM=no).
+            # phys-bits=39 whatever the host: the firmware's window for 64-bit BARs depends on it,
+            # and meta.py expects the disk and network BARs at 0x7000000000 (a 48-bit AMD host,
+            # such as GitHub's runners, puts them elsewhere: the disk then reads as 0 bytes)
+            "-cpu", "host,phys-bits=39,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave%s,+vme,+invtsc"
                     % ("" if os.environ.get("LINUX_VM") == "no" else ",+vmx"),
             "-kernel", os.path.join(BUILD, "sel4_32.elf"), "-initrd", os.path.join(BUILD, "loader.img"),
             "-m", "6G", "-display", "none", "-vga", "none", "-device", "bochs-display,addr=0x5",

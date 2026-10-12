@@ -90,8 +90,9 @@ if PLATFORM == "latitude7390":
 KBD_IRQ_CH = 10                       # KBD_IRQ_CH in console/fbcon.c
 
 # ---- QEMU q35 devices (fixed PCI slots: the firmware assigns these BARs and IRQs) ----
-# With more than 4 GiB of RAM (make run uses 6 GiB) the firmware puts the 64-bit BARs in the
-# high window 0x7000000000, always in this order:
+# With more than 4 GiB of RAM (make run uses 6 GiB) and 39 physical address bits (QEMU's -cpu ...,
+# phys-bits=39: the window depends on them) the firmware puts the 64-bit BARs in the high window
+# 0x7000000000, always in this order:
 #   virtio-blk disk    in slot 3: BAR4 0x7000000000, IRQ 11
 #   virtio-net network in slot 4: BAR4 0x7000004000, IRQ 10
 BLK_BAR, BLK_IRQ = 0x70_0000_0000, 11

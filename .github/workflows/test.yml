@@ -3,7 +3,9 @@
 # GitHub's runners are virtual machines: they give QEMU KVM, but not VT-x for a guest of its own
 # (and many are AMD), which the Linux VM inside seL4 needs. So this job builds the system without
 # the VM (make LINUX_VM=no: a kernel without VT-x, no VMM; the VM's two tests are skipped) in the
-# development image (jgmr2/gnu-sel4-dev, .github/workflows/docker-image.yml) and runs make test.
+# development image and runs make test. The image is built here, from this commit's Dockerfile and
+# deps.lock, with the cache docker-image.yml fills: pulling jgmr2/gnu-sel4-dev:latest raced with
+# that workflow when a commit changed the image (the old one lacked a new dependency).
 # The full make test, with the VM, needs a machine with VT-x: the "full" job, by hand
 # (Actions > Test > Run workflow), on a self-hosted runner labelled "vtx".
 #
@@ -25,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      IMAGE: jgmr2/gnu-sel4-dev:latest
+      IMAGE: gnu-sel4-dev:ci
       # Inside the container (as root, so the checkout's owner does not matter)
       IN: docker run --rm --user root -v ${{ github.workspace }}:/work -w /work/projects/gnu-sel4 -e BUILD_DIR=/work/projects/gnu-sel4/build-ci -e LINUX_VM=no
     steps:
@@ -37,8 +39,15 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           ls -l /dev/kvm
           grep -m1 -o -w -E 'vmx|svm' /proc/cpuinfo || echo "no vmx/svm flag"
-      - name: Development image
-        run: docker pull -q "$IMAGE"
+      - uses: docker/setup-buildx-action@v3
+      - name: Development image (this commit's; cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: full
+          load: true
+          tags: gnu-sel4-dev:ci
+          cache-from: type=gha
       - name: Build (make LINUX_VM=no)
         run: $IN "$IMAGE" make
       - name: Test (make test LINUX_VM=no NO_NET=1)
