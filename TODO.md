@@ -214,10 +214,81 @@ Principles the plan follows:
          or virtio-net between netstack and the VM
    - [ ] Fast shared files: virtio-fs or 9P over shared-memory queues; hard links over 9P
    - [ ] The VM's system on disk instead of an initramfs in RAM (252 MB fixed today)
-8. [~] **The real laptop, stage 1: the live system works there** (M). Needs: nothing. Dell
+8. [ ] **Graphical desktop: our own Wayland compositor** (L). Needs: 4 (terminal), 6 (more than
+       64 processes), 7 (the VM side). Sway/wlroots dropped: cairo, pango, glib, harfbuzz,
+       freetype, fontconfig, libdrm, libinput would multiply the native attack surface. No
+       threads needed: libwayland runs single-threaded
+   - [ ] Phase 0b: PS/2 mouse; Latin American keyboard layout; virtual consoles; /dev/input and
+         a mappable /dev/fb0 exposed by fbcon
+   - [ ] Phase 1b: signalfd, shm_open (/dev/shm), AF_UNIX SEQPACKET, nested epoll in poll
+   - [ ] Phase 2: libwayland (server + client; libffi), wayland-protocols (xdg-shell), a
+         precompiled XKB keymap sent to the clients
+   - [ ] Phase 3: the compositor, a POSIX process in C: libwayland-server, wl_shm, xdg-shell; one
+         epoll loop with a 60 Hz timerfd as the frame clock; i3-style tiling and floating windows
+         in one tree; CPU rendering of damaged regions (AVX2 if seL4 saves the AVX state: check
+         XSAVE); Spleen for decorations; sway-style resize transactions
+   - [ ] Phase 4: a native terminal (foot or our own)
+   - [ ] Phase 5: VM windows, Qubes/WSLg-style. A headless compositor inside the VM (weston or
+         sway headless, Xwayland for X11 programs) speaks the full protocol with the applications;
+         only a simple protocol crosses into native (window created, size, title, pixels of the
+         damaged region in shared pages, closed; keyboard and mouse back), over vsock. A small
+         native proxy checks it and turns each VM window into a normal window with a border colour
+         for its origin. The untrusted VM never talks Wayland to the native compositor.
+         Clipboard and drag and drop through an explicit channel, not automatically
+9. [ ] **Threads, then the software that needs them** (L). Needs: 6 (memory per thread)
+   - [ ] pthreads and `timer_create`: several TCBs in one address space, each with its own IPC
+         buffer, system call buffer and endpoint badge; private futexes in the server (musl's
+         fast path is atomic in user space). posix_server itself stays single-threaded: it does
+         block on fs_ext2 and netstack calls, which is what the rings of item 10 remove
+   - [ ] dpkg + apt with our own `.deb` repository built from our ports (Debian's binaries are
+         for glibc and Linux); dpkg first (C), apt needs libc++ and threads
+10. [ ] **Performance II: rings, asynchronous I/O, zero copy** (L). Needs: 9 (and the real
+        hardware's numbers, item 17, before deciding what is worth it there). Measured under QEMU and not worth it yet: what costs today is CPU
+   - [x] Asynchronous file reads built, measured and left out: 186 ms against 183 ms synchronous
+         next to a cold 24 MiB read (each 64 KiB operation waits ~0.3 ms for the disk)
+   - [x] Zero copy measured: a cached 64 KiB read costs 28 us (two copies); mapping cache pages
+         would save ~2 ms per 8 MiB
+   - [ ] Own ring ABI (submission/completion rings in the shared buffer, the sDDF model); epoll,
+         kqueue and poll as thin layers on top; io_uring itself is not planned
+   - [ ] A ring between posix_server and fs_ext2 (several operations in flight, sleep until the
+         disk notifies) once real disks show the wait
+   - [ ] Zero copy where it pays off: shared mmap of files on the cache pages; large read/write
+         passing page capabilities
+   - [ ] kqueue as the native event API; large pages (2 MiB) for large regions
+11. [ ] **posix_server split and restartable** (L). Needs: 6 (memory already out), 10 (rings
+        between components). Today it is a single point of failure for everything native
+   - [ ] Separate servers for processes, files, network and the tty, talking over rings
+   - [ ] Important state kept outside each one, so a monitor (item 13) can restart it
+12. [ ] **Native isolation and process restriction** (M–L). Needs: 11. Ideas from FreeBSD and
+        OpenBSD; Docker is not affected (it stays in the VM)
+   - [ ] Jails: their own root, processes and network; on seL4 a jail can be a separate
+         posix_server instance in its own component (isolation by the kernel). Later OCI
+         images on jails
+   - [ ] Capsicum (capability mode) or pledge/unveil, enforced where every call already goes
+   - [ ] `sysctl` (FreeBSD style) next to the Linux-format /proc
+13. [ ] **Self-hosted development loop** (L). Needs: 6 (VM memory), 9 (threads), 11 (restart)
+   - [ ] Claude Code + toolchain in the Linux VM, working on the tree through /mnt/sel4
+   - [ ] Userland restart: a monitor component that stops the PDs, loads new images and starts
+         them again; an A/B watchdog that rolls back if `make test` fails
+   - [ ] Native toolchain (clang/LLVM, make, git) and native Claude Code (Node.js)
+14. [ ] **File system robustness II: a journal** (L). Needs: 3. Towards ext3/ext4
+   - [ ] A block freed and allocated again within one operation is not ordered (none does that
+         today); virtio-blk flush (FLUSH requests) for power cuts of the host itself
+15. [ ] **Directory services, native: LDAP, Kerberos, Active Directory, Samba** (L). Needs: 9
+        (SSSD, winbind and Samba use threads), 1
+   - [ ] An LDAP client and a small nscd-protocol daemon (musl asks it for users it does not
+         find in /etc/passwd), Kerberos and PAM, joining an AD domain, SMB file sharing
+16. [ ] **Toolchain identity and other architectures** (L). Needs: nothing, lowest priority
+   - [ ] Our own triple (`x86_64-sel4-musl`) instead of `x86_64-linux-musl` (programs see `__linux__`)
+   - [ ] ARM64 / Raspberry Pi 4 (sDDF lacks an SD driver)
+17. [~] **The real laptop, stage 1: the live system works there** (M). Needs: nothing. Dell
        Latitude 7390 2-in-1 (i5-8350U, UEFI). Everything in RAM: the machine's disks are never
        touched (no disk driver at all). Postponed (October 2026): development continues under
-       QEMU, and the laptop comes back when the items before this one are done. Where it stands:
+       QEMU, and the laptop comes back when the items before this one are done (moved to the end
+       of the list, with stages 2 and 3, in October 2026). If the laptop cannot be made to work,
+       the fallback is another Intel machine with VT-x and VT-d (an Intel mini PC), not a
+       Raspberry Pi: the system is x86 today (libvmm's x86 VMM, the x86 boot and drivers), and ARM
+       would be a port first (item 16). Where it stands:
    - [x] `make PLATFORM=latitude7390 iso` and `make ventoy`: a live ISO, numbered by build (in its
          name, the GRUB menu and the log), copied to the Ventoy stick. The file system is an ext2
          image inside fs_ext2; the console on the firmware's 1920x1080 framebuffer (0x60000000);
@@ -250,7 +321,7 @@ Principles the plan follows:
          contents (~50 MB in all)
    - [ ] Then: the whole battery to the QR codes; revisit the decisions marked "under QEMU"
    - [ ] Power off through \_S5 from the ACPI tables (today: halt, then the power button)
-9. [ ] **The real laptop, stage 2: daily development on it** (L). Needs: 8, 6 (memory for the
+18. [ ] **The real laptop, stage 2: daily development on it** (L). Needs: 17, 6 (memory for the
        driver VM), 7. Realistic in months of steady work; the network is the biggest piece
    - [ ] Persistent disk: the sDDF NVMe driver, only on a partition of its own and only when
          asked for explicitly (Debian's partitions are never touched)
@@ -261,77 +332,10 @@ Principles the plan follows:
    - [ ] USB: through the driver VM, or natively (sel4-cap's experimental xHCI driver for
          Microkit); a separate USB VM with an input proxy (a compromised VM must not type)
    - [ ] Multicore (seL4 supports it; one core used today; the laptop has 4)
-10. [ ] **Graphical desktop: our own Wayland compositor** (L). Needs: 4 (terminal), 6 (more than
-       64 processes), 8 (the VM side). Sway/wlroots dropped: cairo, pango, glib, harfbuzz,
-       freetype, fontconfig, libdrm, libinput would multiply the native attack surface. No
-       threads needed: libwayland runs single-threaded
-   - [ ] Phase 0b: PS/2 mouse; Latin American keyboard layout; virtual consoles; /dev/input and
-         a mappable /dev/fb0 exposed by fbcon
-   - [ ] Phase 1b: signalfd, shm_open (/dev/shm), AF_UNIX SEQPACKET, nested epoll in poll
-   - [ ] Phase 2: libwayland (server + client; libffi), wayland-protocols (xdg-shell), a
-         precompiled XKB keymap sent to the clients
-   - [ ] Phase 3: the compositor, a POSIX process in C: libwayland-server, wl_shm, xdg-shell; one
-         epoll loop with a 60 Hz timerfd as the frame clock; i3-style tiling and floating windows
-         in one tree; CPU rendering of damaged regions (AVX2 if seL4 saves the AVX state: check
-         XSAVE); Spleen for decorations; sway-style resize transactions
-   - [ ] Phase 4: a native terminal (foot or our own)
-   - [ ] Phase 5: VM windows, Qubes/WSLg-style. A headless compositor inside the VM (weston or
-         sway headless, Xwayland for X11 programs) speaks the full protocol with the applications;
-         only a simple protocol crosses into native (window created, size, title, pixels of the
-         damaged region in shared pages, closed; keyboard and mouse back), over vsock. A small
-         native proxy checks it and turns each VM window into a normal window with a border colour
-         for its origin. The untrusted VM never talks Wayland to the native compositor.
-         Clipboard and drag and drop through an explicit channel, not automatically
-11. [ ] **Threads, then the software that needs them** (L). Needs: 6 (memory per thread)
-   - [ ] pthreads and `timer_create`: several TCBs in one address space, each with its own IPC
-         buffer, system call buffer and endpoint badge; private futexes in the server (musl's
-         fast path is atomic in user space). posix_server itself stays single-threaded: it does
-         block on fs_ext2 and netstack calls, which is what the rings of item 12 remove
-   - [ ] dpkg + apt with our own `.deb` repository built from our ports (Debian's binaries are
-         for glibc and Linux); dpkg first (C), apt needs libc++ and threads
-12. [ ] **Performance II: rings, asynchronous I/O, zero copy** (L). Needs: 8 (measurements on
-        real hardware), 11. Measured under QEMU and not worth it yet: what costs today is CPU
-   - [x] Asynchronous file reads built, measured and left out: 186 ms against 183 ms synchronous
-         next to a cold 24 MiB read (each 64 KiB operation waits ~0.3 ms for the disk)
-   - [x] Zero copy measured: a cached 64 KiB read costs 28 us (two copies); mapping cache pages
-         would save ~2 ms per 8 MiB
-   - [ ] Own ring ABI (submission/completion rings in the shared buffer, the sDDF model); epoll,
-         kqueue and poll as thin layers on top; io_uring itself is not planned
-   - [ ] A ring between posix_server and fs_ext2 (several operations in flight, sleep until the
-         disk notifies) once real disks show the wait
-   - [ ] Zero copy where it pays off: shared mmap of files on the cache pages; large read/write
-         passing page capabilities
-   - [ ] kqueue as the native event API; large pages (2 MiB) for large regions
-13. [ ] **posix_server split and restartable** (L). Needs: 6 (memory already out), 12 (rings
-        between components). Today it is a single point of failure for everything native
-   - [ ] Separate servers for processes, files, network and the tty, talking over rings
-   - [ ] Important state kept outside each one, so a monitor (item 15) can restart it
-14. [ ] **Native isolation and process restriction** (M–L). Needs: 13. Ideas from FreeBSD and
-        OpenBSD; Docker is not affected (it stays in the VM)
-   - [ ] Jails: their own root, processes and network; on seL4 a jail can be a separate
-         posix_server instance in its own component (isolation by the kernel). Later OCI
-         images on jails
-   - [ ] Capsicum (capability mode) or pledge/unveil, enforced where every call already goes
-   - [ ] `sysctl` (FreeBSD style) next to the Linux-format /proc
-15. [ ] **Self-hosted development loop** (L). Needs: 6 (VM memory), 11 (threads), 13 (restart)
-   - [ ] Claude Code + toolchain in the Linux VM, working on the tree through /mnt/sel4
-   - [ ] Userland restart: a monitor component that stops the PDs, loads new images and starts
-         them again; an A/B watchdog that rolls back if `make test` fails
-   - [ ] Native toolchain (clang/LLVM, make, git) and native Claude Code (Node.js)
-16. [ ] **File system robustness II: a journal** (L). Needs: 3. Towards ext3/ext4
-   - [ ] A block freed and allocated again within one operation is not ordered (none does that
-         today); virtio-blk flush (FLUSH requests) for power cuts of the host itself
-17. [ ] **The real laptop, stage 3: replacing Debian** (L, probably more than a year at this pace).
-        Needs: 9
+19. [ ] **The real laptop, stage 3: replacing Debian** (L, probably more than a year at this pace).
+        Needs: 18
    - [ ] Touchpad and touchscreen (I²C-HID); the internal keyboard and touchpad stay native
    - [ ] Suspend and resume, battery, thermal, brightness (ACPI)
    - [ ] Audio, accelerated graphics (today: the firmware's framebuffer only)
    - [ ] Side channels: kernel mitigations, the VM on its own cores, seL4's domain scheduler
    - [ ] Console scrollback
-18. [ ] **Directory services, native: LDAP, Kerberos, Active Directory, Samba** (L). Needs: 11
-        (SSSD, winbind and Samba use threads), 1
-   - [ ] An LDAP client and a small nscd-protocol daemon (musl asks it for users it does not
-         find in /etc/passwd), Kerberos and PAM, joining an AD domain, SMB file sharing
-19. [ ] **Toolchain identity and other architectures** (L). Needs: nothing, lowest priority
-   - [ ] Our own triple (`x86_64-sel4-musl`) instead of `x86_64-linux-musl` (programs see `__linux__`)
-   - [ ] ARM64 / Raspberry Pi 4 (sDDF lacks an SD driver)
