@@ -191,6 +191,13 @@ static bool counts_dirty;
  * (another file's old data). What a cut in the second half leaves, e2fsck repairs at boot. */
 #define MAX_SLOTS    8192               /* 32 MiB of cache (meta.py's FS_CACHE_SIZE) */
 #define STAGE_BLOCKS 256                   /* 1 MiB: the largest single disk request */
+/* Staging areas: that many multi-block requests in flight at once (one used to wait for the
+ * previous one: the disk was idle between them) */
+#ifdef FS_RAMDISK
+#define STAGE_CHUNKS 1                     /* a 4 MiB cache */
+#else
+#define STAGE_CHUNKS 8
+#endif
 #define NO_SLOT      0xffffffffu
 static struct cslot {
     uint64_t blk;
@@ -346,17 +353,18 @@ static void sort_by_block(uint32_t *v, uint32_t n)
 static int write_slots(const uint32_t *v, uint32_t n)
 {
     batch_begin(&st_disk_write);
-    uint32_t i = 0;
+    uint32_t i = 0, chunk = 0;
     while (i < n) {
         uint32_t j = i + 1;
         while (j < n && j - i < STAGE_BLOCKS && slots[v[j]].blk == slots[v[j - 1]].blk + 1) j++;
         if (j - i == 1) {
             batch_add(BLK_REQ_WRITE, (uintptr_t)v[i] * BS, slots[v[i]].blk, 1);
         } else {
-            batch_wait_all();                                  /* the staging area is free */
-            for (uint32_t k = i; k < j; k++) memcpy(stage_data(k - i), slot_data(v[k]), BS);
-            batch_add(BLK_REQ_WRITE, (uintptr_t)stage_first * BS, slots[v[i]].blk, j - i);
-            batch_wait_all();                                  /* before the staging is reused */
+            if (chunk == STAGE_CHUNKS) { batch_wait_all(); chunk = 0; }   /* every staging area busy */
+            uint32_t base = chunk * STAGE_BLOCKS;
+            for (uint32_t k = i; k < j; k++) memcpy(stage_data(base + k - i), slot_data(v[k]), BS);
+            batch_add(BLK_REQ_WRITE, (uintptr_t)(stage_first + base) * BS, slots[v[i]].blk, j - i);
+            chunk++;
         }
         i = j;
     }
@@ -445,6 +453,8 @@ static int bread_many(const uint32_t *v, uint32_t n)
     }
     if (!nm) return 0;
     sort_by_block(miss, nm);
+    struct { uint32_t i, j; } pend[STAGE_CHUNKS];          /* runs read into staging area p */
+    uint32_t np = 0;
     batch_begin(&st_disk_read);
     uint32_t i = 0;
     while (i < nm) {
@@ -453,14 +463,24 @@ static int bread_many(const uint32_t *v, uint32_t n)
         if (j - i == 1) {
             batch_add(BLK_REQ_READ, (uintptr_t)miss[i] * BS, slots[miss[i]].blk, 1);
         } else {
-            batch_wait_all();
-            batch_add(BLK_REQ_READ, (uintptr_t)stage_first * BS, slots[miss[i]].blk, j - i);
-            batch_wait_all();
-            for (uint32_t k = i; k < j; k++) memcpy(slot_data(miss[k]), stage_data(k - i), BS);
+            if (np == STAGE_CHUNKS) {                          /* every staging area busy */
+                batch_wait_all();
+                for (uint32_t p = 0; p < np; p++)
+                    for (uint32_t k = pend[p].i; k < pend[p].j; k++)
+                        memcpy(slot_data(miss[k]), stage_data(p * STAGE_BLOCKS + k - pend[p].i), BS);
+                np = 0;
+            }
+            batch_add(BLK_REQ_READ, (uintptr_t)(stage_first + np * STAGE_BLOCKS) * BS, slots[miss[i]].blk, j - i);
+            pend[np].i = i;
+            pend[np].j = j;
+            np++;
         }
         i = j;
     }
     int r = batch_end();
+    for (uint32_t p = 0; p < np; p++)
+        for (uint32_t k = pend[p].i; k < pend[p].j; k++)
+            memcpy(slot_data(miss[k]), stage_data(p * STAGE_BLOCKS + k - pend[p].i), BS);
     for (uint32_t k = 0; k < nm; k++) {
         if (r) hash_remove(miss[k]);
         else slots[miss[k]].valid = true;
@@ -1882,9 +1902,9 @@ static void mount(void)
 void init(void)
 {
 #ifdef FS_RAMDISK
-    nslots = RAM_CACHE_SIZE / BS - STAGE_BLOCKS;
+    nslots = RAM_CACHE_SIZE / BS - STAGE_BLOCKS * STAGE_CHUNKS;
     if (nslots > MAX_SLOTS) nslots = MAX_SLOTS;
-    stage_first = RAM_CACHE_SIZE / BS - STAGE_BLOCKS;
+    stage_first = RAM_CACHE_SIZE / BS - STAGE_BLOCKS * STAGE_CHUNKS;
     cache_init();
     disk_blocks = (ramdisk_end - ramdisk_start) / BS;
     log_("fs_ext2: live system: the file system is in RAM (no disk is touched)\n");
@@ -1897,9 +1917,9 @@ void init(void)
     }
     blk_queue_init(&blkq, blk_config.virt.req_queue.vaddr, blk_config.virt.resp_queue.vaddr,
                    blk_config.virt.num_buffers);
-    nslots = blk_config.data.size / BS - STAGE_BLOCKS;
+    nslots = blk_config.data.size / BS - STAGE_BLOCKS * STAGE_CHUNKS;
     if (nslots > MAX_SLOTS) nslots = MAX_SLOTS;
-    stage_first = blk_config.data.size / BS - STAGE_BLOCKS;
+    stage_first = blk_config.data.size / BS - STAGE_BLOCKS * STAGE_CHUNKS;
     cache_init();
 
     blk_storage_info_t *info = blk_config.virt.storage_info.vaddr;

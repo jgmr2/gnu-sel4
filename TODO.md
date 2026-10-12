@@ -272,6 +272,11 @@ Principles the plan follows:
    - [x] 1 MiB per call (the shared buffer and fs_buf; its pages past 64 KiB made on demand) and a
          32 MiB cache (64 MiB: 16384 frames, the capDL initializer runs out of slots): 1 GiB
          written 3.95 -> 3.74 s, 256 MiB read 0.36 -> 0.32 s. Calls were no longer the limit
+   - [x] Eight staging areas: multi-block requests used one, so each waited for the previous one
+         and the disk sat idle (80 % of a write was waiting). 1 GiB written 3.74 -> 2.60 s
+         (393 MB/s; Linux 620: 1.6x), 256 MiB read 0.32 -> 0.29 s (882 MB/s; Linux ~5 GB/s: 5.8x).
+         What remains: the read-ahead and the flushes wait for their requests (no overlap with
+         the copies), two copies on the way
    - [ ] Large writes with their size known up front (José's idea): the region delimited from
          the start (start and length), so the file's blocks are reserved in one go, contiguous,
          and the data goes by reference in a shared region instead of 64 KiB copies, each
