@@ -82,6 +82,12 @@ enum fs_op {
      * (meta.py: fs_cache): -> buf: struct fs_seg[] in file order; result: bytes; MR1: segments.
      * They stay valid until posix_server's next operation (one copy: cache -> the program) */
     FS_OP_READ_REF,
+    /* The write's counterpart (a1 ino, a2 offset, a3 len): the blocks are allocated and their
+     * slots made ready -> buf: struct fs_seg[], MR1 segments, result bytes; posix_server copies
+     * the data into them, then FS_OP_WRITE_COMMIT (same ino and offset, a3 bytes written) sets
+     * the size and times. Nothing is flushed in between */
+    FS_OP_WRITE_REF,
+    FS_OP_WRITE_COMMIT,
 };
 
 struct fs_seg { uint32_t at, len; };   /* at: byte offset in the cache region; FS_SEG_HOLE: zeros */

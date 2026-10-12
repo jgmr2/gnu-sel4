@@ -214,6 +214,8 @@ static struct cslot {
     bool pending;                      /* an asynchronous read-ahead is bringing it (ra_*)  */
     bool ref;                          /* used since the clock hand last passed (group_take) */
     uint32_t used_op;                  /* the last operation that used it (op_seq) */
+    bool inbg;                         /* in the background flush's snapshot, not on the disk yet:
+                                        * kept, or a read from the disk would get the old block */
     bool fresh;                        /* allocated in this operation: written first */
 } slots[MAX_SLOTS];
 #define HASH_SIZE (2 * MAX_SLOTS)
@@ -221,6 +223,7 @@ static uint32_t hash_head[HASH_SIZE];
 /* Operations so far: a slot the current one used is never recycled by group_take (posix_server
  * reads FS_OP_READ_REF's slots after it) */
 static uint32_t op_seq;
+static bool write_prep;                /* FS_OP_WRITE_REF is making slots ready (cache_slot_find) */
 static uint32_t nslots, lru_head = NO_SLOT, lru_tail = NO_SLOT;
 static uint32_t dirty_list[MAX_SLOTS], ndirty;
 static uint32_t stage_first;           /* first block of the staging area in the data region */
@@ -405,6 +408,7 @@ static int write_slots(const uint32_t *v, uint32_t n)
  * one before. Responses advance it whenever they come (take_response: during any wait, at each
  * operation, on blk_virt's notification). Errors show up at the next FS_OP_SYNC */
 static struct bg_run { uint32_t stage; uint64_t blk; uint16_t count; } bg_runs[WSTAGE_BLOCKS + 1];
+static uint32_t bg_slots[WSTAGE_BLOCKS + 1], bg_nslots;     /* the slots marked inbg */
 static uint32_t bg_nruns, bg_phase1, bg_next, bg_inflight;
 static bool bg_active;
 #define BG_MAX_INFLIGHT 16
@@ -425,7 +429,11 @@ static void bg_issue(void)
         sent = true;
     }
     if (sent) sddf_notify(blk_config.virt.id);
-    if (bg_next == bg_nruns && !bg_inflight) bg_active = false;
+    if (bg_next == bg_nruns && !bg_inflight && bg_active) {
+        bg_active = false;
+        for (uint32_t i = 0; i < bg_nslots; i++) slots[bg_slots[i]].inbg = false;
+        bg_nslots = 0;
+    }
 }
 
 static void bg_response(bool ok)
@@ -506,7 +514,7 @@ static uint32_t group_take(void)
         uint32_t g = clock_hand++ % ngroups, first = g * GROUP;
         bool cold = true;
         for (uint32_t i = first; i < first + GROUP; i++) {
-            if (slots[i].dirty || slots[i].pending || slots[i].used_op == op_seq) { cold = false; break; }
+            if (slots[i].dirty || slots[i].pending || slots[i].inbg || slots[i].used_op == op_seq) { cold = false; break; }
             if (slots[i].ref) cold = false;
             slots[i].ref = false;          /* a second chance: taken next time round */
         }
@@ -598,6 +606,8 @@ static int flush_dirty_(bool wait)
             bg_runs[bg_nruns++] = (struct bg_run){ .stage = k, .blk = slots[ordered[k]].blk, .count = 1 };
         }
         slots[ordered[k]].dirty = slots[ordered[k]].fresh = false;
+        slots[ordered[k]].inbg = true;
+        bg_slots[bg_nslots++] = ordered[k];
     }
     if (nf == n) bg_phase1 = bg_nruns;
     ndirty = 0;
@@ -640,7 +650,13 @@ static int cache_slot_find(uint64_t blk, bool *hit)
     }
     *hit = false;
     uint32_t v = lru_tail;
+    /* Near the end, one that is clean, not on its way and not used by this operation; while
+     * FS_OP_WRITE_REF makes slots ready, anywhere (a flush here would write them, and mark them
+     * clean, before posix_server has put their data in) */
+    for (uint32_t k = 0, c = lru_tail; (write_prep || k < 64) && c != NO_SLOT; k++, c = slots[c].prev)
+        if (!slots[c].dirty && !slots[c].pending && !slots[c].inbg && slots[c].used_op != op_seq) { v = c; break; }
     if (slots[v].pending) ra_wait();            /* a read-ahead's: let it land first */
+    if (slots[v].inbg) bg_wait();               /* the background flush's: on the disk first */
     if (slots[v].dirty) flush_dirty();          /* only with more dirty blocks than the cache */
     hash_remove(v);
     lru_unlink(v);
@@ -1234,11 +1250,15 @@ static long file_read_(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32
     return done;
 }
 
-static long file_write(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32_t len, const uint8_t *data)
+/* segs: the slots are made ready and listed instead of filled from data, and the size and times
+ * are left for FS_OP_WRITE_COMMIT */
+static long file_write_(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32_t len, const uint8_t *data,
+                        struct fs_seg *segs)
 {
     bool dirty = false;
     uint32_t done = 0;
     long err = 0;
+    nsegs = 0;
     while (done < len) {
         uint64_t pos = off + done;
         uint32_t bo = pos % BS;
@@ -1247,17 +1267,26 @@ static long file_write(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32
         if (pb < 0) { err = pb; break; }
         int s = n == BS ? bget(pb) : bread(pb);         /* a whole block: no need to read it */
         if (s < 0) { err = s; break; }
-        memcpy(slot_data(s) + bo, data + done, n);
+        if (segs) segs[nsegs++] = (struct fs_seg){ (uint32_t)((uintptr_t)s * BS + bo), n };
+        else memcpy(slot_data(s) + bo, data + done, n);
         if (bwrite(s)) { err = -EIO; break; }
         done += n;
     }
-    if (done) {
+    /* Should a flush have run in the middle anyway (every slot dirty), the ones made ready are
+     * dirty again: what posix_server puts in them is written */
+    for (uint32_t i = 0; segs && i < nsegs; i++) bwrite(segs[i].at / BS);
+    if (done && !segs) {
         if (off + done > inode_size_of(in)) set_inode_size(in, off + done);
         in->i_mtime = in->i_ctime = now();
         dirty = true;
     }
     if (dirty && write_inode(ino, in)) return -EIO;
     return done ? (long)done : err;
+}
+
+static long file_write(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32_t len, const uint8_t *data)
+{
+    return file_write_(ino, in, off, len, data, NULL);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1955,7 +1984,7 @@ static long op_stats(char *b, size_t max)
 
 static bool is_write_op(long op)
 {
-    return op == FS_OP_LINK || op == FS_OP_WRITE || op == FS_OP_TRUNCATE || op == FS_OP_CREATE || op == FS_OP_UNLINK ||
+    return op == FS_OP_LINK || op == FS_OP_WRITE || op == FS_OP_WRITE_REF || op == FS_OP_WRITE_COMMIT || op == FS_OP_TRUNCATE || op == FS_OP_CREATE || op == FS_OP_UNLINK ||
            op == FS_OP_RENAME || op == FS_OP_SYMLINK || op == FS_OP_CHMOD || op == FS_OP_SETTIMES || op == FS_OP_CHOWN;
 }
 
@@ -1993,6 +2022,23 @@ static long dispatch(long op, uint64_t a1, uint64_t a2, uint64_t a3)
         if (read_inode(a1, &in)) return -EIO;
         if (S_ISDIR(in.i_mode)) return -EISDIR;
         return file_write(a1, &in, a2, a3 > FS_BUF_SIZE ? FS_BUF_SIZE : a3, (const uint8_t *)buf);
+    case FS_OP_WRITE_REF: {
+        if (read_inode(a1, &in)) return -EIO;
+        if (S_ISDIR(in.i_mode)) return -EISDIR;
+        write_prep = true;
+        long r = file_write_(a1, &in, a2, a3 > FS_BUF_SIZE ? FS_BUF_SIZE : a3, NULL, (struct fs_seg *)buf);
+        write_prep = false;
+        microkit_mr_set(1, nsegs);
+        return r;
+    }
+    case FS_OP_WRITE_COMMIT:
+        if (read_inode(a1, &in)) return -EIO;
+        if (a3) {
+            if (a2 + a3 > inode_size_of(&in)) set_inode_size(&in, a2 + a3);
+            in.i_mtime = in.i_ctime = now();
+            if (write_inode(a1, &in)) return -EIO;
+        }
+        return a3;
     case FS_OP_TRUNCATE: {
         if (read_inode(a1, &in)) return -EIO;
         if (!S_ISREG(in.i_mode)) return -EINVAL;
@@ -2082,7 +2128,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
         bg_poll();                                 /* the background flush moves on */
         r = dispatch(op, microkit_mr_get(1), microkit_mr_get(2), microkit_mr_get(3));
         uint64_t t1 = tsc();
-        if (op_freed || ndirty >= DIRTY_MAX || op == FS_OP_REMOUNT) {
+        if (op != FS_OP_WRITE_REF && (op_freed || ndirty >= DIRTY_MAX || op == FS_OP_REMOUNT)) {
             flush_async = !op_freed && op != FS_OP_REMOUNT;   /* only "many dirty blocks" */
             if (flush_meta()) {
                 if (r >= 0) r = -EIO;

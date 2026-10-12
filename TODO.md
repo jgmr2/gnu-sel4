@@ -308,6 +308,22 @@ Principles the plan follows:
          against 19.5 s (1.3x). Next: /proc/perf on the big write; a fast memcpy (rep movsb) in
          posix_server; one cache lookup per block; a larger read-ahead window; file writes
          straight into the cache (FS_OP_WRITE_REF, the other half of one copy)
+   - [x] The format-independent refinements, before ext4 (October 2026): posix_server's own
+         memcpy (rep movsb: sDDF's newlib copy uses non-temporal stores; measured on the host, a
+         copy the program then reads goes 4.0-4.2 -> 5.5-8.4 GB/s); file writes with one copy
+         (FS_OP_WRITE_REF makes the slots ready, posix_server copies the program's data into them,
+         FS_OP_WRITE_COMMIT sets size and times; nothing flushed in between). Three bugs found on
+         the way by a stress test (random files, cache pressure, aligned and odd reads through
+         pipes): sys_write of data writev had gathered in the shared buffer sent the wrong bytes
+         after a second partial write to a full pipe (the server had moved the rest to the front;
+         old, made likely by the speed: head and tail through a pipe gave wrong output); a slot
+         of the background flush, marked clean but not on the disk yet, could be recycled and
+         its block read back old from the disk (kept now until the writes land); eviction while
+         FS_OP_WRITE_REF made slots ready could flush them empty. Measured the same day: 1 GiB
+         written 2.59 s against 1.93 s (1.34x), 256 MiB read 0.15 s against 0.06 s; 15 GiB
+         written 87.8 s against 42.5 s (2.1x: copies no longer matter there, the block-by-block
+         format does), read 22.4 s against 12.7 s. Next is ext4 (item 14) rather than more ext2:
+         extents and allocation by ranges are what is left. Pipes still copy byte by byte
    - [ ] A measurable goal for nginx: static files on one core against Linux under the same
          QEMU (wrk), throughput and p99 latency. Linux and FreeBSD already send files without
          copies and use every core, so the realistic win is p99 on one core: sendfile from the
@@ -350,7 +366,12 @@ Principles the plan follows:
    - [ ] Userland restart: a monitor component that stops the PDs, loads new images and starts
          them again; an A/B watchdog that rolls back if `make test` fails
    - [ ] Native toolchain (clang/LLVM, make, git) and native Claude Code (Node.js)
-14. [ ] **File system robustness II: ext4, with the best of the others** (L). Needs: 3. The format
+14. [ ] **File system robustness II: ext4, with the best of the others** (L). Needs: 3. Next after item 10's
+        refinements (October 2026), in steps that each work alone, fs-bench at 1 and 15 GiB after
+        each: (1) mount mke2fs's ext4 (extents read, flex_bg, 256-byte inodes, htree read
+        linearly, dropped on a directory write); (2) write with extents, ranges allocated
+        together; (3) metadata_csum (crc32c); (4) the journal (jbd2) last: ext4 without it is
+        valid. The format
         stays ext4 (Linux mounts it, e2fsprogs checks it; Docker uses the VM's own ext4 partition
         and does not need ours); techniques from other file systems that keep that format
    - [ ] ext4's own: extents, the jbd2 journal (no full e2fsck after a cut), delayed and

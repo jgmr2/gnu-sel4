@@ -520,7 +520,8 @@ bool mem_copy_user(int s, uintptr_t v, const void *src, size_t n)
 }
 
 /* Copies n bytes from the program's memory at v (its own regions) to dst; a page it never touched
- * reads as zeros (and is made, as touching it would) */
+ * reads as zeros (and is made, as touching it would). dst NULL: only checks and makes the pages,
+ * so a copy right after cannot fail */
 bool mem_copy_from_user(int s, uintptr_t v, void *dst, size_t n)
 {
     static const uintptr_t r[][2] = {
@@ -536,8 +537,7 @@ bool mem_copy_from_user(int s, uintptr_t v, void *dst, size_t n)
         if (!page(s, v, true)) return false;
         const uint8_t *p = mem_page_ptr(s, v);
         if (!p) return false;
-        memcpy(dst, p, k);
-        dst = (uint8_t *)dst + k;
+        if (dst) { memcpy(dst, p, k); dst = (uint8_t *)dst + k; }
         v += k;
         n -= k;
     }

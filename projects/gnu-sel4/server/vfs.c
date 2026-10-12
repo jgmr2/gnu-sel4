@@ -20,7 +20,7 @@
 
 /* Buffer shared with the file server (set by Microkit, see meta.py) */
 uintptr_t fs_buf;
-uintptr_t fs_cache;    /* fs_ext2's block cache, read-only use (meta.py; 0 in the live system) */
+uintptr_t fs_cache;    /* fs_ext2's block cache (meta.py; 0 in the live system): FS_OP_READ_REF, FS_OP_WRITE_REF */
 
 
 struct ofile ofiles[NOFILE];
@@ -665,6 +665,18 @@ static long do_write(long fd, size_t len, bool positional, uint64_t pos, uintptr
         if (r < 0) return r;
     }
     proc_image_release(f->ino);                   /* before fs_buf gets the data */
+    if (fetch && fs_cache) {                      /* one copy: the program -> fs_ext2's cache */
+        if (!mem_copy_from_user(cur->slot, src, NULL, len)) return -EFAULT;   /* cannot fail below */
+        long r = fs_call(FS_OP_WRITE_REF, f->ino, off, len);
+        if (r <= 0) return r;
+        uint32_t n = microkit_mr_get(1);
+        const struct fs_seg *sg = (const struct fs_seg *)fs_buf;
+        for (uint32_t i = 0, at = 0; i < n; at += sg[i].len, i++)
+            mem_copy_from_user(cur->slot, src + at, (void *)(fs_cache + sg[i].at), sg[i].len);
+        r = fs_call(FS_OP_WRITE_COMMIT, f->ino, off, r);
+        if (r > 0 && !positional) f->off = off + r;
+        return r;
+    }
     if (!fetch) memcpy((void *)fs_buf, (void *)client_buf, len);
     else if (!mem_copy_from_user(cur->slot, src, (void *)fs_buf, len)) return -EFAULT;
     long r = fs_call(FS_OP_WRITE, f->ino, off, len);

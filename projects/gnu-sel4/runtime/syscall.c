@@ -206,6 +206,18 @@ static long server_call_blocking(long n, long a1, long a2, long a3, long a4)
 static long sys_write(long fd, const char *data, size_t len)
 {
     size_t done = 0;
+    if ((uintptr_t)data == PROC_BUF_BASE && len <= POSIX_BUF_SIZE) {
+        /* Already in the shared buffer (sys_writev gathered it): after a partial write, what is
+         * left moves to its front and goes from there (the server only takes it from the front) */
+        while (done < len) {
+            long r = server_call_blocking(SYS_write, fd, 0, len - done, PROC_BUF_BASE);
+            if (r < 0) return done ? (long)done : r;
+            if (r == 0) break;
+            done += r;
+            if (done < len) memmove((void *)PROC_BUF_BASE, (char *)PROC_BUF_BASE + r, len - done);
+        }
+        return done;
+    }
     while (done < len) {
         size_t chunk = len - done < POSIX_BUF_SIZE ? len - done : POSIX_BUF_SIZE;
         long r = server_call_blocking(SYS_write, fd, 0, chunk, (long)(data + done));
