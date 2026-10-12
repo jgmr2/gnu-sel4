@@ -38,7 +38,7 @@
 #define ASID_POOL    ((seL4_CPtr)SRV_ASID_POOL_SLOT << 58)
 #define SCHED_POOL(i) (((seL4_CPtr)SRV_SCHED_POOL_SLOT << 58) | (i))
 
-#define BADGE_PPC    (1ULL << 63)       /* libmicrokit's protected(): channel = badge & 0x3f */
+#define BADGE_PPC    (1ULL << 63)       /* protected(): channel = badge & 0xff (server/microkit_main.c) */
 #define BADGE_FAULT  (1ULL << 62)       /* libmicrokit's fault(): child = badge & 0xff */
 
 /* ---------------- CSpace ---------------- */

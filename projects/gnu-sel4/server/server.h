@@ -73,7 +73,7 @@
 
 /* ---------------- processes ---------------- */
 
-#define NPROC 64           /* process records (including zombies); = PROC_SLOTS */
+#define NPROC 128          /* process records (including zombies); = PROC_SLOTS */
 #define NFD   256          /* descriptors per process */
 #define NGROUPS_ 32        /* supplementary groups per process */
 
@@ -86,7 +86,7 @@ enum { P_FREE, P_RUN, P_ZOMBIE };
 #define RLIMIT_AS_      9           /* bytes of memory a process may have (its page budget) */
 #define RLIM_NLIMITS_   16
 #define RLIM_INF        (~0ULL)
-#define DEFAULT_NPROC   48          /* of PROC_SLOTS = 64: the rest is root's (and the services') */
+#define DEFAULT_NPROC   96          /* of PROC_SLOTS = 128: the rest is root's (and the services') */
 
 struct proc {
     int state;
@@ -157,7 +157,7 @@ extern uintptr_t client_buf;        /* its shared buffer (in its slot's window) 
 #define NET_LEASE_CH 24             /* SERVER_LEASE_CHANNEL_ID: netstack obtained/renewed the DHCP lease */
 #define PROC_INDEX(p) ((int)((p) - procs))
 /* A set of processes waiting for something: bit = process index */
-typedef uint64_t waitmask_t;
+typedef unsigned __int128 waitmask_t;    /* NPROC bits */
 #define WAIT_BIT(p) ((waitmask_t)1 << PROC_INDEX(p))
 
 /* proc.c */

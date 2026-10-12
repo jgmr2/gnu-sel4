@@ -104,7 +104,7 @@ fbcon.elf: console_fbcon.o console_term.o
 	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@
 
 # --- POSIX server: dispatch + processes + terminal + VFS ---
-SERVER_SRCS := posix_server proc tty vfs vfs_pipe vfs_evfd vfs_net vfs_unix clock bridge mem procfs cred perf
+SERVER_SRCS := microkit_main posix_server proc tty vfs vfs_pipe vfs_evfd vfs_net vfs_unix clock bridge mem procfs cred perf
 SERVER_DEPS := $(wildcard $(POSIX)/server/*.h) $(wildcard $(POSIX)/include/sel4posix/*.h) \
 	       syscall_nr.h syscall_names.h
 server_%.o: $(POSIX)/server/%.c $(SERVER_DEPS)

@@ -121,11 +121,11 @@ check nice        sh -c 'loop() { i=0; while [ $i -lt 3000 ]; do i=$((i+1)); don
                          [ $low -le $((base * 2 + 5)) ] || exit 1
                          out=$(printf "nice -n -5 true\nexit\n" | login -f user 2>&1)
                          echo "$out" | grep -q "Permission denied" || { echo "user lowered its nice: $out"; exit 1; }'
-# 40: the system has 64 process slots (PROC_SLOTS), and the services take some (s6, 9pd, sshd...)
-check many-procs  sh -c 'i=0; while [ $i -lt 40 ]; do sleep 3 & i=$((i+1)); done
-                         k=0; while n=$(ps -e | grep -c " sleep"); [ "$n" -lt 40 ] && [ $k -lt 20 ]; do sleep 0.1; k=$((k+1)); done
-                         echo "INFO 40 background processes started, $n running"
-                         wait; [ "$n" -ge 40 ]'
+# 100: more than the 64 the PPC badge used to allow (PROC_SLOTS is 128; the services take some)
+check many-procs  sh -c 'i=0; while [ $i -lt 100 ]; do sleep 4 & i=$((i+1)); done
+                         k=0; while n=$(ps -e | grep -c " sleep"); [ "$n" -lt 100 ] && [ $k -lt 30 ]; do sleep 0.1; k=$((k+1)); done
+                         echo "INFO 100 background processes started, $n running"
+                         wait; [ "$n" -ge 100 ]'
 check proc-files  sh -c 'grep -q "\[stack\]" /proc/self/maps || { echo "no stack in maps"; exit 1; }
                          sh -c "exec 3</etc/passwd; readlink /proc/\$\$/fd/3" | grep -qx /etc/passwd || { echo "fd/3 is not /etc/passwd"; exit 1; }
                          set -- $(cat /proc/loadavg); case $1 in *.*) ;; *) exit 1;; esac'

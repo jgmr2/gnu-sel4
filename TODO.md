@@ -204,8 +204,10 @@ Principles the plan follows:
    - [ ] Dynamic VM memory: the VM sees plenty of RAM, each page created on first use (EPT fault
          -> page from the pool) and returned when Linux frees it (virtio-balloon, "free page
          reporting"); a cap per VM and a reserve for native
-   - [ ] Beyond 64 processes: the PPC badge names 64 slots; a second endpoint or tables
-         allocated on demand (a desktop with its services will need more)
+   - [x] Beyond 64 processes: 128 slots (PROC_SLOTS). libmicrokit gave protected() only the
+         badge's low 6 bits; posix_server links its own copy of libmicrokit 2.3.1's main loop
+         (server/microkit_main.c) with 8, and wait masks are 128 bits. many-procs runs 100
+         processes at once; RLIMIT_NPROC's default is 96
 7. [ ] **Linux VM integration II** (M–L). Needs: 1 (credentials across the bridge), 6 (memory)
    - [ ] Latency: a 9P round trip costs ~4.5 ms under QEMU (several VM exits per message:
          queue kick, interrupt status read, EOI). MSI-X and VIRTIO_F_EVENT_IDX in libvmm

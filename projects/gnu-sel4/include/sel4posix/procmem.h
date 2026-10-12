@@ -21,7 +21,7 @@
  */
 #pragma once
 
-#define PROC_SLOTS        64                /* processes alive at once (= NPROC; at most 64: the PPC badge has 6 bits for it) */
+#define PROC_SLOTS        128               /* processes alive at once (= NPROC; at most 256: the PPC badge's 8 bits, server/microkit_main.c) */
 
 #define PROC_IMG_BASE     0x10000000UL
 #define PROC_IMG_SIZE     0x10000000UL      /* 256 MiB */
