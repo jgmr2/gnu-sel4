@@ -198,17 +198,14 @@ Principles the plan follows:
          RLIMIT_STACK the 8 MiB stack. Test limittest
    - [x] RLIMIT_NPROC per (real) user, 48 by default, root exempt. More than 64 processes in all:
          item 6
-6. [ ] **Memory server: the first piece out of posix_server** (M–L). Needs: 5 (its budgets)
-   - [ ] mem.c moves into its own component that hands pages to posix_server and the VMM (one
-         pool, the budgets of item 5); Microkit: a capability to the VM's EPT
-   - [ ] Dynamic VM memory: the VM sees plenty of RAM, each page created on first use (EPT fault
-         -> page from the pool) and returned when Linux frees it (virtio-balloon, "free page
-         reporting"); a cap per VM and a reserve for native
+6. [x] **More than 64 processes** (S). Needs: 5. The memory server and dynamic VM memory that were
+       here are their own item now (17): costly (several weekends) for little before the real
+       hardware
    - [x] Beyond 64 processes: 128 slots (PROC_SLOTS). libmicrokit gave protected() only the
          badge's low 6 bits; posix_server links its own copy of libmicrokit 2.3.1's main loop
          (server/microkit_main.c) with 8, and wait masks are 128 bits. many-procs runs 100
          processes at once; RLIMIT_NPROC's default is 96
-7. [ ] **Linux VM integration II** (M–L). Needs: 1 (credentials across the bridge), 6 (memory)
+7. [ ] **Linux VM integration II** (M–L). Needs: 1 (credentials across the bridge)
    - [ ] Latency: a 9P round trip costs ~4.5 ms under QEMU (several VM exits per message:
          queue kick, interrupt status read, EOI). MSI-X and VIRTIO_F_EVENT_IDX in libvmm
    - [ ] AF_VSOCK for native programs (sockets between native and VM processes)
@@ -245,7 +242,7 @@ Principles the plan follows:
    - [ ] dpkg + apt with our own `.deb` repository built from our ports (Debian's binaries are
          for glibc and Linux); dpkg first (C), apt needs libc++ and threads
 10. [ ] **Performance II: rings, asynchronous I/O, zero copy** (L). Needs: 9 (and the real
-        hardware's numbers, item 17, before deciding what is worth it there). Measured under QEMU and not worth it yet: what costs today is CPU
+        hardware's numbers, item 18, before deciding what is worth it there). Measured under QEMU and not worth it yet: what costs today is CPU
    - [x] Asynchronous file reads built, measured and left out: 186 ms against 183 ms synchronous
          next to a cold 24 MiB read (each 64 KiB operation waits ~0.3 ms for the disk)
    - [x] Zero copy measured: a cached 64 KiB read costs 28 us (two copies); mapping cache pages
@@ -257,7 +254,12 @@ Principles the plan follows:
    - [ ] Zero copy where it pays off: shared mmap of files on the cache pages; large read/write
          passing page capabilities
    - [ ] kqueue as the native event API; large pages (2 MiB) for large regions
-11. [ ] **posix_server split and restartable** (L). Needs: 6 (memory already out), 10 (rings
+   - [ ] Large writes with their size known up front (José's idea): the region delimited from
+         the start (start and length), so the file's blocks are reserved in one go, contiguous,
+         and the data goes by reference in a shared region instead of 64 KiB copies, each
+         waiting for the disk; with the ordering of item 3, written back in large requests.
+         Today's 12 MB/s is the per-operation synchronous write, not locking
+11. [ ] **posix_server split and restartable** (L). Needs: 17 (memory already out), 10 (rings
         between components). Today it is a single point of failure for everything native
    - [ ] Separate servers for processes, files, network and the tty, talking over rings
    - [ ] Important state kept outside each one, so a monitor (item 13) can restart it
@@ -268,7 +270,7 @@ Principles the plan follows:
          images on jails
    - [ ] Capsicum (capability mode) or pledge/unveil, enforced where every call already goes
    - [ ] `sysctl` (FreeBSD style) next to the Linux-format /proc
-13. [ ] **Self-hosted development loop** (L). Needs: 6 (VM memory), 9 (threads), 11 (restart)
+13. [ ] **Self-hosted development loop** (L). Needs: 17 (VM memory), 9 (threads), 11 (restart)
    - [ ] Claude Code + toolchain in the Linux VM, working on the tree through /mnt/sel4
    - [ ] Userland restart: a monitor component that stops the PDs, loads new images and starts
          them again; an A/B watchdog that rolls back if `make test` fails
@@ -283,7 +285,14 @@ Principles the plan follows:
 16. [ ] **Toolchain identity and other architectures** (L). Needs: nothing, lowest priority
    - [ ] Our own triple (`x86_64-sel4-musl`) instead of `x86_64-linux-musl` (programs see `__linux__`)
    - [ ] ARM64 / Raspberry Pi 4 (sDDF lacks an SD driver)
-17. [~] **The real laptop, stage 1: the live system works there** (M). Needs: nothing. Dell
+17. [ ] **Memory server and dynamic VM memory** (L). Needs: 6. One pool for the native system and
+        the VMs instead of 768 MiB fixed for the VM; for a driver VM (item 19) and self-hosting
+   - [ ] mem.c moves into its own component that hands pages to posix_server and the VMM (one
+         pool, the budgets of item 5); Microkit: a capability to the VM's EPT
+   - [ ] Dynamic VM memory: the VM sees plenty of RAM, each page created on first use (EPT fault
+         -> page from the pool) and returned when Linux frees it (virtio-balloon, "free page
+         reporting"); a cap per VM and a reserve for native
+18. [~] **The real laptop, stage 1: the live system works there** (M). Needs: nothing. Dell
        Latitude 7390 2-in-1 (i5-8350U, UEFI). Everything in RAM: the machine's disks are never
        touched (no disk driver at all). Postponed (October 2026): development continues under
        QEMU, and the laptop comes back when the items before this one are done (moved to the end
@@ -323,7 +332,7 @@ Principles the plan follows:
          contents (~50 MB in all)
    - [ ] Then: the whole battery to the QR codes; revisit the decisions marked "under QEMU"
    - [ ] Power off through \_S5 from the ACPI tables (today: halt, then the power button)
-18. [ ] **The real laptop, stage 2: daily development on it** (L). Needs: 17, 6 (memory for the
+19. [ ] **The real laptop, stage 2: daily development on it** (L). Needs: 18, 17 (memory for the
        driver VM), 7. Realistic in months of steady work; the network is the biggest piece
    - [ ] Persistent disk: the sDDF NVMe driver, only on a partition of its own and only when
          asked for explicitly (Debian's partitions are never touched)
@@ -334,8 +343,8 @@ Principles the plan follows:
    - [ ] USB: through the driver VM, or natively (sel4-cap's experimental xHCI driver for
          Microkit); a separate USB VM with an input proxy (a compromised VM must not type)
    - [ ] Multicore (seL4 supports it; one core used today; the laptop has 4)
-19. [ ] **The real laptop, stage 3: replacing Debian** (L, probably more than a year at this pace).
-        Needs: 18
+20. [ ] **The real laptop, stage 3: replacing Debian** (L, probably more than a year at this pace).
+        Needs: 19
    - [ ] Touchpad and touchscreen (I²C-HID); the internal keyboard and touchpad stay native
    - [ ] Suspend and resume, battery, thermal, brightness (ACPI)
    - [ ] Audio, accelerated graphics (today: the firmware's framebuffer only)
