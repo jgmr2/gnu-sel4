@@ -291,6 +291,18 @@ Principles the plan follows:
          and the data goes by reference in a shared region instead of 64 KiB copies, each
          waiting for the disk; with the ordering of item 3, written back in large requests.
          Today's 12 MB/s is the per-operation synchronous write, not locking
+   - [ ] State of the art (October 2026), what beats Linux and keeps compatibility (ext4 on disk,
+         POSIX for programs, the VM untouched): uFS (SOSP'21, a user-space file system service:
+         polling, shared-memory rings, files split across cores; ~2x ext4 on LevelDB,
+         https://pages.cs.wisc.edu/~chenhaoy/publication/ufs/ufs.pdf); LionsOS (seL4, sDDF
+         queues passing buffers by reference; less CPU per byte than Linux in networking,
+         https://arxiv.org/abs/2501.06234); Linux's large folios (whole extents, not 4 KiB
+         pages, https://lwn.net/Articles/1024532) and FUSE over io_uring with zero-copy buffers
+         (https://lwn.net/Articles/997400). In order: (1) posix_server copies straight to and
+         from the program's memory (3 copies -> 2); (2) work per extent, not per block;
+         (3) a data ring between the runtime and fs_ext2, posix_server only at open (uFS);
+         (4) cache pages mapped read-only into processes for mmap and large reads (LionsOS;
+         needs item 17); (5) files split across cores (uFS; needs SMP)
 11. [ ] **posix_server split and restartable** (L). Needs: 17 (memory already out), 10 (rings
         between components). Today it is a single point of failure for everything native
    - [ ] Separate servers for processes, files, network and the tty, talking over rings
