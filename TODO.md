@@ -282,7 +282,16 @@ Principles the plan follows:
    - [ ] Userland restart: a monitor component that stops the PDs, loads new images and starts
          them again; an A/B watchdog that rolls back if `make test` fails
    - [ ] Native toolchain (clang/LLVM, make, git) and native Claude Code (Node.js)
-14. [ ] **File system robustness II: a journal** (L). Needs: 3. Towards ext3/ext4
+14. [ ] **File system robustness II: ext4, with the best of the others** (L). Needs: 3. The format
+        stays ext4 (Linux mounts it, e2fsprogs checks it; Docker uses the VM's own ext4 partition
+        and does not need ours); techniques from other file systems that keep that format
+   - [ ] ext4's own: extents, the jbd2 journal (no full e2fsck after a cut), delayed and
+         multi-block allocation, metadata checksums, hashed directories (htree)
+   - [ ] From ZFS (CDDL): the ARC cache instead of LRU; transaction groups (started: write-back)
+   - [ ] From UFS2 (BSD): soft updates, the full dependency order (item 3 began it); locality
+   - [ ] From XFS and F2FS: speculative preallocation, flash-friendly writes (SD cards, NVMe)
+   - [ ] Not without leaving the format: copy-on-write, snapshots, clones, data checksums
+         (Btrfs, ZFS, APFS); if wanted one day, ZFS beside ext4, as FreeBSD does
    - [ ] A block freed and allocated again within one operation is not ordered (none does that
          today); virtio-blk flush (FLUSH requests) for power cuts of the host itself
 15. [ ] **Directory services, native: LDAP, Kerberos, Active Directory, Samba** (L). Needs: 9
