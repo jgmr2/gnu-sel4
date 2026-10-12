@@ -18,7 +18,7 @@ PROJ = os.path.dirname(HERE)
 DISK = os.path.join(PROJ, "disk.img")
 BUILD = os.environ.get("BUILD_DIR") or os.path.join(PROJ, "build")   # docker compose: build-docker/
 # The copy goes next to the disk itself (disk.img may be a link to a faster disk)
-COPY = os.path.join(os.path.dirname(os.path.realpath(DISK)), "test-disk.img")
+COPY = os.environ.get("TEST_COPY") or os.path.join(os.path.dirname(os.path.realpath(DISK)), "test-disk.img")   # TEST_COPY=: another
 MARKER = os.path.join(BUILD, "test-marker")
 SCRIPT = os.path.join(BUILD, "test-script")
 CMDS = os.path.join(BUILD, "test-debugfs.cmds")

@@ -7,8 +7,9 @@ kernel (vm/rootfs/out) booted on its own with rdinit=/bin/sh.
   usage: tools/fs-bench.py [linux|sel4|both] [--gib N]
 
 --gib N: one N GiB file instead (written, synced, read back). GNU/seL4's ext2 partition is far
-smaller: grow a disk copy first, which the run then uses (test.py --reuse-copy):
-  DISK=<dir of disk.img>/test-disk.img PART=<same dir>/grow-part1.img tools/disk-grow.py MB
+smaller: the run uses bench-disk.img next to disk.img, a copy grown once (test.py --reuse-copy;
+the normal tests' test-disk.img is remade on every run): copy disk.img's MBR and ext2 partition
+to it, then DISK=<dir>/bench-disk.img PART=<dir>/grow-part1.img tools/disk-grow.py MB
 """
 import os, select, subprocess, sys, time
 
@@ -48,8 +49,10 @@ def linux():
 def sel4():
     path = os.path.join(BUILD, "fs-bench-script.sh")
     with open(path, "w") as f: f.write(script())
+    env = dict(os.environ)
+    if GIB: env["TEST_COPY"] = os.path.join(os.path.dirname(os.path.realpath(os.path.join(PROJ, "disk.img"))), "bench-disk.img")
     r = subprocess.run([os.path.join(HERE, "test.py"), "--script", path, "--timeout", "1200"] +
-                       (["--reuse-copy"] if GIB else []), capture_output=True, text=True)
+                       (["--reuse-copy"] if GIB else []), capture_output=True, text=True, env=env)
     for l in r.stdout.splitlines():
         if l.startswith("BENCH write"): print("GNU/seL4: " + l[6:])
         if l.startswith("BENCH-FILE") or l.startswith("TEST ") or "FAIL" in l: print("GNU/seL4: " + l)
