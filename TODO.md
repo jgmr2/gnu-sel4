@@ -168,8 +168,10 @@ Principles the plan follows:
          stopping itself finishes its call, POSIX_STOPPED parks it), SIGCONT continues, wait4
          WUNTRACED/WCONTINUED, `Ctrl-Z`, SIGTTIN/SIGTTOU (TOSTOP) for background jobs, orphaned
          groups not stopped, state T in /proc. Test jobtest
-   - [ ] `fg`/`bg` in zsh and dash tried by hand on the console and a pty; `Ctrl-C` in the middle
-         of dash's prompt (today processed with the next line)
+   - [x] Job control in the shells: zsh and dash, typed at on a pty (test shelltest): Ctrl-Z,
+         jobs, bg, fg, Ctrl-C. Each console login is a session of its own with the console as its
+         controlling terminal (init, like getty). `Ctrl-C` in the middle of dash's prompt was a bug
+         of dash 0.5.13 itself (the same on Linux): patched (ports/dash/ctrl-c-at-prompt.patch)
    - [x] Asynchronous signals to processes that make no system calls (pure loops): the server
          suspends the thread and, outside the runtime (its in_call counter is 0), puts its
          registers on its stack and runs the runtime's entry point, which saves the FPU state,

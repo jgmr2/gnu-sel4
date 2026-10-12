@@ -960,7 +960,7 @@ void proc_start_init(void)
     p->pgid = p->sid = 1;
     cred_init_root(p);
     vfs_proc_tty(p);
-    tty_console_session(1);                /* the console is session 1's (init's) */
+    tty_console_session(0);                /* nobody's until a login (init: its own session) */
 
     static const char *const candidates[][2] = {
         { "/sbin/init", "init" }, { "/bin/sh", "-sh" },

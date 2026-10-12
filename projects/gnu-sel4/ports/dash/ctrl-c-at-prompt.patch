@@ -1,0 +1,16 @@
+dash 0.5.13: Ctrl-C at the interactive prompt did nothing until the next line (that line was
+then thrown away). preadfd() retried a read interrupted by the signal, so onint() never ran;
+an interrupt pending now ends the read and INTON in preadbuffer() takes it. Same on Linux with
+dash 0.5.13.5; 0.5.12 does not have the retry.
+
+--- a/src/input.c	2026-07-04 23:17:02.000000000 -0600
++++ b/src/input.c	2026-10-11 18:12:32.953114061 -0600
+@@ -354,7 +354,7 @@
+ 		nr = read(fd, buf, nr);
+ 
+ 	if (nr < 0) {
+-		if (errno == EINTR && !(basepf.prev && pending_sig))
++		if (errno == EINTR && !int_pending() && !(basepf.prev && pending_sig))
+ 			goto retry;
+ 		if (fd == 0 && errno == EWOULDBLOCK &&
+ 		    stdin_clear_nonblock() >= 0) {

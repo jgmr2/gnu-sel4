@@ -264,7 +264,7 @@ int  pty_master_poll(int tty, bool want_in, bool want_out, bool wait);
 int  tty_ctty(const struct proc *p);         /* its controlling terminal, or -1 */
 int  tty_fg_of(int tty);                     /* foreground process group */
 void tty_session_leader_exit(const struct proc *p);
-void tty_console_session(int sid);         /* (init) */
+void tty_console_session(int sid);         /* (init: 0 = free for the next login) */
 uint32_t tty_rdev(int tty);
 void tty_name(int tty, char *out, size_t max);
 void tty_puts(const char *s);                /* the server's own messages, on the console */

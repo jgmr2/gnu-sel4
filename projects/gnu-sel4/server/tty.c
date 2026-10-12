@@ -212,10 +212,9 @@ static bool tty_input(struct tty *t, char c)
     if ((t->tio.c_lflag & ISIG) && c && (c == cc[VINTR] || c == cc[VQUIT] || c == cc[VSUSP])) {
         /* Ctrl-C, Ctrl-\, Ctrl-Z: discard the pending input and signal the foreground group */
         if (!(t->tio.c_lflag & NOFLSH)) t->line_len = t->ready_len = 0;
-        if (t->tio.c_lflag & ECHO) {
+        if (t->tio.c_lflag & ECHO) {            /* "^C", as Linux (the shell starts the new line) */
             tty_out(t, '^');
             tty_out(t, c + 0x40);
-            tty_out(t, '\n');
         }
         if (t->fg_pgrp > 0)
             proc_signal_pgrp(t->fg_pgrp, c == cc[VINTR] ? SIGINT : c == cc[VQUIT] ? SIGQUIT : SIGTSTP);
@@ -577,7 +576,7 @@ void tty_notified(unsigned ch)
 
 void tty_init(void)
 {
-    ttys[0] = (struct tty){ .used = true, .tio = tio_default, .rows = 24, .cols = 80, .sid = 1, .fg_pgrp = 1 };
+    ttys[0] = (struct tty){ .used = true, .tio = tio_default, .rows = 24, .cols = 80 };
     if (!serial_config_check_magic(&serial_config)) {
         microkit_dbg_puts("[posix] invalid serial configuration\n");
         return;
