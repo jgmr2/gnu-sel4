@@ -140,10 +140,13 @@ Principles the plan follows:
    - [x] A build without the Linux VM (`make LINUX_VM=no`: a kernel without VT-x, no VMM,
          no /dev/linux; 9pd idles): 31 tests pass. GitHub Actions builds and tests it on every
          push (`.github/workflows/test.yml`)
-   - [x] blk_driver faulted on GitHub (the disk read as 0 bytes): QEMU's -cpu host gave the
-         guest the AMD runner's 48 physical address bits, and the firmware put the 64-bit BARs
-         outside 0x7000000000. phys-bits=39 everywhere. The test job builds its own image (with
-         the cache), since pulling :latest raced with the image workflow
+   - [x] The test job builds its own image (with the cache): pulling :latest raced with the
+         image workflow. QEMU runs with host-phys-bits=off,phys-bits=39 (with 48 bits the firmware
+         puts the 64-bit BARs outside 0x7000000000: reproduced here, and fixed)
+   - [ ] On GitHub's AMD runners the virtio disk still reads as 0 bytes (blk_driver asserts),
+         even with 39 bits (the e820 map shows they took effect): something else of AMD/KVM there
+         (the IOMMU? the PCI config access?). The test step may fail meanwhile (continue-on-error);
+         the build must pass. Next: the serial log artefact with sDDF's PCI scan debug output
    - [ ] The full `make test` on a self-hosted runner with VT-x (the workflow's "full" job, by
          hand); a cache for the CI build (from scratch: ~11 minutes)
 3. [x] **File system robustness I** (M). Needs: nothing. The disk takes more and more data and
