@@ -81,11 +81,27 @@ static uint64_t sig_blocked, sig_pending;
  * read() got, an ioctl's results), and the handler's own calls would overwrite them. So they are
  * saved and put back around it (64 KiB, on this stack). If the handler longjmps out, the call is
  * abandoned anyway */
+static long sys_mmap(uintptr_t addr, size_t len, int prot, int flags, int fd, uint64_t off);
+
 static void __attribute__((noinline)) call_handler(const struct k_sigaction *a, int sig)
 {
-    char buf[POSIX_BUF_SIZE];
+    /* The buffer is 1 MiB: saved in an area of its own per nesting level (made the first time),
+     * 64 KiB on the stack if that cannot be had */
+    static char *save[8];
+    static int depth;
+    char small[0x10000];
+    char *buf = small;
+    size_t n = sizeof small;
+    if (depth < 8) {
+        if (!save[depth]) {
+            long m = sys_mmap(0, POSIX_BUF_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+            if (m > 0) save[depth] = (char *)m;
+        }
+        if (save[depth]) { buf = save[depth]; n = POSIX_BUF_SIZE; }
+    }
+    depth++;
     seL4_Word mrs[POSIX_NUM_MRS];
-    memcpy(buf, (void *)PROC_BUF_BASE, sizeof buf);
+    memcpy(buf, (void *)PROC_BUF_BASE, n);
     for (int i = 0; i < POSIX_NUM_MRS; i++) mrs[i] = mr_get(i);
     if (a->flags & SA_SIGINFO) {
         siginfo_t si;
@@ -95,7 +111,8 @@ static void __attribute__((noinline)) call_handler(const struct k_sigaction *a, 
     } else {
         a->handler(sig);
     }
-    memcpy((void *)PROC_BUF_BASE, buf, sizeof buf);
+    depth--;
+    memcpy((void *)PROC_BUF_BASE, buf, n);
     for (int i = 0; i < POSIX_NUM_MRS; i++) mr_set(i, mrs[i]);
 }
 

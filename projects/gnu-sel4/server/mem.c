@@ -448,6 +448,13 @@ static bool page(int s, uintptr_t v, bool zero)
     return true;
 }
 
+/* The first len bytes of slot s's shared buffer exist (for a call that fills them) */
+bool mem_buf_ensure(int s, size_t len)
+{
+    if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
+    return len <= 0x10000 || mem_ensure(s, PROC_BUF_BASE + 0x10000, len - 0x10000);
+}
+
 bool mem_ensure(int s, uintptr_t vaddr, size_t len)
 {
     for (uintptr_t v = vaddr & ~0xfffUL; v < vaddr + len; v += 4096)
@@ -562,7 +569,8 @@ bool mem_fault(int s, uintptr_t addr)
     bool ok = (addr >= PROC_IMG_BASE && addr < PROC_IMG_BASE + PROC_IMG_SIZE) ||
               (addr >= PROC_HEAP_BASE && addr < PROC_HEAP_BASE + PROC_HEAP_SIZE) ||
               (addr >= PROC_STACK_BASE && addr < PROC_STACK_BASE + PROC_STACK_SIZE) ||
-              (addr >= PROC_MMAP_BASE && addr < PROC_MMAP_BASE + PROC_MMAP_SIZE);
+              (addr >= PROC_MMAP_BASE && addr < PROC_MMAP_BASE + PROC_MMAP_SIZE) ||
+              (addr >= PROC_BUF_BASE && addr < PROC_BUF_BASE + POSIX_BUF_SIZE);   /* the shared buffer past 64 KiB */
     return ok && page(s, addr, true);
 }
 
@@ -584,8 +592,9 @@ bool slot_make(int s)
                         call, BADGE_PPC | s) ||
         seL4_CNode_Copy(sl->cnode, PROC_NTFN_CAP, PROC_CNODE_BITS, CN(sl->ntfn), seL4_AllRights))
         return false;
-    /* Shared and IPC buffers: fixed for the slot's whole lifetime */
-    if (!mem_ensure(s, PROC_BUF_BASE, POSIX_BUF_SIZE + 4096)) return false;
+    /* Shared and IPC buffers, for the slot's whole lifetime: the first 64 KiB of the shared one
+     * now; the rest of it as calls need it (mem_buf_ensure: most never move more) */
+    if (!mem_ensure(s, PROC_BUF_BASE, 0x10000) || !mem_ensure(s, PROC_IPCBUF, 4096)) return false;
     uint32_t ipcbuf = sl->dir[PROC_IPCBUF >> 22][(PROC_IPCBUF >> 12) & 1023];
     if (seL4_TCB_SetSpace(sl->tcb, fault_ep, sl->cnode,
                           seL4_CNode_CapData_new(0, 64 - PROC_CNODE_BITS).words[0], sl->vspace, 0) ||

@@ -22,7 +22,7 @@
 #pragma once
 
 #define POSIX_CHANNEL   0           /* channel from the program to the server */
-#define POSIX_BUF_SIZE  0x10000     /* 64 KiB */
+#define POSIX_BUF_SIZE  0x100000    /* 1 MiB: a read or write of up to this much is one call */
 #define POSIX_NUM_MRS   7
 /* Calls with two paths (rename, symlink...): the second one goes at this offset */
 #define POSIX_BUF_PATH2 0x8000

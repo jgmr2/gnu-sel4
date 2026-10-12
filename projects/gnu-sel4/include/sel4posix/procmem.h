@@ -12,7 +12,7 @@
  *
  *   0x1000_0000  program image (static ELF linked here), rwx
  *   0x3000_0000  buffer shared with posix_server (syscall data)
- *   0x3001_0000  seL4 IPC buffer
+ *   0x3010_0000  seL4 IPC buffer
  *   0x4000_0000  heap (brk)
  *   0x6000_0000  stack (grows down from PROC_STACK_BASE + PROC_STACK_SIZE)
  *   0x8000_0000  anonymous mmap
@@ -26,7 +26,7 @@
 #define PROC_IMG_BASE     0x10000000UL
 #define PROC_IMG_SIZE     0x10000000UL      /* 256 MiB */
 #define PROC_BUF_BASE     0x30000000UL      /* = POSIX_BUF_SIZE bytes */
-#define PROC_IPCBUF       0x30010000UL      /* 4 KiB */
+#define PROC_IPCBUF       0x30100000UL      /* 4 KiB, after the shared buffer */
 #define PROC_HEAP_BASE    0x40000000UL
 #define PROC_HEAP_SIZE    0x10000000UL      /* 256 MiB */
 #define PROC_STACK_BASE   0x60000000UL

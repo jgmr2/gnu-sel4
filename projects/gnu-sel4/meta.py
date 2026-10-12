@@ -41,14 +41,14 @@ NETSTACK_LEASE_CHANNEL_ID = 51        # LEASE_CH in net/netstack.c
 NET_BUF_SIZE = 0x1_0000               # NET_BUF_SIZE in include/sel4posix/net_protocol.h
 VMM_BRIDGE_CHANNEL_ID = 50            # BRIDGE_CH in vm/guest_arch_init.h
 BRIDGE_DATA_SIZE = 0x1_0000           # BR_DATA_SIZE / BRIDGE_DATA_SIZE
-FS_BUF_SIZE = 0x1_0000
-FS_CACHE_SIZE = 0x100_0000            # 16 MiB: sDDF data region, fs_ext2 cache (+ 256 KiB staging)
+FS_BUF_SIZE = 0x10_0000              # FS_BUF_SIZE in fs_protocol.h: 1 MiB
+FS_CACHE_SIZE = 0x200_0000            # 32 MiB: sDDF data region, fs_ext2 cache (+ 1 MiB staging). 64 MiB: 16384 4 KiB frames, the capDL initializer runs out of slots (its address is not 2 MiB aligned for large pages)
 
 # RAM budget: seL4 hands out boot memory as "dirty" untyped and zeroes it IN FULL the first
 # time it is used, in power-of-2 blocks. On q35 the low RAM is one 2 GiB block and the high RAM
 # starts with another 2-4 GiB one: if everything (process memory + VM + images) does not fit in
 # low RAM (~1.85 GiB free), the high block gets touched too and QEMU grows from ~2.2 to 4.3 GB
-# or more. Today: processes 768 MiB + VM 768 MiB + netstack 64 MiB + fs_ext2's cache 16 MiB +
+# or more. Today: processes 768 MiB + VM 768 MiB + netstack 64 MiB + fs_ext2's cache 32 MiB +
 # ~50 MiB of drivers.
 NETSTACK_HEAP_SIZE = 0x400_0000       # NETSTACK_HEAP_SIZE in net/netstack.h
 

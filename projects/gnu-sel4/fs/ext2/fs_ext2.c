@@ -189,7 +189,7 @@ static bool counts_dirty;
  * already existed, superblock, descriptors) after. Cut in between, the new blocks are only
  * unreferenced free space; nothing on the disk points to contents that were never written
  * (another file's old data). What a cut in the second half leaves, e2fsck repairs at boot. */
-#define MAX_SLOTS    8192
+#define MAX_SLOTS    8192               /* 32 MiB of cache (meta.py's FS_CACHE_SIZE) */
 #define STAGE_BLOCKS 256                   /* 1 MiB: the largest single disk request */
 #define NO_SLOT      0xffffffffu
 static struct cslot {

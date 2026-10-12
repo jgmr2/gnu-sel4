@@ -269,6 +269,9 @@ Principles the plan follows:
          1 GiB written with sync 3.95 s against 1.57 s (~2.5x; on an SD card both were bound by
          it: 29-32 s against 21-28 s); 256 MiB read 0.36 s against 0.05 s (~7x). What remains:
          64 KiB per call and two copies, flushes that wait whole, a 16 MiB cache
+   - [x] 1 MiB per call (the shared buffer and fs_buf; its pages past 64 KiB made on demand) and a
+         32 MiB cache (64 MiB: 16384 frames, the capDL initializer runs out of slots): 1 GiB
+         written 3.95 -> 3.74 s, 256 MiB read 0.36 -> 0.32 s. Calls were no longer the limit
    - [ ] Large writes with their size known up front (José's idea): the region delimited from
          the start (start and length), so the file's blocks are reserved in one go, contiguous,
          and the data goes by reference in a shared region instead of 64 KiB copies, each

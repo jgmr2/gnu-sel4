@@ -15,7 +15,7 @@
  */
 #pragma once
 
-#define FS_BUF_SIZE   0x10000      /* 64 KiB, same as POSIX_BUF_SIZE */
+#define FS_BUF_SIZE   0x100000     /* 1 MiB, same as POSIX_BUF_SIZE */
 #define FS_BUF_PATH2  0x8000
 #define FS_PATH_MAX   4096
 

@@ -85,6 +85,15 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
     long a1 = microkit_mr_get(1), a2 = microkit_mr_get(2), a3 = microkit_mr_get(3);
     long a4 = microkit_mr_get(4), a5 = microkit_mr_get(5), a6 = microkit_mr_get(6);
 
+    /* Calls that fill the shared buffer with up to a3 bytes: the pages past its first 64 KiB are
+     * made when one first needs them (mem.c) */
+    if ((n == __NR_read || n == __NR_pread64 || n == __NR_recvfrom || n == __NR_getdents64) &&
+        !mem_buf_ensure(cur->slot, (size_t)a3)) {
+        microkit_mr_set(0, -ENOMEM);
+        microkit_mr_set(POSIX_MR_SIGNALS, 0);
+        return microkit_msginfo_new(0, POSIX_NUM_MRS);
+    }
+
     /* A FIFO open that waited and was abandoned (a signal, then something else): drop its count */
     if (cur->fifo_wait && n != __NR_open && n != __NR_openat) fifo_cancel_wait(cur);
 

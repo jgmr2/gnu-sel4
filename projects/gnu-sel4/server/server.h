@@ -205,6 +205,7 @@ void mem_slot_set_prio(int s, int prio);
 void proc_apply_nice(struct proc *p);
 void proc_image_release(uint32_t ino);         /* before a file is changed: load it in full where it runs */
 bool mem_ensure(int s, uintptr_t vaddr, size_t len);
+bool mem_buf_ensure(int s, size_t len);        /* the first len bytes of the shared buffer exist */
 void mem_free_range(int s, uintptr_t vaddr, size_t len);
 void mem_free_all(int s);
 bool mem_fork(int cs, int ps);
