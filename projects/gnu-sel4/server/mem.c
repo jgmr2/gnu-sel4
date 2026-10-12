@@ -429,6 +429,7 @@ static bool page(int s, uintptr_t v, bool zero)
     if (*e) return true;
     bool recycled = false;
     uint32_t x;
+    if (!keep(v) && !proc_page_allowed(s)) return false;   /* its budget (RLIMIT_AS, its user's) */
     if (keep(v)) {                                   /* the shared buffer: through the window */
         x = frame_new_unmapped();
         if (!x || !map_frame(CAP_PTR(x) + 1, SELF_VSPACE, proc_win(s, v), seL4_ReadWrite)) return false;

@@ -185,12 +185,19 @@ Principles the plan follows:
          ate what was typed ahead). /proc shows the controlling terminal
    - [x] The dropbear ssh server as an s6-rc longrun (sshd: host keys made at first use, in
          /etc/dropbear); the host's port 2223 reaches it (make run, docker compose). Test sshd
-   - [ ] tmux or screen
-5. [ ] **Memory limits** (S). Needs: nothing (fork copies, so counting pages is simple)
-   - [ ] A page budget per process and per user (like RLIMIT_AS): today one process can take
-         the whole 768 MiB pool. Shared (memfd) pages counted once
-   - [ ] More than 64 processes (PROC_SLOTS): the services already take about ten (s6, 9pd,
-         sshd); RLIMIT_NPROC per user
+   - [~] GNU screen 5.0.2 ported (/bin/screen; getdtablesize() was INT_MAX before item 5's
+         limits, and its closeallfiles() polled 2 billion descriptors), but a session does not
+         start: `screen -D -m cmd` returns 0 at once without its socket or window. Skipped for
+         now; tmux needs libevent
+5. [x] **Memory limits** (S). Needs: nothing (fork copies, so counting pages is simple)
+   - [x] Resource limits kept and enforced by posix_server (getrlimit, setrlimit, prlimit64;
+         inherited by fork): RLIMIT_AS is a process's page budget (a page beyond it: killed,
+         "out of memory"), all the processes of a user other than root together at most 3/4 of
+         the pool (root keeps the rest to log in and stop them; memfd pages are the shared
+         object's, counted once), RLIMIT_NOFILE is the table (256; getdtablesize() was INT_MAX),
+         RLIMIT_STACK the 8 MiB stack. Test limittest
+   - [x] RLIMIT_NPROC per (real) user, 48 by default, root exempt. More than 64 processes in all:
+         item 6
 6. [ ] **Memory server: the first piece out of posix_server** (M–L). Needs: 5 (its budgets)
    - [ ] mem.c moves into its own component that hands pages to posix_server and the VMM (one
          pool, the budgets of item 5); Microkit: a capability to the VM's EPT

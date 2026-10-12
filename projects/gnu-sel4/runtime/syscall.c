@@ -1161,14 +1161,21 @@ static long sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, lo
     case SYS_rt_sigsuspend:  return sys_sigsuspend((const uint64_t *)a1);
     case SYS_rt_sigpending:  *(uint64_t *)a1 = sig_pending; return 0;
     case SYS_sigaltstack:    return 0;
-    /* limits and times: no limits, no accounting yet */
+    /* limits (posix_server keeps and enforces them: NOFILE, NPROC, AS, STACK); times: no
+     * accounting yet */
     case SYS_getrlimit:
+    case SYS_setrlimit:
     case SYS_prlimit64: {
-        struct rlimit *old = (struct rlimit *)(n == SYS_getrlimit ? a2 : a4);
-        if (old) old->rlim_cur = old->rlim_max = RLIM_INFINITY;
-        return 0;
+        long pid = n == SYS_prlimit64 ? a1 : 0, res = n == SYS_prlimit64 ? a2 : a1;
+        const struct rlimit *nv = (const struct rlimit *)(n == SYS_setrlimit ? a2 : n == SYS_prlimit64 ? a3 : 0);
+        struct rlimit *old = (struct rlimit *)(n == SYS_getrlimit ? a2 : n == SYS_prlimit64 ? a4 : 0);
+        long r = server_call(SYS_prlimit64, pid, res, nv != NULL, nv ? nv->rlim_cur : 0, nv ? nv->rlim_max : 0, 0);
+        if (r == 0 && old) {
+            old->rlim_cur = server_result(1);
+            old->rlim_max = server_result(2);
+        }
+        return r;
     }
-    case SYS_setrlimit:      return 0;
     case SYS_times:          if (a1) memset((void *)a1, 0, 4 * sizeof(long)); return 0;
     case SYS_getrusage:      if (a2) memset((void *)a2, 0, sizeof(struct rusage)); return 0;
     /* system information */

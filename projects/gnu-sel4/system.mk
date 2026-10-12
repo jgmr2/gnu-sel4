@@ -280,12 +280,15 @@ dropbear.bin: dropbear/dropbearmulti
 	llvm-strip -o $@ $<
 
 # Everyday GNU tools and less (ports/gnu/build-gnu.sh): sources and "package/program"
-GNU_PKGS := grep-3.12 sed-4.10 findutils-4.11.0 diffutils-3.12 tar-1.35 gzip-1.15 less-710
+GNU_PKGS := grep-3.12 sed-4.10 findutils-4.11.0 diffutils-3.12 tar-1.35 gzip-1.15 less-710 screen-5.0.2
 GNU_PROGS := grep/grep grep/egrep grep/fgrep sed/sed findutils/find findutils/xargs \
 	     diffutils/cmp diffutils/diff diffutils/diff3 diffutils/sdiff tar/tar \
-	     gzip/gzip gzip/gunzip gzip/zcat gzip/zgrep gzip/zless gzip/zmore gzip/zdiff gzip/zcmp less/less
+	     gzip/gzip gzip/gunzip gzip/zcat gzip/zgrep gzip/zless gzip/zmore gzip/zdiff gzip/zcmp less/less \
+	     screen/screen
 GNU_ARGS_diffutils := gl_cv_func_strcasecmp_works=yes
 GNU_ARGS_less := --with-regex=posix LIBS=-lncursesw
+# screen: no PAM (sudo and login check passwords themselves); termcap from ncursesw
+GNU_ARGS_screen := --disable-pam LIBS=-lncursesw
 gnu-%/.built: $(SYSROOT_READY) $(NCURSES) $(POSIX)/ports/gnu/build-gnu.sh
 	$(POSIX)/ports/gnu/build-gnu.sh $(TP)/$(filter $*-%,$(GNU_PKGS)) gnu-$* $(SYSROOT) $(GNU_ARGS_$*)
 	touch $@

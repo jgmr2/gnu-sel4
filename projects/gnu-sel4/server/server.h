@@ -79,6 +79,15 @@
 
 enum { P_FREE, P_RUN, P_ZOMBIE };
 
+/* Resource limits (Linux numbers) that are enforced; the others are only kept */
+#define RLIMIT_STACK_   3
+#define RLIMIT_NPROC_   6           /* processes of a (real) user: fork; root is exempt */
+#define RLIMIT_NOFILE_  7           /* descriptors: up to NFD */
+#define RLIMIT_AS_      9           /* bytes of memory a process may have (its page budget) */
+#define RLIM_NLIMITS_   16
+#define RLIM_INF        (~0ULL)
+#define DEFAULT_NPROC   48          /* of PROC_SLOTS = 64: the rest is root's (and the services') */
+
 struct proc {
     int state;
     int pid, ppid, pgid, sid;
@@ -107,6 +116,10 @@ struct proc {
      * here only the disposition (to decide when sending) and what is pending */
     uint64_t sig_pending, sig_caught, sig_ignored;
     uintptr_t async_ctl, async_entry;   /* POSIX_SYS_ASYNC: its in_call counter and entry point */
+
+    /* resource limits (getrlimit, setrlimit, prlimit64): [resource][0 = soft, 1 = hard] */
+    uint64_t rlim[RLIM_NLIMITS_][2];
+    bool over_budget;               /* its last page was refused by its budget */
 
     /* job control: stopped by SIGSTOP/SIGTSTP/SIGTTIN/SIGTTOU until SIGCONT (proc.c) */
     bool stopped;
@@ -158,6 +171,7 @@ void proc_wake(struct proc *p);
 void proc_wake_mask(waitmask_t mask);
 void proc_signal(struct proc *p, int sig);
 void proc_signal_pgrp(int pgid, int sig);
+bool proc_page_allowed(int slot);            /* mem.c, before giving a slot one more page */
 bool proc_pgrp_orphaned(int pgid);           /* no parent in the session outside the group */
 void proc_exit(struct proc *p, int status);
 bool proc_fault(int slot, long label);

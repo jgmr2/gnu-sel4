@@ -80,6 +80,7 @@ check ptytest     ptytest
 check jobtest     jobtest
 check asynctest   asynctest
 check shelltest   shelltest
+check limittest   limittest
 check filetest    filetest
 check usertest    usertest
 check passwd      sh -c 'printf "printf \"n3w-pass\\\\nn3w-pass\\\\n\" | passwd\nexit\n" | login -f user 2>&1 | tail -2

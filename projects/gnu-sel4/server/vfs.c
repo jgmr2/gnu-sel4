@@ -48,7 +48,8 @@ int ofile_alloc(int type)
 
 int fd_alloc(int of, long min, bool cloexec)
 {
-    for (long fd = min < 0 ? 0 : min; fd < NFD; fd++) {
+    long limit = cur->rlim[RLIMIT_NOFILE_][0] < NFD ? (long)cur->rlim[RLIMIT_NOFILE_][0] : NFD;
+    for (long fd = min < 0 ? 0 : min; fd < limit; fd++) {
         if (cur->fdt[fd].of < 0) {
             cur->fdt[fd].of = of;
             cur->fdt[fd].cloexec = cloexec;

@@ -368,6 +368,11 @@ static long sys_fork(uintptr_t brk_cur, uintptr_t mmap_cur, uintptr_t sp, uintpt
         sp < PROC_STACK_BASE + 0x4000 || sp > PROC_STACK_BASE + PROC_STACK_SIZE ||
         entry < PROC_IMG_BASE || entry >= cur->img_end)
         return -EINVAL;
+    if (cur->uid != 0) {                                 /* RLIMIT_NPROC: its user's processes */
+        uint64_t n = 0;
+        for (int i = 0; i < NPROC; i++) n += procs[i].state == P_RUN && procs[i].uid == cur->uid;
+        if (n >= cur->rlim[RLIMIT_NPROC_][0]) return -EAGAIN;
+    }
     struct proc *c = proc_alloc();
     if (!c) return -EAGAIN;
     if (slot_alloc(c) < 0) {
@@ -385,6 +390,7 @@ static long sys_fork(uintptr_t brk_cur, uintptr_t mmap_cur, uintptr_t sp, uintpt
     c->sig_ignored = cur->sig_ignored;
     c->async_ctl = cur->async_ctl;
     c->async_entry = cur->async_entry;
+    memcpy(c->rlim, cur->rlim, sizeof c->rlim);
     c->nice = cur->nice;
     cred_copy(c, cur);
     memcpy(c->name, cur->name, sizeof c->name);
@@ -508,6 +514,59 @@ static long sys_wait4(long pid, long options)
     if (options & WNOHANG) return 0;
     cur->wait_child = true;
     return POSIX_RETRY;
+}
+
+/* ------------------------------------------------------------------ */
+/* Resource limits                                                    */
+/* ------------------------------------------------------------------ */
+
+static void rlimit_defaults(struct proc *p)
+{
+    for (int r = 0; r < RLIM_NLIMITS_; r++) p->rlim[r][0] = p->rlim[r][1] = RLIM_INF;
+    p->rlim[RLIMIT_NOFILE_][0] = p->rlim[RLIMIT_NOFILE_][1] = NFD;
+    p->rlim[RLIMIT_STACK_][0] = p->rlim[RLIMIT_STACK_][1] = PROC_STACK_SIZE;
+    p->rlim[RLIMIT_NPROC_][0] = p->rlim[RLIMIT_NPROC_][1] = DEFAULT_NPROC;
+}
+
+/* prlimit64: pid 0 = itself; another one only of its own (real) user, or by root. The old value in
+ * MR1, MR2; set: soft and hard. Raising the hard limit is for root; NOFILE stops at NFD (the
+ * table), STACK at the stack there is */
+static long sys_prlimit(long pid, long res, long set, uint64_t soft, uint64_t hard)
+{
+    if (res < 0 || res >= RLIM_NLIMITS_) return -EINVAL;
+    struct proc *p = pid ? proc_by_pid(pid) : cur;
+    if (!p) return -ESRCH;
+    if (p != cur && cur->euid != 0 && p->uid != cur->uid) return -EPERM;
+    microkit_mr_set(1, p->rlim[res][0]);
+    microkit_mr_set(2, p->rlim[res][1]);
+    if (!set) return 0;
+    if (soft > hard) return -EINVAL;
+    if (hard > p->rlim[res][1] && cur->euid != 0) return -EPERM;
+    if (res == RLIMIT_NOFILE_ && hard > NFD) return -EPERM;
+    if (res == RLIMIT_STACK_ && hard > PROC_STACK_SIZE && hard != RLIM_INF) return -EPERM;
+    p->rlim[res][0] = soft;
+    p->rlim[res][1] = hard;
+    return 0;
+}
+
+/* One more page for the process in slot s? Its own limit (RLIMIT_AS), and for users other than
+ * root, all of their processes together at most 3/4 of the memory: root keeps the rest to log in
+ * and stop them. Pages shared through memfd are the shared object's, counted once (mem.c) */
+bool proc_page_allowed(int s)
+{
+    struct proc *p = proc_by_slot(s);
+    if (!p) return true;
+    uint64_t mine = mem_slot_pages(s);
+    bool ok = p->rlim[RLIMIT_AS_][0] == RLIM_INF || (mine + 1) * 4096 <= p->rlim[RLIMIT_AS_][0];
+    if (ok && p->uid != 0) {
+        uint64_t theirs = 0;
+        for (int i = 0; i < NPROC; i++)
+            if (procs[i].state == P_RUN && procs[i].uid == p->uid && procs[i].slot >= 0)
+                theirs += mem_slot_pages(procs[i].slot);
+        ok = theirs + 1 <= mem_total() / 4096 * 3 / 4;
+    }
+    p->over_budget = !ok;
+    return ok;
 }
 
 /* ------------------------------------------------------------------ */
@@ -831,6 +890,15 @@ bool proc_fault(int slot, long label)
         return false;
     }
     if (label == seL4_Fault_VMFault && mem_fault(slot, a)) return true;
+    if (label == seL4_Fault_VMFault && p->over_budget) {     /* a page it may not have */
+        tty_puts("[posix] ");
+        tty_puts(p->name);
+        tty_puts(" (pid ");
+        tty_putdec(p->pid);
+        tty_puts("): out of memory (its limit, its user's, or the system's): killed\n");
+        proc_exit(p, SIGKILL);
+        return false;
+    }
     /* Processor exception: as in Linux, general protection -> SIGSEGV, division -> SIGFPE */
     int sig = SIGILL;
     if (label == seL4_Fault_VMFault) sig = SIGSEGV;
@@ -863,7 +931,7 @@ bool proc_handles(long nr)
     case __NR_fork: case __NR_vfork: case __NR_execve: case __NR_wait4: case __NR_exit: case __NR_exit_group:
     case __NR_getpid: case __NR_getppid: case __NR_kill:
     case __NR_setpgid: case __NR_getpgid: case __NR_getpgrp: case __NR_setsid: case __NR_getsid:
-    case __NR_rt_sigaction: case __NR_rt_sigsuspend: case POSIX_SYS_ASYNC:
+    case __NR_rt_sigaction: case __NR_rt_sigsuspend: case POSIX_SYS_ASYNC: case __NR_prlimit64:
     case __NR_getpriority: case __NR_setpriority:
     case __NR_setitimer: case __NR_getitimer:
     case __NR_munmap: case __NR_sysinfo: case __NR_reboot:
@@ -916,6 +984,8 @@ long proc_syscall(long nr, long a1, long a2, long a3, long a4, long a5)
         cur->async_ctl = a1;
         cur->async_entry = a2;
         return 0;
+    case __NR_prlimit64:                   /* the runtime: pid, resource, set?, soft, hard */
+        return sys_prlimit(a1, a2, a3, a4, a5);
     case __NR_getpriority:
     case __NR_setpriority:
         return sys_priority(nr == __NR_setpriority, a1, a2, a3);
@@ -958,6 +1028,7 @@ void proc_start_init(void)
     p->pid = 1;
     p->ppid = 0;
     p->pgid = p->sid = 1;
+    rlimit_defaults(p);
     cred_init_root(p);
     vfs_proc_tty(p);
     tty_console_session(0);                /* nobody's until a login (init: its own session) */
