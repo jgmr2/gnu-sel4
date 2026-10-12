@@ -78,7 +78,14 @@ enum fs_op {
     /* -> MR1: flags: FS_STATE_RO (mounted read-only), FS_STATE_DIRTY (not cleanly unmounted:
      * mounted read-only until e2fsck has checked it) */
     FS_OP_STATE,
+    /* Like FS_OP_READ, but the data stays in fs_ext2's block cache, which posix_server maps too
+     * (meta.py: fs_cache): -> buf: struct fs_seg[] in file order; result: bytes; MR1: segments.
+     * They stay valid until posix_server's next operation (one copy: cache -> the program) */
+    FS_OP_READ_REF,
 };
+
+struct fs_seg { uint32_t at, len; };   /* at: byte offset in the cache region; FS_SEG_HOLE: zeros */
+#define FS_SEG_HOLE 0xffffffffu
 
 enum { FS_RAW_READ, FS_RAW_WRITE, FS_RAW_SIZE };
 #define FS_STATE_RO    1

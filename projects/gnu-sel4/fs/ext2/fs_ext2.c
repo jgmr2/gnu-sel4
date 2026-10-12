@@ -76,7 +76,7 @@ static uint32_t now(void)
 
 /* Counters for /proc/perf (FS_OP_STATS): count and TSC cycles */
 struct ctr { uint64_t n, cyc; };
-static struct ctr st_op[32], st_disk_read, st_disk_write, st_cache_lookup, st_flush;
+static struct ctr st_op[32], st_disk_read, st_disk_write, st_cache_lookup, st_flush, st_ra_stall, st_ra_req;
 static uint64_t st_hits, st_misses;
 
 /* ------------------------------------------------------------------ */
@@ -201,9 +201,9 @@ static bool counts_dirty;
 #define WSTAGE_BLOCKS 2048                 /* 8 MiB: the snapshot a background flush writes from */
 #endif
 #ifdef FS_RAMDISK
-#define RASTAGE_BLOCKS 0                   /* no asynchronous read-ahead from RAM */
+#define RA_ENABLED 0                       /* no asynchronous read-ahead from RAM */
 #else
-#define RASTAGE_BLOCKS 512                 /* 2 MiB: the read-ahead window, read without waiting */
+#define RA_ENABLED 1                       /* the read-ahead window, read without waiting */
 #endif
 #define NO_SLOT      0xffffffffu
 static struct cslot {
@@ -212,15 +212,19 @@ static struct cslot {
     uint32_t hnext;                    /* hash chain */
     bool valid, dirty, hashed;
     bool pending;                      /* an asynchronous read-ahead is bringing it (ra_*)  */
+    bool ref;                          /* used since the clock hand last passed (group_take) */
+    uint32_t used_op;                  /* the last operation that used it (op_seq) */
     bool fresh;                        /* allocated in this operation: written first */
 } slots[MAX_SLOTS];
 #define HASH_SIZE (2 * MAX_SLOTS)
 static uint32_t hash_head[HASH_SIZE];
+/* Operations so far: a slot the current one used is never recycled by group_take (posix_server
+ * reads FS_OP_READ_REF's slots after it) */
+static uint32_t op_seq;
 static uint32_t nslots, lru_head = NO_SLOT, lru_tail = NO_SLOT;
 static uint32_t dirty_list[MAX_SLOTS], ndirty;
 static uint32_t stage_first;           /* first block of the staging area in the data region */
 static uint32_t wstage_first;          /* the background flush's area, after it */
-static uint32_t rastage_first;         /* the asynchronous read-ahead's, after that */
 static int flush_err;                  /* a deferred flush failed: the next FS_OP_SYNC says so */
 static bool flush_async;               /* this flush may go on in the background */
 
@@ -432,26 +436,27 @@ static void bg_response(bool ok)
 }
 
 /* ---- the asynchronous read-ahead ----
- * The window ahead of a sequential read is asked for and not waited for: its slots are marked
- * pending (valid only when their response comes, copied from the read-ahead area); whoever
- * touches a pending slot waits then (cache_slot) */
-#define RA_REQS 16
-static struct ra_req { uint32_t stage, n, first; } ra_reqs[RA_REQS];
-static uint32_t ra_slot[RASTAGE_BLOCKS + 1], ra_outstanding;
+ * The window ahead of a sequential read is asked for and not waited for. The disk writes it
+ * straight into the cache: the slots are recycled GROUP at a time (contiguous memory, so a run
+ * of consecutive blocks is one request into them), picked by a clock hand that passes over the
+ * groups with a slot that is dirty, on its way or used since the hand last came by. Its slots
+ * are marked pending (valid when their response comes); whoever touches one waits for it
+ * (cache_slot). Several windows may be in flight: the disk never waits for the copies */
+#define GROUP   32                         /* 128 KiB */
+#define RA_REQS 32
+static struct ra_req { uint32_t first, n; bool busy; } ra_reqs[RA_REQS];
+static uint32_t ra_outstanding, clock_hand;
 
 static void ra_response(uint32_t k, bool ok)
 {
     struct ra_req *q = &ra_reqs[k];
     for (uint32_t i = 0; i < q->n; i++) {
-        uint32_t s = ra_slot[q->first + i];
+        uint32_t s = q->first + i;
         slots[s].pending = false;
-        if (ok) {
-            memcpy(slot_data(s), slot_data(rastage_first + q->stage + i), BS);
-            slots[s].valid = true;
-        } else {
-            hash_remove(s);                /* read again (synchronously) when needed */
-        }
+        if (ok) slots[s].valid = true;
+        else hash_remove(s);               /* read again (synchronously) when needed */
     }
+    q->busy = false;
     ra_outstanding--;
 }
 
@@ -465,39 +470,93 @@ static void ra_wait(void)
     }
 }
 
-static int cache_slot(uint64_t blk, bool *hit);
-/* The blocks of v[] (disk block numbers, 0 = hole) that are not cached, asked for together */
+static void ra_wait_slot(uint32_t s)       /* until slot s's read-ahead has come */
+{
+    uint64_t t0 = tsc();
+    sddf_notify(blk_config.virt.id);
+    while (slots[s].pending) {
+        if (blk_queue_empty_resp(&blkq)) { __asm__ volatile("pause" ::: "memory"); continue; }
+        take_response();
+    }
+    st_ra_stall.n++;
+    st_ra_stall.cyc += tsc() - t0;
+}
+
+static uint32_t cache_find(uint64_t blk)   /* the slot holding blk (valid or on its way), or NO_SLOT */
+{
+    for (uint32_t i = hash_head[hash_of(blk)]; i != NO_SLOT; i = slots[i].hnext)
+        if (slots[i].blk == blk && slots[i].hashed) return i;
+    return NO_SLOT;
+}
+
+static void lru_push_back(uint32_t i)
+{
+    slots[i].next = NO_SLOT;
+    slots[i].prev = lru_tail;
+    if (lru_tail != NO_SLOT) slots[lru_tail].next = i;
+    lru_tail = i;
+    if (lru_head == NO_SLOT) lru_head = i;
+}
+
+/* A group of GROUP slots to read into, emptied, or NO_SLOT (none is cold enough) */
+static uint32_t group_take(void)
+{
+    uint32_t ngroups = nslots / GROUP;
+    for (uint32_t tries = 0; tries < 2 * ngroups; tries++) {
+        uint32_t g = clock_hand++ % ngroups, first = g * GROUP;
+        bool cold = true;
+        for (uint32_t i = first; i < first + GROUP; i++) {
+            if (slots[i].dirty || slots[i].pending || slots[i].used_op == op_seq) { cold = false; break; }
+            if (slots[i].ref) cold = false;
+            slots[i].ref = false;          /* a second chance: taken next time round */
+        }
+        if (!cold) continue;
+        for (uint32_t i = first; i < first + GROUP; i++) {
+            hash_remove(i);
+            slots[i].valid = slots[i].fresh = false;
+            lru_unlink(i);
+            lru_push_back(i);              /* what the run does not use goes first */
+        }
+        return first;
+    }
+    return NO_SLOT;
+}
+
+/* The blocks of v[] (disk block numbers, 0 = hole) that are not cached, asked for: each run of
+ * consecutive ones (up to GROUP) straight into a group of slots */
 static void ra_start(const uint32_t *v, uint32_t n)
 {
-    if (!RASTAGE_BLOCKS || ra_outstanding) return;         /* one window at a time */
-    uint32_t nreq = 0, used = 0;
-    for (uint32_t i = 0; i < n && used < RASTAGE_BLOCKS; i++) {
-        if (!v[i]) continue;
-        bool hit;
-        int s = cache_slot(v[i], &hit);
-        if (hit) continue;
-        struct ra_req *q = nreq ? &ra_reqs[nreq - 1] : NULL;
-        if (!q || slots[ra_slot[q->first + q->n - 1]].blk + 1 != v[i] || q->n == STAGE_BLOCKS) {
-            if (nreq == RA_REQS) { hash_remove(s); break; }
-            q = &ra_reqs[nreq++];
-            *q = (struct ra_req){ .stage = used, .n = 0, .first = used };
-        }
-        ra_slot[used++] = s;
-        q->n++;
-        slots[s].pending = true;
-    }
+    if (!RA_ENABLED) return;
     bool sent = false;
-    for (uint32_t k = 0; k < nreq; k++) {
-        struct ra_req *q = &ra_reqs[k];
-        uint64_t blk = slots[ra_slot[q->first]].blk;
-        if (blk + q->n > disk_blocks || blk_queue_full_req(&blkq) ||
-            blk_enqueue_req(&blkq, BLK_REQ_READ, (uintptr_t)(rastage_first + q->stage) * BS, blk, q->n, ID_RA + k)) {
-            for (uint32_t i = 0; i < q->n; i++) { slots[ra_slot[q->first + i]].pending = false; hash_remove(ra_slot[q->first + i]); }
-            continue;
+    for (uint32_t i = 0; i < n; ) {
+        if (!v[i] || cache_find(v[i]) != NO_SLOT) { i++; continue; }
+        uint32_t j = i + 1;
+        while (j < n && j - i < GROUP && v[j] == v[j - 1] + 1 && cache_find(v[j]) == NO_SLOT) j++;
+        if (v[i] + (j - i) > disk_blocks || blk_queue_full_req(&blkq) || ra_outstanding == RA_REQS) break;
+        uint32_t k = 0;
+        while (ra_reqs[k].busy) k++;
+        uint32_t first = group_take();
+        if (first == NO_SLOT) break;
+        for (uint32_t b = 0; b < j - i; b++) {
+            uint32_t s = first + b;
+            slots[s].blk = v[i] + b;
+            slots[s].hnext = hash_head[hash_of(v[i] + b)];
+            hash_head[hash_of(v[i] + b)] = s;
+            slots[s].hashed = slots[s].pending = slots[s].ref = true;
+            slots[s].used_op = op_seq;
+            lru_unlink(s);
+            lru_push_front(s);
         }
+        if (blk_enqueue_req(&blkq, BLK_REQ_READ, (uintptr_t)first * BS, v[i], j - i, ID_RA + k)) {
+            for (uint32_t b = 0; b < j - i; b++) { slots[first + b].pending = false; hash_remove(first + b); }
+            break;
+        }
+        ra_reqs[k] = (struct ra_req){ first, j - i, true };
         ra_outstanding++;
-        st_disk_read.n++;
+        st_ra_req.n++;
+        st_ra_req.cyc += j - i;            /* (blocks, not cycles) */
         sent = true;
+        i = j;
     }
     if (sent) sddf_notify(blk_config.virt.id);
 }
@@ -573,6 +632,8 @@ static int cache_slot_find(uint64_t blk, bool *hit)
         if (slots[i].blk == blk && slots[i].hashed) {
             lru_unlink(i);
             lru_push_front(i);
+            slots[i].ref = true;
+            slots[i].used_op = op_seq;
             *hit = slots[i].valid;
             return i;
         }
@@ -586,6 +647,8 @@ static int cache_slot_find(uint64_t blk, bool *hit)
     lru_push_front(v);
     slots[v].valid = false;
     slots[v].fresh = false;
+    slots[v].ref = true;
+    slots[v].used_op = op_seq;
     slots[v].blk = blk;
     slots[v].hnext = hash_head[hash_of(blk)];
     hash_head[hash_of(blk)] = v;
@@ -598,8 +661,8 @@ static int cache_slot(uint64_t blk, bool *hit)
 {
     uint64_t t0 = tsc();
     int s = cache_slot_find(blk, hit);
-    if (slots[s].pending) {                /* on its way: wait for it (and the rest of the window) */
-        ra_wait();
+    if (slots[s].pending) {                /* on its way: wait for it */
+        ra_wait_slot(s);
         *hit = slots[s].valid && slots[s].blk == blk && slots[s].hashed;
         if (!*hit) s = cache_slot_find(blk, hit);
     }
@@ -920,9 +983,10 @@ static int free_inode(uint32_t ino, bool is_dir)
 
 /* Returns the physical block, 0 for a hole, or -errno. With create=true it
  * allocates (zeroed) any missing intermediate blocks and the data block. */
-static int64_t bmap(uint32_t ino, struct ext2_inode *in, uint64_t lblk, bool create, bool *dirty)
+/* The path to logical block lblk: i_block[idx[0]], then idx[1..depth] in the indirect blocks.
+ * Returns depth, or -EFBIG */
+static int bmap_path(uint64_t lblk, uint32_t idx[4])
 {
-    uint32_t idx[4];
     int depth;
     if (lblk < EXT2_NDIR_BLOCKS) {
         idx[0] = lblk; depth = 0;
@@ -936,6 +1000,14 @@ static int64_t bmap(uint32_t ino, struct ext2_inode *in, uint64_t lblk, bool cre
     } else {
         return -EFBIG;
     }
+    return depth;
+}
+
+static int64_t bmap(uint32_t ino, struct ext2_inode *in, uint64_t lblk, bool create, bool *dirty)
+{
+    uint32_t idx[4];
+    int depth = bmap_path(lblk, idx);
+    if (depth < 0) return depth;
 
     uint32_t goal = inode_group(ino);
     uint32_t b = in->i_block[idx[0]];
@@ -965,6 +1037,34 @@ static int64_t bmap(uint32_t ino, struct ext2_inode *in, uint64_t lblk, bool cre
         b = next;
     }
     return b;
+}
+
+/* bmap of n consecutive logical blocks from lblk into out (0: a hole), without allocating: each
+ * indirect block is looked up once for all the entries it holds, not once per block */
+static int bmap_many(struct ext2_inode *in, uint64_t lblk, uint32_t n, uint32_t *out)
+{
+    for (uint32_t k = 0; k < n; ) {
+        uint32_t idx[4];
+        int depth = bmap_path(lblk + k, idx);
+        if (depth < 0) return depth;
+        uint32_t b = in->i_block[idx[0]];
+        if (depth == 0) { out[k++] = b; continue; }
+        for (int d = 1; d < depth && b; d++) {
+            int s = bread(b);
+            if (s < 0) return s;
+            b = ((uint32_t *)slot_data(s))[idx[d]];
+        }
+        uint32_t m = APB - idx[depth] < n - k ? APB - idx[depth] : n - k;   /* to the leaf's end */
+        if (!b) {
+            memset(out + k, 0, m * sizeof *out);
+        } else {
+            int s = bread(b);
+            if (s < 0) return s;
+            memcpy(out + k, (uint32_t *)slot_data(s) + idx[depth], m * sizeof *out);
+        }
+        k += m;
+    }
+    return 0;
 }
 
 /* Frees a block tree: level 0 = data block, 1..3 = indirect */
@@ -1070,16 +1170,28 @@ static uint32_t ra_win = 32;           /* blocks */
 #define RA_MIN 32                      /* 128 KiB */
 #define RA_MAX 512                     /* 2 MiB */
 
+static uint32_t nsegs;                 /* file_read with segs: how many it produced */
+static long file_read_(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32_t len, uint8_t *out,
+                       struct fs_seg *segs);
 static long file_read(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32_t len, uint8_t *out)
 {
+    return file_read_(ino, in, off, len, out, NULL);
+}
+
+/* segs: instead of copying into out, where each piece is in the cache (FS_OP_READ_REF) */
+static long file_read_(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32_t len, uint8_t *out,
+                       struct fs_seg *segs)
+{
+    nsegs = 0;
     uint64_t size = inode_size_of(in);
     if (off >= size) return 0;
     if (len > size - off) len = size - off;
     /* The blocks this read needs (and, if it continues the previous one, the next READ_AHEAD)
      * that are not cached are read together first */
+    static uint32_t pbs[STAGE_BLOCKS * 4];    /* the physical blocks from first on */
+    uint64_t first = off / BS;
     {
-        static uint32_t pbs[STAGE_BLOCKS * 4];
-        uint64_t first = off / BS, last = (off + len - 1) / BS + 1;     /* blocks [first, last) */
+        uint64_t last = (off + len - 1) / BS + 1;     /* blocks [first, last) */
         uint64_t fblocks = (size + BS - 1) / BS;
         bool seq = ino == ra_ino && off == ra_next;
         if (!seq) { ra_win = RA_MIN; ra_end = last; }
@@ -1091,16 +1203,12 @@ static long file_read(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32_
         if (to > fblocks) to = fblocks;
         if (to > ra_end) ra_end = to;
         if (to - first > sizeof pbs / sizeof *pbs) to = first + sizeof pbs / sizeof *pbs;
-        uint32_t k = 0, kn = 0;
-        for (uint64_t b = first; b < to; b++) {
-            int64_t pb = bmap(ino, in, b, false, NULL);
-            if (pb < 0) break;
-            pbs[k++] = pb;
-            if (b < last) kn = k;
-        }
+        uint32_t k = to - first, kn = last - first;
+        int e = bmap_many(in, first, k, pbs);
+        if (e < 0) return e;
         bread_many(pbs, kn);           /* what this read needs now (cached ones are skipped) */
         if (k > kn) {                  /* the window ahead: without waiting for it */
-            if (RASTAGE_BLOCKS) ra_start(pbs + kn, k - kn);
+            if (RA_ENABLED) ra_start(pbs + kn, k - kn);
             else bread_many(pbs + kn, k - kn);
         }
     }
@@ -1111,14 +1219,15 @@ static long file_read(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32_
         uint64_t pos = off + done;
         uint32_t bo = pos % BS;
         uint32_t n = BS - bo < len - done ? BS - bo : len - done;
-        int64_t pb = bmap(ino, in, pos / BS, false, NULL);
-        if (pb < 0) return done ? (long)done : pb;
+        uint32_t pb = pbs[pos / BS - first];
         if (pb == 0) {
-            memset(out + done, 0, n);           /* hole: zeros */
+            if (segs) segs[nsegs++] = (struct fs_seg){ FS_SEG_HOLE, n };
+            else memset(out + done, 0, n);      /* hole: zeros */
         } else {
             int s = bread(pb);
             if (s < 0) return done ? (long)done : s;
-            memcpy(out + done, slot_data(s) + bo, n);
+            if (segs) segs[nsegs++] = (struct fs_seg){ (uint32_t)((uintptr_t)s * BS + bo), n };
+            else memcpy(out + done, slot_data(s) + bo, n);
         }
         done += n;
     }
@@ -1837,6 +1946,8 @@ static long op_stats(char *b, size_t max)
     n = put_ctr(b, n, max, "ext2.cache_hit", st_hits, 0);
     n = put_ctr(b, n, max, "ext2.cache_miss", st_misses, 0);
     n = put_ctr(b, n, max, "ext2.disk_read", st_disk_read.n, st_disk_read.cyc);
+    n = put_ctr(b, n, max, "ext2.ra_stall", st_ra_stall.n, st_ra_stall.cyc);
+    n = put_ctr(b, n, max, "ext2.ra_req_blocks", st_ra_req.n, st_ra_req.cyc);
     n = put_ctr(b, n, max, "ext2.disk_write", st_disk_write.n, st_disk_write.cyc);
     n = put_ctr(b, n, max, "ext2.cache_slots", nslots, 0);
     return n;
@@ -1871,6 +1982,13 @@ static long dispatch(long op, uint64_t a1, uint64_t a2, uint64_t a3)
         if (read_inode(a1, &in)) return -EIO;
         if (S_ISDIR(in.i_mode)) return -EISDIR;
         return file_read(a1, &in, a2, a3 > FS_BUF_SIZE ? FS_BUF_SIZE : a3, (uint8_t *)buf);
+    case FS_OP_READ_REF: {             /* (not in the live system: its cache is not shared) */
+        if (read_inode(a1, &in)) return -EIO;
+        if (S_ISDIR(in.i_mode)) return -EISDIR;
+        long r = file_read_(a1, &in, a2, a3 > FS_BUF_SIZE ? FS_BUF_SIZE : a3, NULL, (struct fs_seg *)buf);
+        microkit_mr_set(1, nsegs);
+        return r;
+    }
     case FS_OP_WRITE:
         if (read_inode(a1, &in)) return -EIO;
         if (S_ISDIR(in.i_mode)) return -EISDIR;
@@ -1955,6 +2073,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
     (void)ch; (void)msginfo;
     long op = microkit_mr_get(0);
     long r;
+    op_seq++;
     if (!mounted && op != FS_OP_SETCLOCK) r = -EIO;
     else if (read_only && is_write_op(op)) r = -EROFS;
     else {
@@ -2116,11 +2235,10 @@ void init(void)
     }
     blk_queue_init(&blkq, blk_config.virt.req_queue.vaddr, blk_config.virt.resp_queue.vaddr,
                    blk_config.virt.num_buffers);
-    nslots = blk_config.data.size / BS - STAGE_BLOCKS * STAGE_CHUNKS - WSTAGE_BLOCKS - RASTAGE_BLOCKS;
+    nslots = blk_config.data.size / BS - STAGE_BLOCKS * STAGE_CHUNKS - WSTAGE_BLOCKS;
     if (nslots > MAX_SLOTS) nslots = MAX_SLOTS;
-    stage_first = blk_config.data.size / BS - STAGE_BLOCKS * STAGE_CHUNKS - WSTAGE_BLOCKS - RASTAGE_BLOCKS;
+    stage_first = blk_config.data.size / BS - STAGE_BLOCKS * STAGE_CHUNKS - WSTAGE_BLOCKS;
     wstage_first = stage_first + STAGE_BLOCKS * STAGE_CHUNKS;
-    rastage_first = wstage_first + WSTAGE_BLOCKS;
     cache_init();
 
     blk_storage_info_t *info = blk_config.virt.storage_info.vaddr;

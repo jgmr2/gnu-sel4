@@ -30,6 +30,11 @@
 /* In every reply, MR6 carries the process's pending signals (bit s-1 = signal s) */
 #define POSIX_MR_SIGNALS 6
 
+/* In a read's reply, MR5 = POSIX_DIRECT when the server already put the data at the program's
+ * buffer (the address the runtime gave it): nothing to copy from the shared buffer */
+#define POSIX_MR_DIRECT 5
+#define POSIX_DIRECT    0x5e14
+
 /* Outside the errno range (-1..-4095): it never reaches the program */
 #define POSIX_RETRY     (-0x7000)
 /* The process is stopped (job control: SIGSTOP, SIGTSTP...): wait for the server's notification

@@ -65,6 +65,7 @@ typedef struct {
 
 struct proc procs[NPROC];
 struct proc *cur;
+bool reply_direct;
 static struct proc *slot_owner[PROC_SLOTS];
 static int next_pid = 1;
 

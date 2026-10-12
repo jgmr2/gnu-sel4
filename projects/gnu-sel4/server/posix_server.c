@@ -69,18 +69,21 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
      * finished when it stopped itself gets that result instead of running again */
     if (cur->stopped) {
         microkit_mr_set(0, POSIX_STOPPED);
+        microkit_mr_set(POSIX_MR_DIRECT, 0);
         microkit_mr_set(POSIX_MR_SIGNALS, 0);
         return microkit_msginfo_new(0, POSIX_NUM_MRS);
     }
     if (cur->saved_valid) {
         cur->saved_valid = false;
         microkit_mr_set(0, cur->saved_r);
+        microkit_mr_set(POSIX_MR_DIRECT, cur->saved_direct ? POSIX_DIRECT : 0);
         microkit_mr_set(POSIX_MR_SIGNALS, cur->sig_pending);
         cur->sig_pending = 0;
         return microkit_msginfo_new(0, POSIX_NUM_MRS);
     }
 
     uint64_t t0 = clock_rdtsc();
+    reply_direct = false;
     long n = microkit_mr_get(0);
     long a1 = microkit_mr_get(1), a2 = microkit_mr_get(2), a3 = microkit_mr_get(3);
     long a4 = microkit_mr_get(4), a5 = microkit_mr_get(5), a6 = microkit_mr_get(6);
@@ -90,6 +93,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
     if ((n == __NR_read || n == __NR_pread64 || n == __NR_recvfrom || n == __NR_getdents64) &&
         !mem_buf_ensure(cur->slot, (size_t)a3)) {
         microkit_mr_set(0, -ENOMEM);
+        microkit_mr_set(POSIX_MR_DIRECT, 0);
         microkit_mr_set(POSIX_MR_SIGNALS, 0);
         return microkit_msginfo_new(0, POSIX_NUM_MRS);
     }
@@ -130,6 +134,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
         if (cur->stopped && cur->state == P_RUN) {
             if (r != POSIX_RETRY) {
                 cur->saved_r = r;             /* given back when it calls again after SIGCONT */
+                cur->saved_direct = reply_direct;
                 cur->saved_valid = true;
             }
             r = POSIX_STOPPED;                /* (a call that would block simply runs again) */
@@ -137,6 +142,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
     }
     cur->blocked = r == POSIX_RETRY;          /* for /proc: state S (sleeping) */
     microkit_mr_set(0, r);
+    microkit_mr_set(POSIX_MR_DIRECT, reply_direct && r > 0 ? POSIX_DIRECT : 0);
     if (cur->stopped) {                       /* no handlers run while stopped: after SIGCONT */
         microkit_mr_set(POSIX_MR_SIGNALS, 0);
     } else {

@@ -200,16 +200,15 @@ static long server_call_blocking(long n, long a1, long a2, long a3, long a4)
 /* I/O                                                                */
 /* ------------------------------------------------------------------ */
 
-/* write(): the data is copied into the shared buffer in chunks of up to 64 KiB.
- * If the destination takes only part of it, carry on with the rest (memmove: the
- * source may be the shared buffer itself, see sys_writev). */
+/* write(): in chunks of up to POSIX_BUF_SIZE. The server fetches the data from here itself
+ * (a4: where), only if the destination reads it (not /dev/null); a file's goes straight to the
+ * file system. If the destination takes only part of it, carry on with the rest */
 static long sys_write(long fd, const char *data, size_t len)
 {
     size_t done = 0;
     while (done < len) {
         size_t chunk = len - done < POSIX_BUF_SIZE ? len - done : POSIX_BUF_SIZE;
-        memmove((void *)PROC_BUF_BASE, data + done, chunk);
-        long r = server_call_blocking(SYS_write, fd, 0, chunk, 0);
+        long r = server_call_blocking(SYS_write, fd, 0, chunk, (long)(data + done));
         if (r < 0) return done ? (long)done : r;
         if (r == 0) break;
         done += r;
@@ -240,12 +239,13 @@ static long sys_writev(long fd, const struct iovec *iov, int iovcnt)
     return sys_write(fd, (const char *)PROC_BUF_BASE, total);
 }
 
-/* read(): the server leaves the data in the shared buffer */
+/* read(): the server leaves the data in the shared buffer, or (a file: POSIX_DIRECT) already
+ * at dst, which it is given */
 static long sys_read(long fd, char *dst, size_t len)
 {
     if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
-    long r = server_call_blocking(SYS_read, fd, 0, len, 0);
-    if (r > 0) memcpy(dst, (void *)PROC_BUF_BASE, r);
+    long r = server_call_blocking(SYS_read, fd, 0, len, (long)dst);
+    if (r > 0 && server_result(POSIX_MR_DIRECT) != POSIX_DIRECT) memcpy(dst, (void *)PROC_BUF_BASE, r);
     return r;
 }
 
@@ -270,16 +270,15 @@ static long sys_readv(long fd, const struct iovec *iov, int iovcnt)
 static long sys_pread(long fd, char *dst, size_t len, long off)
 {
     if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
-    long r = server_call(SYS_pread64, fd, 0, len, off, 0, 0);
-    if (r > 0) memcpy(dst, (void *)PROC_BUF_BASE, r);
+    long r = server_call(SYS_pread64, fd, 0, len, off, (long)dst, 0);
+    if (r > 0 && server_result(POSIX_MR_DIRECT) != POSIX_DIRECT) memcpy(dst, (void *)PROC_BUF_BASE, r);
     return r;
 }
 
 static long sys_pwrite(long fd, const char *src, size_t len, long off)
 {
     if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
-    memcpy((void *)PROC_BUF_BASE, src, len);
-    return server_call(SYS_pwrite64, fd, 0, len, off, 0, 0);
+    return server_call(SYS_pwrite64, fd, 0, len, off, (long)src, 0);     /* fetched by the server */
 }
 
 /* preadv/pwritev (and their version 2, without flags): one by one with pread/pwrite.

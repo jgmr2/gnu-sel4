@@ -128,6 +128,7 @@ struct proc {
     bool stop_self;                 /* it stopped itself in the current call: suspend after it */
     bool saved_valid;               /* that call's result, for when it retries after SIGCONT */
     long saved_r;
+    bool saved_direct;
 
     bool wait_child;                /* blocked in wait4 */
     int fifo_wait;                  /* blocked opening a FIFO: pipe index + 1 (0 = none) */
@@ -149,6 +150,7 @@ struct proc {
 
 extern struct proc procs[NPROC];
 extern struct proc *cur;            /* process that made the current call */
+extern bool reply_direct;           /* the call put its data at the program's buffer (POSIX_DIRECT) */
 extern uintptr_t client_buf;        /* its shared buffer (in its slot's window) */
 
 #define FS_CH        21             /* SERVER_FS_CHANNEL_ID in meta.py */
@@ -198,6 +200,8 @@ void slot_signal(int s);
 uintptr_t proc_win(int s, uintptr_t vaddr);    /* the shared buffer of slot s (contiguous) */
 uint8_t *mem_page_ptr(int s, uintptr_t v);     /* byte v of slot s as the server sees it (page must exist) */
 bool mem_copy_in(int s, uintptr_t v, const void *src, size_t n);   /* src NULL: clear */
+bool mem_copy_user(int s, uintptr_t v, const void *src, size_t n);
+bool mem_copy_from_user(int s, uintptr_t v, void *dst, size_t n);
 bool mem_has_page(int s, uintptr_t v);
 #define PROC_PRIO_NORMAL 100                   /* below posix_server (150), above the VM (90) */
 #define PROC_PRIO_LOW    95                    /* nice > 0 */

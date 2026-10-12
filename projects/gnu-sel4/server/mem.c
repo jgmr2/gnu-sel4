@@ -500,6 +500,49 @@ bool mem_copy_in(int s, uintptr_t v, const void *src, size_t n)
     return true;
 }
 
+/* Like mem_copy_in, for a buffer the program named: only into its own regions (not the shared
+ * buffer), and not into a read-only shared mapping */
+bool mem_copy_user(int s, uintptr_t v, const void *src, size_t n)
+{
+    static const uintptr_t r[][2] = {
+        { PROC_IMG_BASE, PROC_IMG_BASE + PROC_IMG_SIZE }, { PROC_HEAP_BASE, PROC_HEAP_BASE + PROC_HEAP_SIZE },
+        { PROC_STACK_BASE, PROC_STACK_BASE + PROC_STACK_SIZE }, { PROC_MMAP_BASE, PROC_MMAP_BASE + PROC_MMAP_SIZE },
+    };
+    bool in = false;
+    for (size_t i = 0; i < sizeof r / sizeof *r; i++)
+        if (v >= r[i][0] && n <= r[i][1] - v) in = true;
+    if (!in) return false;
+    for (uintptr_t p = v & ~0xfffUL; p < v + n; p += 4096) {
+        uint32_t *l = slots[s].dir[p >> 22];
+        if (l && (l[(p >> 12) & 1023] & SHARED_RO)) return false;
+    }
+    return mem_copy_in(s, v, src, n);
+}
+
+/* Copies n bytes from the program's memory at v (its own regions) to dst; a page it never touched
+ * reads as zeros (and is made, as touching it would) */
+bool mem_copy_from_user(int s, uintptr_t v, void *dst, size_t n)
+{
+    static const uintptr_t r[][2] = {
+        { PROC_IMG_BASE, PROC_IMG_BASE + PROC_IMG_SIZE }, { PROC_HEAP_BASE, PROC_HEAP_BASE + PROC_HEAP_SIZE },
+        { PROC_STACK_BASE, PROC_STACK_BASE + PROC_STACK_SIZE }, { PROC_MMAP_BASE, PROC_MMAP_BASE + PROC_MMAP_SIZE },
+    };
+    bool in = false;
+    for (size_t i = 0; i < sizeof r / sizeof *r; i++)
+        if (v >= r[i][0] && n <= r[i][1] - v) in = true;
+    if (!in) return false;
+    while (n) {
+        size_t k = 4096 - (v & 0xfff) < n ? 4096 - (v & 0xfff) : n;
+        if (!page(s, v, true)) return false;
+        const uint8_t *p = mem_page_ptr(s, v);
+        if (!p) return false;
+        memcpy(dst, p, k);
+        dst = (uint8_t *)dst + k;
+        v += k;
+        n -= k;
+    }
+    return true;
+}
 
 void mem_free_range(int s, uintptr_t vaddr, size_t len)
 {

@@ -20,6 +20,7 @@
 
 /* Buffer shared with the file server (set by Microkit, see meta.py) */
 uintptr_t fs_buf;
+uintptr_t fs_cache;    /* fs_ext2's block cache, read-only use (meta.py; 0 in the live system) */
 
 
 struct ofile ofiles[NOFILE];
@@ -126,7 +127,7 @@ uint64_t fs_flush_at;
 long fs_call(long op, uint64_t a1, uint64_t a2, uint64_t a3)
 {
     uint64_t t0 = clock_rdtsc();
-    if (!fs_flush_at && op != FS_OP_LOOKUP && op != FS_OP_STAT && op != FS_OP_READ && op != FS_OP_GETDENTS &&
+    if (!fs_flush_at && op != FS_OP_LOOKUP && op != FS_OP_STAT && op != FS_OP_READ && op != FS_OP_READ_REF && op != FS_OP_GETDENTS &&
         op != FS_OP_READLINK && op != FS_OP_STATFS && op != FS_OP_SETCRED && op != FS_OP_STATS &&
         op != FS_OP_STATE && op != FS_OP_SYNC && op != FS_OP_SETCLOCK) {
         fs_flush_at = timer_now_ns() + FS_FLUSH_NS;
@@ -504,7 +505,23 @@ static long do_open(long dirfd, uint32_t flags, uint32_t mode)
 }
 
 
-static long do_read(long fd, size_t len, bool positional, uint64_t pos)
+/* A file read straight from fs_ext2's cache into the program's buffer at dst: one copy */
+static long file_read_direct(struct ofile *f, uintptr_t dst, size_t len, uint64_t pos)
+{
+    long r = fs_call(FS_OP_READ_REF, f->ino, pos, len);
+    if (r <= 0) return r;
+    uint32_t n = microkit_mr_get(1);          /* before any other IPC */
+    const struct fs_seg *sg = (const struct fs_seg *)fs_buf;
+    for (uint32_t i = 0; i < n; i++) {
+        const void *src = sg[i].at == FS_SEG_HOLE ? NULL : (const void *)(fs_cache + sg[i].at);
+        if (!mem_copy_user(cur->slot, dst, src, sg[i].len)) return -EFAULT;
+        dst += sg[i].len;
+    }
+    reply_direct = true;
+    return r;
+}
+
+static long do_read(long fd, size_t len, bool positional, uint64_t pos, uintptr_t dst)
 {
     struct ofile *f = fd_get(fd);
     if (!f) return -EBADF;
@@ -563,18 +580,38 @@ static long do_read(long fd, size_t len, bool positional, uint64_t pos)
     }
     if ((f->flags & O_ACCMODE) == O_WRONLY) return -EBADF;
     if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
-    long r = fs_call(FS_OP_READ, f->ino, positional ? pos : f->off, len);
-    if (r > 0) {
-        memcpy((void *)client_buf, (void *)fs_buf, r);
-        if (!positional) f->off += r;
+    long r;
+    if (dst && fs_cache) {
+        r = file_read_direct(f, dst, len, positional ? pos : f->off);
+    } else {
+        r = fs_call(FS_OP_READ, f->ino, positional ? pos : f->off, len);
+        if (r > 0) memcpy((void *)client_buf, (void *)fs_buf, r);
     }
+    if (r > 0 && !positional) f->off += r;
     return r;
 }
 
-static long do_write(long fd, size_t len, bool positional, uint64_t pos)
+/* write: the data is still in the program, at src (the runtime does not copy it into the shared
+ * buffer any more; src 0 or the shared buffer itself: it is there already). It is fetched only by
+ * what reads it: into fs_buf for a file, into the shared buffer for the rest; never for
+ * /dev/null */
+static long do_write(long fd, size_t len, bool positional, uint64_t pos, uintptr_t src)
 {
     struct ofile *f = fd_get(fd);
     if (!f) return -EBADF;
+    if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
+    if (src >= PROC_BUF_BASE && src < PROC_BUF_BASE + POSIX_BUF_SIZE) {   /* writev's, or what is left of it */
+        if (len > PROC_BUF_BASE + POSIX_BUF_SIZE - src) return -EFAULT;
+        if (src != PROC_BUF_BASE) memmove((void *)client_buf, (char *)client_buf + (src - PROC_BUF_BASE), len);
+        src = 0;
+    }
+    bool fetch = src != 0;
+    if (fetch && f->type != OF_FILE && f->type != OF_NULL && f->type != OF_ZERO && f->type != OF_RANDOM &&
+        f->type != OF_DIR) {
+        if (!mem_buf_ensure(cur->slot, len)) return -ENOMEM;
+        if (!mem_copy_from_user(cur->slot, src, (void *)client_buf, len)) return -EFAULT;
+        fetch = false;
+    }
     switch (f->type) {
     case OF_TTY:    return positional ? -ESPIPE : tty_write(f->ino, (const char *)client_buf, len);
     case OF_PTM:    return positional ? -ESPIPE : pty_master_write(f->ino, (const char *)client_buf, len);
@@ -628,7 +665,8 @@ static long do_write(long fd, size_t len, bool positional, uint64_t pos)
         if (r < 0) return r;
     }
     proc_image_release(f->ino);                   /* before fs_buf gets the data */
-    memcpy((void *)fs_buf, (void *)client_buf, len);
+    if (!fetch) memcpy((void *)fs_buf, (void *)client_buf, len);
+    else if (!mem_copy_from_user(cur->slot, src, (void *)fs_buf, len)) return -EFAULT;
     long r = fs_call(FS_OP_WRITE, f->ino, off, len);
     if (r > 0 && !positional) f->off = off + r;
     return r;
@@ -1145,10 +1183,10 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
     (void)a5;
     struct ofile *f;
     switch (nr) {
-    case __NR_read:       return do_read(a1, a3, false, 0);
-    case __NR_write:      return do_write(a1, a3, false, 0);
-    case __NR_pread64:    return do_read(a1, a3, true, a4);
-    case __NR_pwrite64:   return do_write(a1, a3, true, a4);
+    case __NR_read:       return do_read(a1, a3, false, 0, a4);
+    case __NR_write:      return do_write(a1, a3, false, 0, a4);
+    case __NR_pread64:    return do_read(a1, a3, true, a4, a5);
+    case __NR_pwrite64:   return do_write(a1, a3, true, a4, a5);
     case __NR_open:       return do_open(AT_FDCWD, a2, a3);
     case __NR_openat:     return do_open(a1, a3, a4);
     case __NR_close:      return fd_close(a1);

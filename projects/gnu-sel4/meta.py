@@ -273,8 +273,12 @@ def generate(sdf, sdf_file, output_dir):
              f'<cap_tcb slot="{SRV_TCB_SLOT}" pd="posix_server" />',
              f'<cap_endpoint slot="{SRV_EP_SLOT}" pd="posix_server" />',
              f'<cap_sched_pool slot="{SRV_SCHED_POOL_SLOT}" count="{PROC_SLOTS}" />']
+    # fs_ext2's block cache, mapped into posix_server too (sdfgen made the region): a file read is
+    # copied from it straight to the program (FS_OP_READ_REF). The live system's cache is inside
+    # fs_ext2 (a RAM disk), not this region
+    extra = "" if LIVE else '\n        <map mr="blk_client_fs_ext2_data" vaddr="0x40000000" perms="rw" setvar_vaddr="fs_cache" />'
     xml, n = re.subn(r'(<protection_domain name="posix_server"[^>]*>)',
-                     lambda m: m.group(1) + "\n        <cspace>" + "".join(caps) + "</cspace>", sdf.render())
+                     lambda m: m.group(1) + "\n        <cspace>" + "".join(caps) + "</cspace>" + extra, sdf.render())
     assert n == 1
     with open(f"{output_dir}/{sdf_file}", "w+") as f:
         f.write(xml)
