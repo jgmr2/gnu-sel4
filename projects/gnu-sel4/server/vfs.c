@@ -117,9 +117,21 @@ static void fs_send_cred(void)
     memmove(fs_cred_groups, g, n * 4);
 }
 
+/* fs_ext2 keeps what an operation writes in its cache for a while: posix_server asks for it to be
+ * written FS_FLUSH_NS after the first change (clock.c), as Linux writes dirty data back after a
+ * few seconds */
+uint64_t fs_flush_at;
+#define FS_FLUSH_NS 5000000000ULL
+
 long fs_call(long op, uint64_t a1, uint64_t a2, uint64_t a3)
 {
     uint64_t t0 = clock_rdtsc();
+    if (!fs_flush_at && op != FS_OP_LOOKUP && op != FS_OP_STAT && op != FS_OP_READ && op != FS_OP_GETDENTS &&
+        op != FS_OP_READLINK && op != FS_OP_STATFS && op != FS_OP_SETCRED && op != FS_OP_STATS &&
+        op != FS_OP_STATE && op != FS_OP_SYNC && op != FS_OP_SETCLOCK) {
+        fs_flush_at = timer_now_ns() + FS_FLUSH_NS;
+        timer_rearm();
+    }
     fs_send_cred();
     microkit_mr_set(0, op);
     microkit_mr_set(1, a1);
@@ -1234,8 +1246,8 @@ long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
     case __NR_dup:        return do_dup(a1, 0, false, false);
     case __NR_dup2:       return do_dup(a1, a2, true, false);
     case __NR_dup3:       return a1 == a2 ? -EINVAL : do_dup(a1, a2, true, a3 & O_CLOEXEC);
-    case __NR_fsync:
-    case __NR_fdatasync:  return fd_get(a1) ? 0 : -EBADF;   /* fs_ext2 writes immediately */
+    case __NR_fsync:                                   /* fs_ext2 writes back: to the disk now */
+    case __NR_fdatasync:  return fd_get(a1) ? fs_call(FS_OP_SYNC, 0, 0, 0) : -EBADF;
     case __NR_sync:       fs_call(FS_OP_SYNC, 0, 0, 0); return 0;
     case __NR_mount: {    /* only "mount -o remount,ro|rw /": MS_REMOUNT [| MS_RDONLY]; root only */
         if (cur->euid != 0) return -EPERM;

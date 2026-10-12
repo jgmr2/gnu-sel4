@@ -249,6 +249,8 @@ bool timer_notified(unsigned ch);          /* true if it was the timer channel *
 void timer_wait(struct proc *p, uint64_t ns);   /* wake p up in ns */
 uint64_t timer_now_ns(void);
 void timer_rearm(void);
+extern uint64_t fs_flush_at;                   /* vfs.c: fs_ext2 write-back due (timer ns; 0: nothing) */
+long fs_call(long op, uint64_t a1, uint64_t a2, uint64_t a3);
 
 /* bridge.c: bridge to the Linux VM (include/sel4posix/bridge.h) */
 void bridge_init(void);

@@ -190,7 +190,7 @@ static bool counts_dirty;
  * unreferenced free space; nothing on the disk points to contents that were never written
  * (another file's old data). What a cut in the second half leaves, e2fsck repairs at boot. */
 #define MAX_SLOTS    8192
-#define STAGE_BLOCKS 64
+#define STAGE_BLOCKS 256                   /* 1 MiB: the largest single disk request */
 #define NO_SLOT      0xffffffffu
 static struct cslot {
     uint64_t blk;
@@ -579,20 +579,31 @@ static void set_inode_size(struct ext2_inode *in, uint64_t size)
 /* Block and inode allocation (per-group bitmaps)                      */
 /* ------------------------------------------------------------------ */
 
-static int64_t bitmap_alloc(uint64_t bitmap_blk, uint32_t nbits)
+/* The first free bit from *hint on (then from the start), set; *hint moves past it. Full bytes
+ * are skipped whole: a big file used to rescan its group's bitmap bit by bit for every block
+ * (quadratic), and starting where the last one was keeps a file's blocks contiguous */
+static int64_t bitmap_alloc(uint64_t bitmap_blk, uint32_t nbits, uint32_t *hint)
 {
     int s = bread(bitmap_blk);
     if (s < 0) return s;
     uint8_t *bm = slot_data(s);
-    for (uint32_t i = 0; i < nbits; i++) {
-        if (!(bm[i / 8] & (1u << (i % 8)))) {
-            bm[i / 8] |= 1u << (i % 8);
-            if (bwrite(s)) return -EIO;
-            return i;
+    uint32_t start = *hint < nbits ? *hint : 0;
+    for (uint32_t pass = 0; pass < 2; pass++) {
+        uint32_t from = pass ? 0 : start, to = pass ? start : nbits;
+        for (uint32_t i = from; i < to; ) {
+            if (!(i % 8) && bm[i / 8] == 0xff) { i += 8; continue; }
+            if (!(bm[i / 8] & (1u << (i % 8)))) {
+                bm[i / 8] |= 1u << (i % 8);
+                if (bwrite(s)) return -EIO;
+                *hint = i + 1;
+                return i;
+            }
+            i++;
         }
     }
     return -ENOSPC;
 }
+static uint32_t block_hint[MAX_GROUPS], inode_hint[MAX_GROUPS];   /* bitmap_alloc's, per group */
 
 /* Free (zero) bits among the first nbits of a bitmap block, or -errno */
 static int64_t bitmap_count_free(uint64_t bitmap_blk, uint32_t nbits)
@@ -605,8 +616,19 @@ static int64_t bitmap_count_free(uint64_t bitmap_blk, uint32_t nbits)
     return n;
 }
 
+/* Write-back: the blocks an operation changes stay dirty in the cache and go to the disk together
+ * (flush_meta) when there are many of them, on FS_OP_SYNC (sync, fsync, every few seconds from
+ * posix_server, unmount) and at once for an operation that frees blocks or inodes: a block freed
+ * is never reused before its release is on the disk, so a cut cannot leave another file's new
+ * data under a deleted file's inode. The order within a flush stays the same (fresh blocks
+ * first) */
+static bool op_freed;                  /* this operation freed something: flush it now */
+static int flush_err;                  /* a deferred flush failed: the next FS_OP_SYNC says so */
+#define DIRTY_MAX (nslots / 4)
+
 static int bitmap_free(uint64_t bitmap_blk, uint32_t bit)
 {
+    op_freed = true;
     int s = bread(bitmap_blk);
     if (s < 0) return s;
     slot_data(s)[bit / 8] &= ~(1u << (bit % 8));
@@ -619,7 +641,7 @@ static int64_t alloc_block(uint32_t goal_group)
     for (uint32_t i = 0; i < ngroups; i++) {
         uint32_t g = (goal_group + i) % ngroups;
         if (!gd[g].bg_free_blocks_count) continue;
-        int64_t bit = bitmap_alloc(gd[g].bg_block_bitmap, sb->s_blocks_per_group);
+        int64_t bit = bitmap_alloc(gd[g].bg_block_bitmap, sb->s_blocks_per_group, &block_hint[g]);
         if (bit == -ENOSPC) continue;
         if (bit < 0) return bit;
         gd[g].bg_free_blocks_count--;
@@ -661,7 +683,7 @@ static int64_t alloc_inode(uint32_t goal_group, bool is_dir)
     for (uint32_t i = 0; i < ngroups; i++) {
         uint32_t g = (goal_group + i) % ngroups;
         if (!gd[g].bg_free_inodes_count) continue;
-        int64_t bit = bitmap_alloc(gd[g].bg_inode_bitmap, sb->s_inodes_per_group);
+        int64_t bit = bitmap_alloc(gd[g].bg_inode_bitmap, sb->s_inodes_per_group, &inode_hint[g]);
         if (bit == -ENOSPC) continue;
         if (bit < 0) return bit;
         gd[g].bg_free_inodes_count--;
@@ -1712,9 +1734,15 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
     else if (read_only && is_write_op(op)) r = -EROFS;
     else {
         uint64_t t0 = tsc();
+        op_freed = false;
         r = dispatch(op, microkit_mr_get(1), microkit_mr_get(2), microkit_mr_get(3));
         uint64_t t1 = tsc();
-        if (flush_meta() && r >= 0) r = -EIO;
+        if (op_freed || ndirty >= DIRTY_MAX || op == FS_OP_REMOUNT) {
+            if (flush_meta()) {
+                if (r >= 0) r = -EIO;
+                flush_err = -EIO;
+            }
+        }
         uint64_t t2 = tsc();
         if (op != FS_OP_STATS) {
             st_op[op & 31].n++;
@@ -1768,7 +1796,8 @@ static int recount_free(void)
 /* FS_OP_SYNC: every operation is already on disk when it returns; unmounting marks it clean */
 static long op_sync(bool unmount)
 {
-    if (read_only) return 0;
+    if (flush_err) { flush_err = 0; return -EIO; }
+    if (read_only) return flush_dirty() ? -EIO : 0;     /* e2fsck's raw writes */
     if (unmount) {
         sb->s_state |= EXT2_VALID_FS;
         sb_dirty = true;

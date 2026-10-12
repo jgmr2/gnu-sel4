@@ -254,6 +254,13 @@ Principles the plan follows:
    - [ ] Zero copy where it pays off: shared mmap of files on the cache pages; large read/write
          passing page capabilities
    - [ ] kqueue as the native event API; large pages (2 MiB) for large regions
+   - [x] Write-back (October 2026): an operation's dirty blocks stay in fs_ext2's cache and go
+         to the disk together (many dirty blocks, sync/fsync, 5 s after the first change, unmount);
+         an operation that frees blocks or inodes is written at once, so a freed block is never
+         reused before its release is on the disk. Requests up to 1 MiB; the block allocator
+         remembers where it was in each group (it rescanned the bitmap bit by bit for every block).
+         Measured, 64 MiB copied: 7.2 s -> 1.8-2.2 s, 4124 disk requests -> 142; QEMU killed in the
+         middle of writes: only lazy counts to fix, e2fsck -p repairs it
    - [ ] Large writes with their size known up front (José's idea): the region delimited from
          the start (start and length), so the file's blocks are reserved in one go, contiguous,
          and the data goes by reference in a shared region instead of 64 KiB copies, each

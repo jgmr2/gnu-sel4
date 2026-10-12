@@ -117,6 +117,7 @@ void timer_rearm(void)
     }
     uint64_t tf = vfs_timerfd_next();
     if (tf && (!next || tf < next)) next = tf;
+    if (fs_flush_at && (!next || fs_flush_at < next)) next = fs_flush_at;     /* write-back */
     if (next) sddf_timer_set_timeout(timer_config.driver_id, next > now ? next - now : 1);
 }
 
@@ -130,6 +131,10 @@ bool timer_notified(unsigned ch)
 {
     if (ch != timer_config.driver_id) return false;
     uint64_t now = sddf_timer_time_now(timer_config.driver_id);
+    if (fs_flush_at && fs_flush_at <= now) {           /* fs_ext2's dirty blocks to the disk */
+        fs_flush_at = 0;
+        fs_call(FS_OP_SYNC, 0, 0, 0);
+    }
     for (int i = 0; i < NPROC; i++) {
         struct proc *p = &procs[i];
         if (p->state != P_RUN) continue;
