@@ -195,8 +195,15 @@ static bool counts_dirty;
  * previous one: the disk was idle between them) */
 #ifdef FS_RAMDISK
 #define STAGE_CHUNKS 1                     /* a 4 MiB cache */
+#define WSTAGE_BLOCKS 0                    /* no background flush: the disk is RAM */
 #else
-#define STAGE_CHUNKS 8
+#define STAGE_CHUNKS 4                     /* for reads (and synchronous writes) */
+#define WSTAGE_BLOCKS 2048                 /* 8 MiB: the snapshot a background flush writes from */
+#endif
+#ifdef FS_RAMDISK
+#define RASTAGE_BLOCKS 0                   /* no asynchronous read-ahead from RAM */
+#else
+#define RASTAGE_BLOCKS 512                 /* 2 MiB: the read-ahead window, read without waiting */
 #endif
 #define NO_SLOT      0xffffffffu
 static struct cslot {
@@ -204,6 +211,7 @@ static struct cslot {
     uint32_t prev, next;               /* LRU list (head = most recently used) */
     uint32_t hnext;                    /* hash chain */
     bool valid, dirty, hashed;
+    bool pending;                      /* an asynchronous read-ahead is bringing it (ra_*)  */
     bool fresh;                        /* allocated in this operation: written first */
 } slots[MAX_SLOTS];
 #define HASH_SIZE (2 * MAX_SLOTS)
@@ -211,6 +219,10 @@ static uint32_t hash_head[HASH_SIZE];
 static uint32_t nslots, lru_head = NO_SLOT, lru_tail = NO_SLOT;
 static uint32_t dirty_list[MAX_SLOTS], ndirty;
 static uint32_t stage_first;           /* first block of the staging area in the data region */
+static uint32_t wstage_first;          /* the background flush's area, after it */
+static uint32_t rastage_first;         /* the asynchronous read-ahead's, after that */
+static int flush_err;                  /* a deferred flush failed: the next FS_OP_SYNC says so */
+static bool flush_async;               /* this flush may go on in the background */
 
 #ifdef FS_RAMDISK
 /* Live systems on real hardware (make PLATFORM=...): no disk driver at all. The file system is
@@ -269,6 +281,9 @@ static void cache_init(void)
 /* One request at a time: queue it, notify blk_virt and wait for the reply.
  * blk_virt and the driver have a higher priority, so they run while this
  * component waits. Used for single reads; writes go through flush_dirty(). */
+static void batch_begin(struct ctr *c);
+static void batch_add(blk_req_code_t code, uintptr_t offset, uint64_t blk, uint16_t count);
+static int batch_end(void);
 static int blk_io(blk_req_code_t code, int s, uint64_t blk)
 {
     if (blk >= disk_blocks) return -EIO;
@@ -280,17 +295,10 @@ static int blk_io(blk_req_code_t code, int s, uint64_t blk)
     rc->cyc += tsc() - t0;
     return 0;
 #endif
-    if (blk_enqueue_req(&blkq, code, (uintptr_t)s * BS, blk, 1, 0)) return -EIO;
-    sddf_notify(blk_config.virt.id);
-    while (blk_queue_empty_resp(&blkq)) __asm__ volatile("pause" ::: "memory");
-    struct ctr *c = code == BLK_REQ_READ ? &st_disk_read : &st_disk_write;
-    c->n++;
-    c->cyc += tsc() - t0;
-    blk_resp_status_t status;
-    uint16_t count;
-    uint32_t id;
-    blk_dequeue_resp(&blkq, &status, &count, &id);
-    return status == BLK_RESP_OK ? 0 : -EIO;
+    (void)t0;
+    batch_begin(code == BLK_REQ_READ ? &st_disk_read : &st_disk_write);
+    batch_add(code, (uintptr_t)s * BS, blk, 1);
+    return batch_end();                    /* responses of a background flush are told apart by id */
 }
 
 /* A batch of requests in flight together: queued until the queue is full, then all waited for */
@@ -300,18 +308,32 @@ static int batch_err;
 static struct ctr *batch_ctr;
 static uint64_t batch_t0;
 
+/* Responses: id ID_BG belongs to the background flush (bg_*, below), the rest to the batch the
+ * current operation waits for */
+#define ID_SYNC 0
+#define ID_BG   1
+#define ID_RA   2                          /* + the read-ahead request's index */
+static void bg_response(bool ok);
+static void ra_response(uint32_t k, bool ok);
+static void take_response(void)
+{
+    blk_resp_status_t status;
+    uint16_t count;
+    uint32_t id;
+    blk_dequeue_resp(&blkq, &status, &count, &id);
+    if (id == ID_BG) { bg_response(status == BLK_RESP_OK); return; }
+    if (id >= ID_RA) { ra_response(id - ID_RA, status == BLK_RESP_OK); return; }
+    if (status != BLK_RESP_OK) batch_err = -EIO;
+    batch_inflight--;
+}
+
 static void batch_wait_all(void)
 {
     if (!batch_inflight) return;
     sddf_notify(blk_config.virt.id);
     while (batch_inflight) {
         while (blk_queue_empty_resp(&blkq)) __asm__ volatile("pause" ::: "memory");
-        blk_resp_status_t status;
-        uint16_t count;
-        uint32_t id;
-        blk_dequeue_resp(&blkq, &status, &count, &id);
-        if (status != BLK_RESP_OK) batch_err = -EIO;
-        batch_inflight--;
+        take_response();
     }
 }
 
@@ -327,7 +349,7 @@ static void batch_add(blk_req_code_t code, uintptr_t offset, uint64_t blk, uint1
 #endif
     /* At most MAX_INFLIGHT requests: the driver's queue is shared with the Linux VM's disk */
     if (blk_queue_full_req(&blkq) || batch_inflight >= MAX_INFLIGHT) batch_wait_all();
-    if (blk_enqueue_req(&blkq, code, offset, blk, count, 0)) { batch_err = -EIO; return; }
+    if (blk_enqueue_req(&blkq, code, offset, blk, count, ID_SYNC)) { batch_err = -EIO; return; }
     batch_inflight++;
     batch_ctr->n++;
 }
@@ -371,7 +393,163 @@ static int write_slots(const uint32_t *v, uint32_t n)
     return batch_end();
 }
 
-static int flush_dirty(void)
+/* ---- the background flush ----
+ * flush_dirty(false) at the end of an operation that left many dirty blocks: every dirty block is
+ * copied (a snapshot) into the background area in the order of item 3 (fresh first), marked
+ * clean, and the operation returns while the disk writes them. The second phase (what points to
+ * the fresh blocks) is sent only once the first one is done; a new flush first waits for the
+ * one before. Responses advance it whenever they come (take_response: during any wait, at each
+ * operation, on blk_virt's notification). Errors show up at the next FS_OP_SYNC */
+static struct bg_run { uint32_t stage; uint64_t blk; uint16_t count; } bg_runs[WSTAGE_BLOCKS + 1];
+static uint32_t bg_nruns, bg_phase1, bg_next, bg_inflight;
+static bool bg_active;
+#define BG_MAX_INFLIGHT 16
+
+static void bg_issue(void)
+{
+    uint32_t end = bg_next < bg_phase1 ? bg_phase1 : bg_nruns;
+    if (bg_next == bg_phase1 && bg_inflight) return;       /* the second phase after the first */
+    bool sent = false;
+    while (bg_next < end && bg_inflight < BG_MAX_INFLIGHT && !blk_queue_full_req(&blkq)) {
+        struct bg_run *r = &bg_runs[bg_next++];
+        if (blk_enqueue_req(&blkq, BLK_REQ_WRITE, (uintptr_t)(wstage_first + r->stage) * BS, r->blk, r->count, ID_BG)) {
+            flush_err = -EIO;
+            continue;
+        }
+        bg_inflight++;
+        st_disk_write.n++;
+        sent = true;
+    }
+    if (sent) sddf_notify(blk_config.virt.id);
+    if (bg_next == bg_nruns && !bg_inflight) bg_active = false;
+}
+
+static void bg_response(bool ok)
+{
+    if (!ok) flush_err = -EIO;
+    bg_inflight--;
+    bg_issue();
+}
+
+/* ---- the asynchronous read-ahead ----
+ * The window ahead of a sequential read is asked for and not waited for: its slots are marked
+ * pending (valid only when their response comes, copied from the read-ahead area); whoever
+ * touches a pending slot waits then (cache_slot) */
+#define RA_REQS 16
+static struct ra_req { uint32_t stage, n, first; } ra_reqs[RA_REQS];
+static uint32_t ra_slot[RASTAGE_BLOCKS + 1], ra_outstanding;
+
+static void ra_response(uint32_t k, bool ok)
+{
+    struct ra_req *q = &ra_reqs[k];
+    for (uint32_t i = 0; i < q->n; i++) {
+        uint32_t s = ra_slot[q->first + i];
+        slots[s].pending = false;
+        if (ok) {
+            memcpy(slot_data(s), slot_data(rastage_first + q->stage + i), BS);
+            slots[s].valid = true;
+        } else {
+            hash_remove(s);                /* read again (synchronously) when needed */
+        }
+    }
+    ra_outstanding--;
+}
+
+static void ra_wait(void)
+{
+    if (!ra_outstanding) return;
+    sddf_notify(blk_config.virt.id);
+    while (ra_outstanding) {
+        if (blk_queue_empty_resp(&blkq)) { __asm__ volatile("pause" ::: "memory"); continue; }
+        take_response();
+    }
+}
+
+static int cache_slot(uint64_t blk, bool *hit);
+/* The blocks of v[] (disk block numbers, 0 = hole) that are not cached, asked for together */
+static void ra_start(const uint32_t *v, uint32_t n)
+{
+    if (!RASTAGE_BLOCKS || ra_outstanding) return;         /* one window at a time */
+    uint32_t nreq = 0, used = 0;
+    for (uint32_t i = 0; i < n && used < RASTAGE_BLOCKS; i++) {
+        if (!v[i]) continue;
+        bool hit;
+        int s = cache_slot(v[i], &hit);
+        if (hit) continue;
+        struct ra_req *q = nreq ? &ra_reqs[nreq - 1] : NULL;
+        if (!q || slots[ra_slot[q->first + q->n - 1]].blk + 1 != v[i] || q->n == STAGE_BLOCKS) {
+            if (nreq == RA_REQS) { hash_remove(s); break; }
+            q = &ra_reqs[nreq++];
+            *q = (struct ra_req){ .stage = used, .n = 0, .first = used };
+        }
+        ra_slot[used++] = s;
+        q->n++;
+        slots[s].pending = true;
+    }
+    bool sent = false;
+    for (uint32_t k = 0; k < nreq; k++) {
+        struct ra_req *q = &ra_reqs[k];
+        uint64_t blk = slots[ra_slot[q->first]].blk;
+        if (blk + q->n > disk_blocks || blk_queue_full_req(&blkq) ||
+            blk_enqueue_req(&blkq, BLK_REQ_READ, (uintptr_t)(rastage_first + q->stage) * BS, blk, q->n, ID_RA + k)) {
+            for (uint32_t i = 0; i < q->n; i++) { slots[ra_slot[q->first + i]].pending = false; hash_remove(ra_slot[q->first + i]); }
+            continue;
+        }
+        ra_outstanding++;
+        st_disk_read.n++;
+        sent = true;
+    }
+    if (sent) sddf_notify(blk_config.virt.id);
+}
+
+static void bg_poll(void)                  /* what has come back, without waiting */
+{
+    while ((bg_active || ra_outstanding) && !blk_queue_empty_resp(&blkq)) take_response();
+}
+
+static void bg_wait(void)
+{
+    while (bg_active) {
+        if (blk_queue_empty_resp(&blkq)) { __asm__ volatile("pause" ::: "memory"); continue; }
+        take_response();
+    }
+}
+
+static int flush_sync(void);
+static int flush_dirty_(bool wait)
+{
+    if (!ndirty) { if (wait) bg_wait(); return 0; }
+    if (wait || WSTAGE_BLOCKS == 0 || ndirty > WSTAGE_BLOCKS) { bg_wait(); return flush_sync(); }
+    bg_wait();
+    static uint32_t ordered[MAX_SLOTS];
+    uint32_t n = 0, nf;
+    sort_by_block(dirty_list, ndirty);
+    for (uint32_t k = 0; k < ndirty; k++) if (slots[dirty_list[k]].fresh) ordered[n++] = dirty_list[k];
+    nf = n;
+    for (uint32_t k = 0; k < ndirty; k++) if (!slots[dirty_list[k]].fresh) ordered[n++] = dirty_list[k];
+    bg_nruns = bg_next = 0;
+    for (uint32_t k = 0; k < n; k++) {
+        memcpy(slot_data(wstage_first + k), slot_data(ordered[k]), BS);
+        struct bg_run *last = bg_nruns ? &bg_runs[bg_nruns - 1] : NULL;
+        bool phase_edge = k == nf;
+        if (last && !phase_edge && last->blk + last->count == slots[ordered[k]].blk && last->count < STAGE_BLOCKS) {
+            last->count++;
+        } else {
+            if (phase_edge) bg_phase1 = bg_nruns;
+            bg_runs[bg_nruns++] = (struct bg_run){ .stage = k, .blk = slots[ordered[k]].blk, .count = 1 };
+        }
+        slots[ordered[k]].dirty = slots[ordered[k]].fresh = false;
+    }
+    if (nf == n) bg_phase1 = bg_nruns;
+    ndirty = 0;
+    bg_active = true;
+    bg_issue();
+    return 0;
+}
+
+static int flush_dirty(void) { return flush_dirty_(true); }
+
+static int flush_sync(void)
 {
     if (!ndirty) return 0;
     /* fresh blocks to the front (stable: each half stays sorted), written before the rest */
@@ -401,6 +579,7 @@ static int cache_slot_find(uint64_t blk, bool *hit)
     }
     *hit = false;
     uint32_t v = lru_tail;
+    if (slots[v].pending) ra_wait();            /* a read-ahead's: let it land first */
     if (slots[v].dirty) flush_dirty();          /* only with more dirty blocks than the cache */
     hash_remove(v);
     lru_unlink(v);
@@ -414,10 +593,16 @@ static int cache_slot_find(uint64_t blk, bool *hit)
     return v;
 }
 
+static void ra_wait(void);
 static int cache_slot(uint64_t blk, bool *hit)
 {
     uint64_t t0 = tsc();
     int s = cache_slot_find(blk, hit);
+    if (slots[s].pending) {                /* on its way: wait for it (and the rest of the window) */
+        ra_wait();
+        *hit = slots[s].valid && slots[s].blk == blk && slots[s].hashed;
+        if (!*hit) s = cache_slot_find(blk, hit);
+    }
     st_cache_lookup.n++;
     st_cache_lookup.cyc += tsc() - t0;
     if (*hit) st_hits++; else st_misses++;
@@ -545,9 +730,10 @@ static int flush_meta_(bool counts)
         }
         gd_dirty = false;
     }
-    return flush_dirty();                 /* and every block the operation changed */
+    return flush_dirty_(!flush_async);    /* and every block the operation changed */
 }
 
+static int flush_dirty_(bool wait);
 static int flush_meta(void) { return flush_meta_(false); }
 
 static int inode_loc(uint32_t ino, uint64_t *blk, uint32_t *off)
@@ -643,8 +829,8 @@ static int64_t bitmap_count_free(uint64_t bitmap_blk, uint32_t nbits)
  * data under a deleted file's inode. The order within a flush stays the same (fresh blocks
  * first) */
 static bool op_freed;                  /* this operation freed something: flush it now */
-static int flush_err;                  /* a deferred flush failed: the next FS_OP_SYNC says so */
-#define DIRTY_MAX (nslots / 4)
+/* Dirty blocks before a flush; they must fit the background area with one more operation's */
+#define DIRTY_MAX (WSTAGE_BLOCKS && nslots / 4 > WSTAGE_BLOCKS - 512 ? WSTAGE_BLOCKS - 512 : nslots / 4)
 
 static int bitmap_free(uint64_t bitmap_blk, uint32_t bit)
 {
@@ -905,13 +1091,18 @@ static long file_read(uint32_t ino, struct ext2_inode *in, uint64_t off, uint32_
         if (to > fblocks) to = fblocks;
         if (to > ra_end) ra_end = to;
         if (to - first > sizeof pbs / sizeof *pbs) to = first + sizeof pbs / sizeof *pbs;
-        uint32_t k = 0;
+        uint32_t k = 0, kn = 0;
         for (uint64_t b = first; b < to; b++) {
             int64_t pb = bmap(ino, in, b, false, NULL);
             if (pb < 0) break;
             pbs[k++] = pb;
+            if (b < last) kn = k;
         }
-        bread_many(pbs, k);            /* the cached ones are skipped; errors show up below */
+        bread_many(pbs, kn);           /* what this read needs now (cached ones are skipped) */
+        if (k > kn) {                  /* the window ahead: without waiting for it */
+            if (RASTAGE_BLOCKS) ra_start(pbs + kn, k - kn);
+            else bread_many(pbs + kn, k - kn);
+        }
     }
     ra_ino = ino;
     ra_next = off + len;
@@ -1769,13 +1960,16 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
     else {
         uint64_t t0 = tsc();
         op_freed = false;
+        bg_poll();                                 /* the background flush moves on */
         r = dispatch(op, microkit_mr_get(1), microkit_mr_get(2), microkit_mr_get(3));
         uint64_t t1 = tsc();
         if (op_freed || ndirty >= DIRTY_MAX || op == FS_OP_REMOUNT) {
+            flush_async = !op_freed && op != FS_OP_REMOUNT;   /* only "many dirty blocks" */
             if (flush_meta()) {
                 if (r >= 0) r = -EIO;
                 flush_err = -EIO;
             }
+            flush_async = false;
         }
         uint64_t t2 = tsc();
         if (op != FS_OP_STATS) {
@@ -1830,13 +2024,18 @@ static int recount_free(void)
 /* FS_OP_SYNC: every operation is already on disk when it returns; unmounting marks it clean */
 static long op_sync(bool unmount)
 {
-    if (flush_err) { flush_err = 0; return -EIO; }
-    if (read_only) return flush_dirty() ? -EIO : 0;     /* e2fsck's raw writes */
+    if (read_only) {                                     /* e2fsck's raw writes */
+        int r = flush_dirty();
+        if (flush_err) { flush_err = 0; return -EIO; }
+        return r ? -EIO : 0;
+    }
+    if (flush_err) { flush_err = 0; return -EIO; }      /* a background flush failed */
     if (unmount) {
         sb->s_state |= EXT2_VALID_FS;
         sb_dirty = true;
     }
     if (flush_meta_(true)) return -EIO;
+    if (flush_err) { flush_err = 0; return -EIO; }
     if (unmount) read_only = true;
     return 0;
 }
@@ -1917,9 +2116,11 @@ void init(void)
     }
     blk_queue_init(&blkq, blk_config.virt.req_queue.vaddr, blk_config.virt.resp_queue.vaddr,
                    blk_config.virt.num_buffers);
-    nslots = blk_config.data.size / BS - STAGE_BLOCKS * STAGE_CHUNKS;
+    nslots = blk_config.data.size / BS - STAGE_BLOCKS * STAGE_CHUNKS - WSTAGE_BLOCKS - RASTAGE_BLOCKS;
     if (nslots > MAX_SLOTS) nslots = MAX_SLOTS;
-    stage_first = blk_config.data.size / BS - STAGE_BLOCKS * STAGE_CHUNKS;
+    stage_first = blk_config.data.size / BS - STAGE_BLOCKS * STAGE_CHUNKS - WSTAGE_BLOCKS - RASTAGE_BLOCKS;
+    wstage_first = stage_first + STAGE_BLOCKS * STAGE_CHUNKS;
+    rastage_first = wstage_first + WSTAGE_BLOCKS;
     cache_init();
 
     blk_storage_info_t *info = blk_config.virt.storage_info.vaddr;
@@ -1933,5 +2134,5 @@ void notified(microkit_channel ch)
 #ifdef FS_RAMDISK
     (void)blkq;
 #endif
-    (void)ch;   /* blk_virt's replies are handled by polling in blk_io() */
+    if (ch == blk_config.virt.id) bg_poll();  /* the background flush; the rest is polled */
 }

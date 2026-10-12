@@ -277,6 +277,15 @@ Principles the plan follows:
          (393 MB/s; Linux 620: 1.6x), 256 MiB read 0.32 -> 0.29 s (882 MB/s; Linux ~5 GB/s: 5.8x).
          What remains: the read-ahead and the flushes wait for their requests (no overlap with
          the copies), two copies on the way
+   - [x] Background flush and asynchronous read-ahead: a flush for "many dirty blocks" copies them
+         into an 8 MiB area (a snapshot, in item 3's order) and the operation returns while the
+         disk writes them (sync, fsync, unmount and operations that free still wait); the window
+         ahead of a sequential read is asked for without waiting (its slots pending until they
+         land). Responses told apart by id. 1 GiB written 2.60 -> 2.09 s (489 MB/s; Linux 613:
+         1.25x), 256 MiB read 0.29 -> 0.26 s (984 MB/s; Linux ~4.3 GB/s: 4.3x). Most of what is
+         left is outside fs_ext2: posix_server's copies and the calls. A cut in the middle of
+         writes on a full disk left a zero-length unattached inode (create's inode and directory
+         entry are in the same phase), which e2fsck -p clears
    - [ ] Large writes with their size known up front (José's idea): the region delimited from
          the start (start and length), so the file's blocks are reserved in one go, contiguous,
          and the data goes by reference in a shared region instead of 64 KiB copies, each
