@@ -434,20 +434,22 @@ DISK := $(POSIX)/disk.img
 EXT2_MB := 512
 DOCKER_GB := 8
 endif
+# disk.img may be a link to a disk elsewhere (a faster one): the new disk is made where it points
 $(DISK):
 	set -e; \
+	d=$$(readlink -f $@); \
 	truncate -s $(EXT2_MB)M part.img; \
 	mke2fs -q -F -t ext2 -b 4096 -I 256 -L gnu-sel4 -O ^dir_index,^resize_inode \
 		-E root_owner=0:0 -d $(POSIX)/rootfs part.img; \
-	truncate -s $$(( 1 + $(EXT2_MB) ))M $@.tmp; truncate -s +$(DOCKER_GB)G $@.tmp; \
-	printf 'label: dos\nstart=2048, size=%sMiB, type=83\ntype=83\n' $(EXT2_MB) | sfdisk -q $@.tmp; \
-	dd if=part.img of=$@.tmp bs=1M seek=1 conv=notrunc status=none; \
+	truncate -s $$(( 1 + $(EXT2_MB) ))M $$d.tmp; truncate -s +$(DOCKER_GB)G $$d.tmp; \
+	printf 'label: dos\nstart=2048, size=%sMiB, type=83\ntype=83\n' $(EXT2_MB) | sfdisk -q $$d.tmp; \
+	dd if=part.img of=$$d.tmp bs=1M seek=1 conv=notrunc status=none; \
 	if [ -z "$(LIVE)" ] && [ -f $(POSIX)/vm/rootfs/out/vm-seed.ext4 ]; then \
-		dd if=$(POSIX)/vm/rootfs/out/vm-seed.ext4 of=$@.tmp bs=1M seek=$$(( 1 + $(EXT2_MB) )) conv=notrunc,sparse status=none; \
+		dd if=$(POSIX)/vm/rootfs/out/vm-seed.ext4 of=$$d.tmp bs=1M seek=$$(( 1 + $(EXT2_MB) )) conv=notrunc,sparse status=none; \
 		echo "the VM's partition seeded: Alpine and Docker installed (vm/rootfs/out/vm-seed.ext4)"; \
 	fi; \
-	rm part.img; mv $@.tmp $@; \
-	echo "disk created: $@ (ext2 $(EXT2_MB) MiB + Docker $(DOCKER_GB) GiB, sparse)"
+	rm part.img; mv $$d.tmp $$d; \
+	echo "disk created: $$d (ext2 $(EXT2_MB) MiB + Docker $(DOCKER_GB) GiB, sparse)"
 
 # --- installs the programs into /bin and the system files (leaving everything else alone) ---
 # SYSFILES: files from rootfs/ that the system manages and that are updated on every build
