@@ -177,8 +177,11 @@ Principles the plan follows:
          registers on its stack and runs the runtime's entry point, which saves the FPU state,
          delivers the signals and returns to where it was (POSIX_SYS_ASYNC, runtime/crt0.S).
          Test asynctest
-   - [ ] With it: the console login as an s6-rc longrun (getty-like); the dropbear ssh server as
-         a longrun; sudo without `!use_pty`; /proc shows the tty name; tmux or screen
+   - [x] sudo with use_pty (its default; `!use_pty` gone from new disks): the command runs on a
+         pty of its own (test sudo-pty). /etc/profile runs resize only on the console (on a pty it
+         ate what was typed ahead). /proc shows the controlling terminal
+   - [ ] The dropbear ssh server as an s6-rc longrun (host keys at first start, a host port for
+         the native system); tmux or screen
 5. [ ] **Memory limits** (S). Needs: nothing (fork copies, so counting pages is simple)
    - [ ] A page budget per process and per user (like RLIMIT_AS): today one process can take
          the whole 768 MiB pool. Shared (memfd) pages counted once

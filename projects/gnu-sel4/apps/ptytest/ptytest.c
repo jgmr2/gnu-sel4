@@ -127,6 +127,17 @@ int main(void)
     for (int i = 0; i < 50 && w == 0; i++) { w = waitpid(c, &status, WNOHANG); if (!w) usleep(20000); }
     CHECK(w == c && WIFSIGNALED(status) && WTERMSIG(status) == SIGHUP, "closing the master: SIGHUP to the session");
 
+    /* Two at once: each its own number (TIOCGPTN), its own data */
+    int m2, s2;
+    char name2[64];
+    CHECK(openpty(&m, &s, name, NULL, NULL) == 0 && openpty(&m2, &s2, name2, NULL, NULL) == 0 &&
+          strcmp(name, name2) != 0, "two ptys at once: different names");
+    write(s2, "two\n", 4);
+    n = read_some(m2, buf, sizeof buf - 1, 200);
+    int none = read_some(m, buf + 100, 50, 100);
+    CHECK(strstr(buf, "two") && none == 0, "each master gets its own slave's output");
+    close(s); close(m); close(s2); close(m2);
+
     /* The slave closed: the master reads EIO */
     CHECK(openpty(&m, &s, name, NULL, NULL) == 0, "openpty again");
     close(s);

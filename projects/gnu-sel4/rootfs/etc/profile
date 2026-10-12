@@ -6,6 +6,8 @@ export PATH=/bin:/sbin:/usr/bin
 export TERM=xterm-256color
 if [ "$(id -u)" = 0 ]; then PS1="$(id -un)@$(uname -n):\$PWD# "; else PS1="$(id -un)@$(uname -n):\$PWD\$ "; fi
 cd "$HOME"
-# real window size (it does not arrive by itself over the serial port; `resize` measures it again)
-[ -t 0 ] && resize -s
+# real window size: it does not arrive by itself over the serial port, `resize` measures it again.
+# Only on the console: on a pseudo-terminal the other side (sshd, a terminal emulator) sets it,
+# and resize would eat what was typed ahead
+[ "$(tty 2>/dev/null)" = /dev/console ] && resize -s
 cat /etc/motd

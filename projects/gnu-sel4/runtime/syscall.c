@@ -275,7 +275,7 @@ static long sys_prwv(int write, long fd, const struct iovec *iov, int iovcnt, lo
 static long sys_ioctl(long fd, long req, void *arg)
 {
     long r;
-    switch (req) {
+    switch ((uint32_t)req) {             /* ioctl()'s request is an int: 0x80045430 arrives negative */
     case TIOCGWINSZ:
         r = server_call(SYS_ioctl, fd, req, 0, 0, 0, 0);
         if (r >= 0) memcpy(arg, (void *)PROC_BUF_BASE, sizeof(struct winsize));

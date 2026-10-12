@@ -2,8 +2,6 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 
-# No pseudo-terminals yet (TODO item 7): commands run on the same terminal
-Defaults !use_pty
 # No syslog daemon: sudo keeps its own log
 Defaults !syslog, logfile=/var/log/sudo.log
 Defaults secure_path="/bin:/sbin:/usr/bin"

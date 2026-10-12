@@ -94,6 +94,14 @@ check sudo        sh -c 'out=$(printf "echo s3cret | sudo -k -S -p \"\" id -u | 
                          out=$(printf "echo wrong | sudo -k -S -p \"\" id -u | sed s/^/UID=/\nexit\n" | login -f user 2>&1)
                          case "$out" in *UID=0*) echo "a wrong password worked"; exit 1;; esac
                          grep -q "user.*COMMAND=/bin/id" /var/log/sudo.log || { echo "nothing in /var/log/sudo.log"; exit 1; }'
+# sudo runs the command on a pseudo-terminal of its own (use_pty, sudo's default; disks made
+# before the ptys still have "Defaults !use_pty": taken out here, on the test's copy)
+check sudo-pty    sh -c 'cp /etc/sudoers /tmp/sudoers.orig && sed "/use_pty/d" /tmp/sudoers.orig > /etc/sudoers
+                         out=$(printf "readlink /proc/self/fd/1\necho s3cret | sudo -k -S -p \"\" readlink /proc/self/fd/1\nexit\n" |
+                               timeout 30 socat - EXEC:"login -f user",pty,setsid,ctty,stderr 2>&1)
+                         cat /tmp/sudoers.orig > /etc/sudoers
+                         n=$(echo "$out" | grep -o "^/dev/pts/[0-9]*" | sort -u | wc -l)
+                         [ "$n" = 2 ] || { echo "expected the login pty and another one for sudo:"; echo "$out" | tail -8; exit 1; }'
 check lazy-exec   sh -c 'cp /bin/dash /tmp/d1 && cp /bin/dash /tmp/d2 || exit 1
                          /tmp/d1 -c "sleep 1; case x in x) echo alive1;; esac; ulimit -a >/dev/null; exit 3" > /tmp/d1.out & p1=$!
                          /tmp/d2 -c "sleep 1; case x in x) echo alive2;; esac; ulimit -a >/dev/null; exit 4" > /tmp/d2.out & p2=$!
