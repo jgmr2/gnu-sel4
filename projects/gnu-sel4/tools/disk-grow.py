@@ -15,7 +15,7 @@ PROJ = os.path.dirname(HERE)
 TOP = os.path.dirname(os.path.dirname(PROJ))
 DISK = os.environ.get("DISK") or os.path.join(PROJ, "disk.img")   # DISK=: another disk (tests)
 NEW = DISK + ".new"
-PART = os.path.join(PROJ, "build", "grow-part1.img")
+PART = os.environ.get("PART") or os.path.join(PROJ, "build", "grow-part1.img")   # PART=: elsewhere
 SECTOR, MIB = 512, 1 << 20
 
 def partitions(path):

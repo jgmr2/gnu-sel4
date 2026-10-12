@@ -31,8 +31,13 @@ def main():
     ap.add_argument("--only", help="just these tests, comma-separated (e.g. ptytest,jobtest)")
     ap.add_argument("--keep-disk", action="store_true",
                     help="keep the disk copy (build/test-disk.img) afterwards, e.g. to look at what a cut left")
+    ap.add_argument("--reuse-copy", action="store_true",
+                    help="use the disk copy as it is (e.g. one grown with DISK=... tools/disk-grow.py) and keep it")
     ap.add_argument("--timeout", type=int, default=0, help="limit in seconds (default 240, 480 with --slow)")
     a = ap.parse_args()
+    if a.reuse_copy:
+        if not os.path.exists(COPY): sys.exit("--reuse-copy: no %s" % COPY)
+        a.keep_disk = True
     a.timeout = a.timeout or (480 if a.slow else 240)
 
     for f in ("sel4_32.elf", "loader.img"):
@@ -46,9 +51,10 @@ def main():
         fcntl.lockf(d, fcntl.LOCK_UN)
         mbr = d.read(512); d.seek(0)              # MBR + ext2 partition (its size from the MBR)
         part1_end = (int.from_bytes(mbr[454:458], "little") + int.from_bytes(mbr[458:462], "little")) * 512
-        with open(COPY, "wb") as c:
-            c.write(d.read(part1_end))
-            c.truncate(os.path.getsize(DISK))    # the rest (Docker partition) empty, sparse
+        if not a.reuse_copy:
+            with open(COPY, "wb") as c:
+                c.write(d.read(part1_end))
+                c.truncate(os.path.getsize(DISK))    # the rest (Docker partition) empty, sparse
 
     with open(MARKER, "w") as m:
         m.write(" ".join(["no-net" if a.no_net else "full"] + (["slow"] if a.slow else []) +

@@ -149,6 +149,10 @@ Principles the plan follows:
          the build must pass. Next: the serial log artefact with sDDF's PCI scan debug output
    - [ ] The full `make test` on a self-hosted runner with VT-x (the workflow's "full" job, by
          hand); a cache for the CI build (from scratch: ~11 minutes)
+   - [ ] How much of POSIX: the Open POSIX Test Suite (in LTP) for a number per area. Expected
+         today: under half overall (no threads: no clone, no futex; timer_create is ENOSYS; no
+         mq_* or aio_*), much better in processes, signals, files, mmap and pipes. Certification
+         (The Open Group's VSX-PCTS, paid) only after that
 3. [x] **File system robustness I** (M). Needs: nothing. The disk takes more and more data and
        its only protection is the recount of free blocks
    - [x] e2fsprogs 1.47.4 ported (e2fsck, mke2fs, tune2fs, dumpe2fs, resize2fs in /sbin), on
@@ -286,6 +290,28 @@ Principles the plan follows:
          left is outside fs_ext2: posix_server's copies and the calls. A cut in the middle of
          writes on a full disk left a zero-length unattached inode (create's inode and directory
          entry are in the same phase), which e2fsck -p clears
+   - [x] One copy for file reads, and less work per block (October 2026): posix_server maps
+         fs_ext2's cache (meta.py) and FS_OP_READ_REF answers with where each piece is, so the
+         data goes from the cache straight to the program (the runtime passes its buffer; MR5
+         POSIX_DIRECT says it is there); bmap_many reads each indirect block once per run, not
+         twice per 4 KiB block (fs_ext2's cost per cached MiB ~400 -> ~30 us); the read-ahead
+         lands straight in the cache, GROUP (32) slots at a time picked by a clock hand, several
+         windows in flight, no staging copy; write() no longer copies in the runtime: the server
+         fetches the data from the program only when the destination reads it (none for
+         /dev/null, one fewer for files). Cached reads ~5 GB/s; 256 MiB from the disk 0.26 ->
+         0.15-0.20 s. Against Linux the same day (a noisy host): 1 GiB written 2.42 s against
+         2.15 s (1.13x), 256 MiB read 0.20 s against 0.13 s (1.5x)
+   - [ ] At scale (fs-bench.py --gib 15, on a disk copy grown to 16 GiB; files past 4 GiB, triple
+         indirect, pass e2fsck): 15 GiB written with sync 91.9 s against Linux's 43.6 s (2.1x:
+         worse than at 1 GiB, something grows with the file: the allocator over full groups?
+         bmap with create block by block? the flush's 8 MiB snapshot copy?), read 25.6 s
+         against 19.5 s (1.3x). Next: /proc/perf on the big write; a fast memcpy (rep movsb) in
+         posix_server; one cache lookup per block; a larger read-ahead window; file writes
+         straight into the cache (FS_OP_WRITE_REF, the other half of one copy)
+   - [ ] A measurable goal for nginx: static files on one core against Linux under the same
+         QEMU (wrk), throughput and p99 latency. Linux and FreeBSD already send files without
+         copies and use every core, so the realistic win is p99 on one core: sendfile from the
+         cache to netstack without copies (LionsOS style) and queues instead of a call per request
    - [ ] Large writes with their size known up front (José's idea): the region delimited from
          the start (start and length), so the file's blocks are reserved in one go, contiguous,
          and the data goes by reference in a shared region instead of 64 KiB copies, each
@@ -343,6 +369,17 @@ Principles the plan follows:
 16. [ ] **Toolchain identity and other architectures** (L). Needs: nothing, lowest priority
    - [ ] Our own triple (`x86_64-sel4-musl`) instead of `x86_64-linux-musl` (programs see `__linux__`)
    - [ ] ARM64 / Raspberry Pi 4 (sDDF lacks an SD driver)
+   - [ ] The verification argument: today's kernel (x86_64, MCS, VT-x) is outside seL4's proofs.
+         Options to weigh: a multikernel (one single-core seL4 per core, its own memory and
+         devices, shared memory and IPIs between them; a "system" instance with fs, net, the
+         main posix_server and the VM, "worker" instances with a thin posix_server forwarding
+         what is global; nginx workers fit) instead of SMP; ARM, better covered by the proofs
+         (ARM_HYP too), with the x86-specific code behind an arch/ layer so development stays on
+         x86 with KVM. Hardware by the official lists of verified and Microkit platforms, not by
+         popularity: a board first (i.MX8M, e.g. MaaXBoard, or RK3399), then perhaps an open
+         laptop on the same SoC family (MNT Reform i.MX8MQ; Pinebook Pro RK3399). Not Apple
+         Silicon (undocumented) nor Snapdragon laptops (the firmware holds EL2: no VM). To check
+         first: which configurations are verified exactly (MCS on AArch64?)
 17. [ ] **Memory server and dynamic VM memory** (L). Needs: 6. One pool for the native system and
         the VMs instead of 768 MiB fixed for the VM; for a driver VM (item 19) and self-hosting
    - [ ] mem.c moves into its own component that hands pages to posix_server and the VMM (one
