@@ -140,9 +140,10 @@ Principles the plan follows:
    - [x] A build without the Linux VM (`make LINUX_VM=no`: a kernel without VT-x, no VMM,
          no /dev/linux; 9pd idles): 31 tests pass. GitHub Actions builds and tests it on every
          push (`.github/workflows/test.yml`)
-   - [ ] The first GitHub run builds but blk_driver faults at boot (works locally): the BAR and
-         virtio queue addresses fixed in meta.py vs the runner's QEMU/firmware (or its AMD CPU);
-         the serial log is the run's artefact
+   - [x] blk_driver faulted on GitHub (the disk read as 0 bytes): QEMU's -cpu host gave the
+         guest the AMD runner's 48 physical address bits, and the firmware put the 64-bit BARs
+         outside 0x7000000000. phys-bits=39 everywhere. The test job builds its own image (with
+         the cache), since pulling :latest raced with the image workflow
    - [ ] The full `make test` on a self-hosted runner with VT-x (the workflow's "full" job, by
          hand); a cache for the CI build (from scratch: ~11 minutes)
 3. [x] **File system robustness I** (M). Needs: nothing. The disk takes more and more data and
@@ -169,7 +170,11 @@ Principles the plan follows:
          groups not stopped, state T in /proc. Test jobtest
    - [ ] `fg`/`bg` in zsh and dash tried by hand on the console and a pty; `Ctrl-C` in the middle
          of dash's prompt (today processed with the next line)
-   - [ ] Asynchronous signals to processes that make no system calls (pure loops)
+   - [x] Asynchronous signals to processes that make no system calls (pure loops): the server
+         suspends the thread and, outside the runtime (its in_call counter is 0), puts its
+         registers on its stack and runs the runtime's entry point, which saves the FPU state,
+         delivers the signals and returns to where it was (POSIX_SYS_ASYNC, runtime/crt0.S).
+         Test asynctest
    - [ ] With it: the console login as an s6-rc longrun (getty-like); the dropbear ssh server as
          a longrun; sudo without `!use_pty`; /proc shows the tty name; tmux or screen
 5. [ ] **Memory limits** (S). Needs: nothing (fork copies, so counting pages is simple)
@@ -222,6 +227,9 @@ Principles the plan follows:
          unblocks the tests meanwhile (at the cost of power and heat)
    - [ ] The real fix, from what 005 shows: the kernel's timer reaching the deadlines reliably
          (the ticker's wake-up latency, the kernel's TSC calibration), or a C-state limit
+   - [ ] A smaller ISO (264 MB today: the VM ~105 MB, the ext2 image 96 MB uncompressed): no VM
+         in the live system (no network there yet), the ext2 image compressed or sized to its
+         contents (~50 MB in all)
    - [ ] Then: the whole battery to the QR codes; revisit the decisions marked "under QEMU"
    - [ ] Power off through \_S5 from the ACPI tables (today: halt, then the power button)
 9. [ ] **The real laptop, stage 2: daily development on it** (L). Needs: 8, 6 (memory for the

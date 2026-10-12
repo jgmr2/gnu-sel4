@@ -154,6 +154,7 @@ seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo
 
 void notified(microkit_channel ch)
 {
+    cur = NULL;           /* no process made this call: signals sent from here are never "to itself" */
     if (ch == BRIDGE_CH) bridge_notified();
     else if (ch == NET_CH) net_notified();
     else if (ch == NET_LEASE_CH) net_lease_changed();

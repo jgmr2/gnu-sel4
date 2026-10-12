@@ -106,6 +106,7 @@ struct proc {
     /* signals: the process's runtime keeps handlers and mask;
      * here only the disposition (to decide when sending) and what is pending */
     uint64_t sig_pending, sig_caught, sig_ignored;
+    uintptr_t async_ctl, async_entry;   /* POSIX_SYS_ASYNC: its in_call counter and entry point */
 
     /* job control: stopped by SIGSTOP/SIGTSTP/SIGTTIN/SIGTTOU until SIGCONT (proc.c) */
     bool stopped;

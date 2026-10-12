@@ -59,6 +59,10 @@ static long my_pid;
 /* Signals (process-local state)                                      */
 /* ------------------------------------------------------------------ */
 
+/* Non-zero while the program is in the runtime (a system call): posix_server then does not
+ * interrupt it for a signal, which comes with the call's reply (POSIX_SYS_ASYNC) */
+volatile long __posix_in_call;
+
 #define NSIG_ 65
 struct k_sigaction {                 /* Linux kernel layout (the one musl uses) */
     void (*handler)(int);
@@ -89,6 +93,10 @@ static int deliver_signals(void)
         sig_blocked |= ((uint64_t)a.mask[1] << 32 | a.mask[0]);
         if (!(a.flags & SA_NODEFER)) sig_blocked |= SIGBIT(sig);
         sig_blocked &= ~UNBLOCKABLE;
+        /* The handler is the program's code: outside the runtime as far as asynchronous signals
+         * go (and it may longjmp out, as dash's SIGINT handler does) */
+        long depth = __posix_in_call;
+        __posix_in_call = 0;
         if (a.flags & SA_SIGINFO) {
             siginfo_t si;
             memset(&si, 0, sizeof si);
@@ -97,6 +105,7 @@ static int deliver_signals(void)
         } else {
             a.handler(sig);
         }
+        __posix_in_call = depth;
         sig_blocked = saved;
     }
     return interrupt;
@@ -1058,13 +1067,36 @@ static long sys_prctl(long op, long a2)
 /* Dispatch                                                           */
 /* ------------------------------------------------------------------ */
 
+void __posix_async_entry(void);                   /* crt0.S */
+
 void __posix_runtime_init(void)
 {
     brk_cur = PROC_HEAP_BASE;
     mmap_cur = PROC_MMAP_BASE;
+    server_call(POSIX_SYS_ASYNC, (long)&__posix_in_call, (long)__posix_async_entry, 0, 0, 0, 0);
 }
 
+/* From __posix_async_entry: the server interrupted the program for a signal. Any call brings the
+ * pending signals with its reply; then their handlers run */
+void __posix_async_deliver(void)
+{
+    __posix_in_call = 1;
+    server_call(SYS_getpid, 0, 0, 0, 0, 0, 0);
+    deliver_signals();
+    __posix_in_call = 0;
+}
+
+static long sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6);
+
 long __sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6)
+{
+    __posix_in_call++;
+    long r = sel4_syscall(n, a1, a2, a3, a4, a5, a6);
+    __posix_in_call--;
+    return r;
+}
+
+static long sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6)
 {
     switch (n) {
     /* memory */

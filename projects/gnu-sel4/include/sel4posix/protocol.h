@@ -36,3 +36,17 @@
  * and make the same call again, whatever the call is (the runtime does it in every call). After
  * SIGCONT that gives the result of the call it stopped in, or runs it then */
 #define POSIX_STOPPED   (-0x7001)
+
+/* Asynchronous signals (a process in a loop that makes no calls): at start the runtime gives
+ * the server, with this call, the address of its in_call counter (MR1: non-zero while it is in a
+ * system call, when signals arrive with the reply anyway) and of its entry point (MR2). For a
+ * caught signal the server suspends the thread and, if in_call is 0, saves its registers on its
+ * stack (below the red zone) as a struct posix_async_frame, makes the entry point run with rsp
+ * at that frame, and resumes it; the entry point fetches the signals, runs the handlers and
+ * goes back to exactly where the program was (runtime/crt0.S) */
+#define POSIX_SYS_ASYNC 1000
+#ifndef __ASSEMBLER__
+struct posix_async_frame {
+    uint64_t rip, rsp, rflags, rax, rbx, rcx, rdx, rsi, rdi, rbp, r8, r9, r10, r11, r12, r13, r14, r15;
+};
+#endif

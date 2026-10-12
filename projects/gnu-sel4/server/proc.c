@@ -331,6 +331,7 @@ static long load_program(struct proc *p, const char *path, const char *args, uin
     vfs_close_cloexec(p);
     cred_exec(p, mode, fuid, fgid);   /* set-user-ID / set-group-ID programs */
     p->sig_caught = 0;                 /* handlers do not survive exec */
+    p->async_ctl = p->async_entry = 0; /* the new program registers its own (POSIX_SYS_ASYNC) */
     p->sig_pending &= p->sig_ignored ? ~p->sig_ignored : ~0ULL;
     set_name(p, abs);
 
@@ -382,6 +383,8 @@ static long sys_fork(uintptr_t brk_cur, uintptr_t mmap_cur, uintptr_t sp, uintpt
     memcpy(c->seg, cur->seg, sizeof c->seg);
     c->sig_caught = cur->sig_caught;
     c->sig_ignored = cur->sig_ignored;
+    c->async_ctl = cur->async_ctl;
+    c->async_entry = cur->async_entry;
     c->nice = cur->nice;
     cred_copy(c, cur);
     memcpy(c->name, cur->name, sizeof c->name);
@@ -565,6 +568,37 @@ bool proc_pgrp_orphaned(int pgid)
     return true;
 }
 
+/* A caught signal for a process that is running its own code, maybe in a loop with no calls:
+ * if it is outside the runtime, its registers go onto its stack and it runs the runtime's entry
+ * point, which fetches the signal and comes back (POSIX_SYS_ASYNC). Inside the runtime (or
+ * parked in a call) the signal comes with the reply, as always */
+static void async_signal(struct proc *p)
+{
+    if (!p->async_ctl || p->slot < 0 || p == cur || p->blocked || p->stopped) return;
+    seL4_CPtr tcb = slot_tcb(p->slot);
+    seL4_TCB_Suspend(tcb);
+    uint8_t *ctl = mem_has_page(p->slot, p->async_ctl) ? mem_page_ptr(p->slot, p->async_ctl) : NULL;
+    seL4_UserContext r;
+    if (!ctl || *(volatile long *)ctl != 0 ||
+        seL4_TCB_ReadRegisters(tcb, false, 0, sizeof r / sizeof(seL4_Word), &r)) {
+        seL4_TCB_Resume(tcb);
+        return;
+    }
+    struct posix_async_frame f = {
+        .rip = r.rip, .rsp = r.rsp, .rflags = r.rflags, .rax = r.rax, .rbx = r.rbx, .rcx = r.rcx,
+        .rdx = r.rdx, .rsi = r.rsi, .rdi = r.rdi, .rbp = r.rbp, .r8 = r.r8, .r9 = r.r9, .r10 = r.r10,
+        .r11 = r.r11, .r12 = r.r12, .r13 = r.r13, .r14 = r.r14, .r15 = r.r15,
+    };
+    uintptr_t frame = (r.rsp - 136 - sizeof f) & ~15UL;      /* below the red zone and rip's slot */
+    if (frame < PROC_STACK_BASE + 0x1000 || !mem_copy_in(p->slot, frame, &f, sizeof f)) {
+        seL4_TCB_Resume(tcb);
+        return;
+    }
+    r.rip = p->async_entry;
+    r.rsp = frame;
+    seL4_TCB_WriteRegisters(tcb, true, 0, sizeof r / sizeof(seL4_Word), &r);   /* and resume */
+}
+
 void proc_signal(struct proc *p, int sig)
 {
     if (!p || p->state != P_RUN || sig <= 0 || sig > 64) return;
@@ -576,6 +610,7 @@ void proc_signal(struct proc *p, int sig)
     if (p->sig_caught & bit) {
         p->sig_pending |= bit;
         proc_wake(p);                      /* if it was blocked, it retries and gets EINTR */
+        async_signal(p);                   /* if it is running its own code */
         return;
     }
     if (sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU) {   /* default action: stop */
@@ -828,7 +863,7 @@ bool proc_handles(long nr)
     case __NR_fork: case __NR_vfork: case __NR_execve: case __NR_wait4: case __NR_exit: case __NR_exit_group:
     case __NR_getpid: case __NR_getppid: case __NR_kill:
     case __NR_setpgid: case __NR_getpgid: case __NR_getpgrp: case __NR_setsid: case __NR_getsid:
-    case __NR_rt_sigaction: case __NR_rt_sigsuspend:
+    case __NR_rt_sigaction: case __NR_rt_sigsuspend: case POSIX_SYS_ASYNC:
     case __NR_getpriority: case __NR_setpriority:
     case __NR_setitimer: case __NR_getitimer:
     case __NR_munmap: case __NR_sysinfo: case __NR_reboot:
@@ -877,6 +912,10 @@ long proc_syscall(long nr, long a1, long a2, long a3, long a4, long a5)
     }
     case __NR_rt_sigsuspend:
         return cur->sig_pending ? -EINTR : POSIX_RETRY;
+    case POSIX_SYS_ASYNC:
+        cur->async_ctl = a1;
+        cur->async_entry = a2;
+        return 0;
     case __NR_getpriority:
     case __NR_setpriority:
         return sys_priority(nr == __NR_setpriority, a1, a2, a3);
