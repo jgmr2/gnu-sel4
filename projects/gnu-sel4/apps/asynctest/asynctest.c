@@ -6,6 +6,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -18,6 +19,17 @@ static int failures;
                                else { printf("  FAIL %s (errno %d: %s)\n", what, errno, strerror(errno)); failures++; } } while (0)
 
 static volatile sig_atomic_t got;
+static int devnull = -1;
+
+/* A handler that makes calls of its own, in the middle of the program's (dropbear's SIGCHLD
+ * handler writes to a pipe) */
+static void busy_handler(int sig)
+{
+    (void)sig;
+    char c = 1;
+    write(devnull, &c, 1);
+    getpid();
+}
 static volatile double sink;
 
 static void handler(int sig)
@@ -63,6 +75,41 @@ int main(void)
     int ok = loop_until_signal();              /* in this process: the timer's SIGALRM */
     CHECK(got == SIGALRM, "setitimer: SIGALRM interrupts a loop of this process");
     CHECK(ok, "and its registers are intact");
+
+    /* 512 KiB through a pipe that fills up (the writes wait with their data in the shared
+     * buffer) while the writer takes signal after signal: not one byte changes */
+    devnull = open("/dev/null", O_WRONLY);
+    int pfd[2];
+    pipe(pfd);
+    c = fork();
+    if (c == 0) {
+        signal(SIGUSR1, busy_handler);
+        close(pfd[0]);
+        static unsigned char chunk[8192];
+        for (int k = 0; k < 64; k++) {
+            for (int b = 0; b < (int)sizeof chunk; b++) chunk[b] = (unsigned char)(k * 7 + b * 13 + 5);
+            for (size_t off = 0; off < sizeof chunk; ) {
+                ssize_t w = write(pfd[1], chunk + off, sizeof chunk - off);
+                if (w > 0) off += w;
+            }
+        }
+        _exit(0);
+    }
+    close(pfd[1]);
+    static unsigned char got_data[8192 * 64];
+    size_t total = 0;
+    int sent = 0;
+    while (total < sizeof got_data) {
+        ssize_t r = read(pfd[0], got_data + total, sizeof got_data - total < 1024 ? sizeof got_data - total : 1024);
+        if (r <= 0) break;
+        total += r;
+        if (sent < 400) { kill(c, SIGUSR1); sent++; }
+    }
+    int same = total == sizeof got_data;
+    for (size_t b = 0; same && b < total; b++)
+        same = got_data[b] == (unsigned char)((b / 8192) * 7 + (b % 8192) * 13 + 5);
+    waitpid(c, &status, 0);
+    CHECK(same, "a handler's own calls do not change the call it interrupted (512 KiB, 400 signals)");
 
     printf("== %s ==\n", failures ? "THERE ARE FAILURES" : "all good");
     return failures ? 1 : 0;

@@ -75,7 +75,7 @@ docker compose run --rm --service-ports run   # boot it: screen over VNC, serial
 The `run` service shows the screen over VNC: open `localhost:5900` with any VNC viewer
 (`vncviewer localhost:5900`, Remmina, TigerVNC...). The serial console and the QEMU monitor stay in
 the terminal (`Ctrl-a x` quits). The usual ports are forwarded to the host: 8080 -> VM:80,
-2222 -> VM:22, 8090 -> native GNU/seL4:8080. With QEMU installed on the host,
+2222 -> VM:22, 8090 -> native GNU/seL4:8080, 2223 -> its ssh server (`ssh -p 2223 user@localhost`). With QEMU installed on the host,
 `cd projects/gnu-sel4 && make run` opens a window instead.
 
 **With the dependencies on the host** (what development uses; same result):

@@ -357,7 +357,7 @@ DATA_TREES := $(POSIX)/rootfs/etc/s6-rc:/etc/s6-rc zsh/inst/usr/share/zsh:/usr/s
 # Linux VM commands available as native ones (bridge, like WSL interop)
 LINUX_CMDS := docker
 LINKS := sh:dash vi:vim chpasswd:passwd $(foreach c,$(LINUX_CMDS),$(c):linux) \
-	 ssh:dropbearmulti dbclient:dropbearmulti scp:dropbearmulti dropbearkey:dropbearmulti
+	 ssh:dropbearmulti dbclient:dropbearmulti scp:dropbearmulti dropbearkey:dropbearmulti dropbear:dropbearmulti
 # terminfo: only the terminals in use (the full database has ~1900)
 TERMINFO := x/xterm x/xterm-256color x/xterm-color v/vt100 v/vt102 v/vt220 l/linux s/screen s/screen-256color d/dumb a/ansi
 

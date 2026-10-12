@@ -76,6 +76,29 @@ static uint64_t sig_blocked, sig_pending;
 #define SIGBIT(s) (1ULL << ((s) - 1))
 #define UNBLOCKABLE (SIGBIT(SIGKILL) | SIGBIT(SIGSTOP))
 
+/* Calls a handler. It runs in the middle of a call (the reply brought the signal): the shared
+ * buffer and the message registers still hold that call's data (what write() is sending, what
+ * read() got, an ioctl's results), and the handler's own calls would overwrite them. So they are
+ * saved and put back around it (64 KiB, on this stack). If the handler longjmps out, the call is
+ * abandoned anyway */
+static void __attribute__((noinline)) call_handler(const struct k_sigaction *a, int sig)
+{
+    char buf[POSIX_BUF_SIZE];
+    seL4_Word mrs[POSIX_NUM_MRS];
+    memcpy(buf, (void *)PROC_BUF_BASE, sizeof buf);
+    for (int i = 0; i < POSIX_NUM_MRS; i++) mrs[i] = mr_get(i);
+    if (a->flags & SA_SIGINFO) {
+        siginfo_t si;
+        memset(&si, 0, sizeof si);
+        si.si_signo = sig;
+        ((void (*)(int, siginfo_t *, void *))a->handler)(sig, &si, NULL);
+    } else {
+        a->handler(sig);
+    }
+    memcpy((void *)PROC_BUF_BASE, buf, sizeof buf);
+    for (int i = 0; i < POSIX_NUM_MRS; i++) mr_set(i, mrs[i]);
+}
+
 /* Runs the handlers of pending, unblocked signals.
  * Returns 1 if any of them did not ask for SA_RESTART (the syscall must fail with EINTR). */
 static int deliver_signals(void)
@@ -97,14 +120,7 @@ static int deliver_signals(void)
          * go (and it may longjmp out, as dash's SIGINT handler does) */
         long depth = __posix_in_call;
         __posix_in_call = 0;
-        if (a.flags & SA_SIGINFO) {
-            siginfo_t si;
-            memset(&si, 0, sizeof si);
-            si.si_signo = sig;
-            ((void (*)(int, siginfo_t *, void *))a.handler)(sig, &si, NULL);
-        } else {
-            a.handler(sig);
-        }
+        call_handler(&a, sig);
         __posix_in_call = depth;
         sig_blocked = saved;
     }

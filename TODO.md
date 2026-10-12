@@ -180,11 +180,14 @@ Principles the plan follows:
    - [x] sudo with use_pty (its default; `!use_pty` gone from new disks): the command runs on a
          pty of its own (test sudo-pty). /etc/profile runs resize only on the console (on a pty it
          ate what was typed ahead). /proc shows the controlling terminal
-   - [ ] The dropbear ssh server as an s6-rc longrun (host keys at first start, a host port for
-         the native system); tmux or screen
+   - [x] The dropbear ssh server as an s6-rc longrun (sshd: host keys made at first use, in
+         /etc/dropbear); the host's port 2223 reaches it (make run, docker compose). Test sshd
+   - [ ] tmux or screen
 5. [ ] **Memory limits** (S). Needs: nothing (fork copies, so counting pages is simple)
    - [ ] A page budget per process and per user (like RLIMIT_AS): today one process can take
          the whole 768 MiB pool. Shared (memfd) pages counted once
+   - [ ] More than 64 processes (PROC_SLOTS): the services already take about ten (s6, 9pd,
+         sshd); RLIMIT_NPROC per user
 6. [ ] **Memory server: the first piece out of posix_server** (M–L). Needs: 5 (its budgets)
    - [ ] mem.c moves into its own component that hands pages to posix_server and the VMM (one
          pool, the budgets of item 5); Microkit: a capability to the VM's EPT

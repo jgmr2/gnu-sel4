@@ -1,6 +1,6 @@
 #!/bin/sh
-# dropbear's ssh client for GNU/seL4: dbclient (ssh), dropbearkey and scp, in a single
-# multi-call binary. The server (dropbear) needs pseudo-terminals: not yet.
+# dropbear for GNU/seL4: the ssh server (dropbear) and client (dbclient = ssh), dropbearkey and
+# scp, in a single multi-call binary.
 #   usage: build-dropbear.sh <source> <build-dir> <sysroot>     Output: <dir>/dropbearmulti
 #
 # SPDX-License-Identifier: BSD-2-Clause
@@ -15,6 +15,6 @@ if port_prepare "$SRC" "$BUILD"; then
     --disable-wtmp --disable-wtmpx --disable-pututline --disable-pututxline --disable-pam \
     >configure.log 2>&1 || { tail -30 configure.log; exit 1; }
 fi
-make -j"$(nproc)" PROGRAMS="dbclient dropbearkey scp" MULTI=1 >make.log 2>&1 || { grep -E "error|Error" make.log | head -30; exit 1; }
+make -j"$(nproc)" PROGRAMS="dropbear dbclient dropbearkey scp" MULTI=1 >make.log 2>&1 || { grep -E "error|Error" make.log | head -30; exit 1; }
 echo "dropbear: $(du -h dropbearmulti | cut -f1)"
 port_done

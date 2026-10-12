@@ -120,10 +120,11 @@ check nice        sh -c 'loop() { i=0; while [ $i -lt 3000 ]; do i=$((i+1)); don
                          [ $low -le $((base * 2 + 5)) ] || exit 1
                          out=$(printf "nice -n -5 true\nexit\n" | login -f user 2>&1)
                          echo "$out" | grep -q "Permission denied" || { echo "user lowered its nice: $out"; exit 1; }'
-check many-procs  sh -c 'i=0; while [ $i -lt 50 ]; do sleep 3 & i=$((i+1)); done
-                         k=0; while n=$(ps -e | grep -c " sleep"); [ "$n" -lt 50 ] && [ $k -lt 20 ]; do sleep 0.1; k=$((k+1)); done
-                         echo "INFO 50 background processes started, $n running"
-                         wait; [ "$n" -ge 50 ]'
+# 40: the system has 64 process slots (PROC_SLOTS), and the services take some (s6, 9pd, sshd...)
+check many-procs  sh -c 'i=0; while [ $i -lt 40 ]; do sleep 3 & i=$((i+1)); done
+                         k=0; while n=$(ps -e | grep -c " sleep"); [ "$n" -lt 40 ] && [ $k -lt 20 ]; do sleep 0.1; k=$((k+1)); done
+                         echo "INFO 40 background processes started, $n running"
+                         wait; [ "$n" -ge 40 ]'
 check proc-files  sh -c 'grep -q "\[stack\]" /proc/self/maps || { echo "no stack in maps"; exit 1; }
                          sh -c "exec 3</etc/passwd; readlink /proc/\$\$/fd/3" | grep -qx /etc/passwd || { echo "fd/3 is not /etc/passwd"; exit 1; }
                          set -- $(cat /proc/loadavg); case $1 in *.*) ;; *) exit 1;; esac'
@@ -158,6 +159,11 @@ check e2fsprogs   sh -c 'dumpe2fs -h /dev/root 2>/dev/null | grep -q "^Filesyste
 check remount     sh -c 'printf x | dd of=/dev/root bs=1 count=1 conv=notrunc 2>/dev/null && { echo "a raw write went through while read-write"; exit 1; }
                          mount -o remount,ro / && touch /tmp/ro-test 2>/dev/null && { echo "wrote while read-only"; mount -o remount,rw /; exit 1; }
                          mount -o remount,rw / && touch /tmp/ro-test && rm /tmp/ro-test'
+check sshd        sh -c 'rm -f /tmp/k && dropbearkey -t ed25519 -f /tmp/k >/dev/null && mkdir -p /root/.ssh && chmod 700 /root/.ssh &&
+                         dropbearkey -y -f /tmp/k | grep "^ssh-" > /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
+                         i=0; until s6-svstat -o up /run/service/sshd 2>/dev/null | grep -q true || [ $i -gt 50 ]; do sleep 0.1; i=$((i+1)); done
+                         out=$(timeout 30 ssh -y -i /tmp/k root@127.0.0.1 "echo hello-\$((6*7)); id -u" </dev/null 2>&1)
+                         echo "$out" | grep -q "^hello-42" && echo "$out" | grep -qx 0 || { echo "$out" | tail -5; exit 1; }'
 check s6          sh -c 'svstat() { s6-svstat -p /run/service/9pd; }; i=0; while [ "$(svstat)" -le 0 ] 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
                          p1=$(svstat); kill "$p1"; i=0; while { p2=$(svstat); [ "$p2" = "$p1" ] || [ "$p2" -le 0 ]; } && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
                          echo "9pd: $p1 -> $p2"; [ "$p1" -gt 0 ] && [ "$p2" -gt 0 ] && [ "$p1" != "$p2" ] || exit 1

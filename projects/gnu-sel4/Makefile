@@ -49,8 +49,8 @@ export POSIX           := $(abspath .)
 
 IMAGE := $(BUILD_DIR)/loader.img
 # Host port forwards: host:8080 -> VM:80, host:2222 -> VM:22,
-# host:8090 -> native GNU/seL4 (FreeBSD stack, 10.0.2.16):8080
-HOSTFWD ?= hostfwd=tcp::8080-:80,hostfwd=tcp::2222-:22,hostfwd=tcp::8090-10.0.2.16:8080
+# host:8090 -> native GNU/seL4 (FreeBSD stack, 10.0.2.16):8080, host:2223 -> its ssh (sshd service)
+HOSTFWD ?= hostfwd=tcp::8080-:80,hostfwd=tcp::2222-:22,hostfwd=tcp::8090-10.0.2.16:8080,hostfwd=tcp::2223-10.0.2.16:22
 
 all: $(BUILD_DIR)/Makefile
 	$(MAKE) -C $(BUILD_DIR) all

@@ -1,0 +1,9 @@
+#!/bin/sh
+# sshd: dropbear's ssh server on port 22 of the native system (QEMU forwards the host's 2223
+# to it). A longrun: supervised by s6, started again if it dies. -R: the host keys are made the
+# first time they are needed (/etc/dropbear); -F: in the foreground (for s6). Built without
+# syslog, it logs to stderr (s6-svscan's log, /tmp/s6-svscan.log).
+#
+# SPDX-License-Identifier: BSD-2-Clause
+mkdir -p /etc/dropbear
+exec /bin/dropbear -F -R -p 22 </dev/null 2>&1
