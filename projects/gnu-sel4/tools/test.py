@@ -80,10 +80,11 @@ def main():
 
     qemu = ["qemu-system-x86_64", "-machine", "q35", "-accel", "kvm",
             # VT-x for the Linux VM, unless the system was built without it (make LINUX_VM=no).
-            # phys-bits=39 whatever the host: the firmware's window for 64-bit BARs depends on it,
-            # and meta.py expects the disk and network BARs at 0x7000000000 (a 48-bit AMD host,
-            # such as GitHub's runners, puts them elsewhere: the disk then reads as 0 bytes)
-            "-cpu", "host,phys-bits=39,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave%s,+vme,+invtsc"
+            # 39 physical address bits whatever the host (host-phys-bits=off: -cpu host copies the
+            # host's otherwise, and phys-bits alone is ignored): the firmware's window for 64-bit
+            # BARs depends on them, and meta.py expects the disk and network BARs at 0x7000000000
+            # (with 48, as on GitHub's AMD runners, they go elsewhere: the disk reads as 0 bytes)
+            "-cpu", "host,host-phys-bits=off,phys-bits=39,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave%s,+vme,+invtsc"
                     % ("" if os.environ.get("LINUX_VM") == "no" else ",+vmx"),
             "-kernel", os.path.join(BUILD, "sel4_32.elf"), "-initrd", os.path.join(BUILD, "loader.img"),
             "-m", "6G", "-display", "none", "-vga", "none", "-device", "bochs-display,addr=0x5",
