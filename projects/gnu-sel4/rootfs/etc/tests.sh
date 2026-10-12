@@ -211,7 +211,9 @@ check vm-docker   sh -c 'linux sh -c "grep -q \" / ext4 \" /proc/mounts" || { ec
                              sleep 0.5; i=$((i+1)); [ $i -le 60 ] || { echo "dockerd does not answer: $(linux tail -5 /var/log/dockerd.log)"; exit 1; }; done
                          echo "INFO docker $v"
                          case "$v" in *overlay2*) ;; *) echo "storage driver: $v"; exit 1;; esac
-                         linux test -d /var/lib/docker/overlay2 || { echo "no /var/lib/docker/overlay2"; exit 1; }'
+                         linux test -d /var/lib/docker/overlay2 || { echo "no /var/lib/docker/overlay2"; exit 1; }
+                         out=$(printf "docker info --format DOCKER-AS-USER-OK </dev/null\nexit\n" | login -f user 2>&1)
+                         echo "$out" | grep -q DOCKER-AS-USER-OK || { echo "a user cannot use docker (the docker group, gid 999): $(echo "$out" | tail -2)"; exit 1; }'
 case $mode in *" slow "*)
 TEST_TIMEOUT=300
 check bigdisk     sh -c 'before=$(df -k / | tail -1 | xargs echo | cut -d" " -f4); echo "free: $before KiB"

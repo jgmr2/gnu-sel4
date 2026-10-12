@@ -118,6 +118,7 @@ cp "$ROOT"/etc/apk/keys/*.pub "$SEED/etc/apk/keys/"
 apk add $OFFLINE --root "$SEED" --initdb $(pinned dockerroot/) >/dev/null
 printf 'https://dl-cdn.alpinelinux.org/alpine/%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/%s/community\n' \
     "$(cat "$ROOT/etc/alpine-branch")" "$(cat "$ROOT/etc/alpine-branch")" > "$SEED/etc/apk/repositories"
+sed -i 's/^docker:x:[0-9]*:/docker:x:999:/' "$SEED/etc/group"      # as /init does (the agent's gid)
 find "$SEED" -exec touch -h -d "@${SOURCE_DATE_EPOCH:-0}" {} +
 rm -f "$OUT/vm-seed.ext4"
 E2FSPROGS_FAKE_TIME=${SOURCE_DATE_EPOCH:-0} mke2fs -q -t ext4 -L gnu-sel4-vm -U clear -E hash_seed=00000000-0000-0000-0000-000000000000 \

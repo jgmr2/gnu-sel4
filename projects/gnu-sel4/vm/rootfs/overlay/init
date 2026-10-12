@@ -92,6 +92,10 @@ mkdir -p $R/lib/modules $R/proc $R/sys $R/dev $R/run $R/tmp
 cp -a /lib/modules/$kver $R/lib/modules/
 for f in etc/passwd etc/group etc/shadow; do [ -e $R/$f ] && rm -f /ours/$f; done
 cp -a /ours/. $R/
+# The docker group is gid 999: the agent gives it to native users so `docker` works without sudo
+# (Alpine's package makes it with whatever system gid is free)
+if grep -q '^docker:' $R/etc/group; then sed -i 's/^docker:x:[0-9]*:/docker:x:999:/' $R/etc/group
+else echo 'docker:x:999:' >> $R/etc/group; fi
 cat /run-boot.log >> $R/var/log/boot-stage1.log 2>/dev/null
 umount /sys /proc 2>/dev/null
 mount --move /dev $R/dev

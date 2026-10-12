@@ -56,7 +56,12 @@ int main(int argc, char **argv)
             fflush(stdout);
             run(20, (char *const[]){ "linux", "/etc/rc.shutdown", NULL });
         }
+        /* Everyone else goes, sudo and the login shell among them: when the session leader dies
+         * its terminal's foreground group (this one) gets SIGHUP, and with sudo's use_pty the
+         * master side closes. Neither may stop us before reboot() */
         signal(SIGTERM, SIG_IGN);
+        signal(SIGHUP, SIG_IGN);
+        signal(SIGPIPE, SIG_IGN);
         kill(-1, SIGTERM);
         sleep(1);
         kill(-1, SIGKILL);
