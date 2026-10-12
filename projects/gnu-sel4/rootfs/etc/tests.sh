@@ -103,6 +103,20 @@ check sudo-pty    sh -c 'cp /etc/sudoers /tmp/sudoers.orig && sed "/use_pty/d" /
                          cat /tmp/sudoers.orig > /etc/sudoers
                          n=$(echo "$out" | grep -o "^/dev/pts/[0-9]*" | sort -u | wc -l)
                          [ "$n" = 2 ] || { echo "expected the login pty and another one for sudo:"; echo "$out" | tail -8; exit 1; }'
+# GNU screen: a detached session runs a shell on a pty of its own (packet mode, TIOCPKT); commands
+# reach it through its socket (-X stuff), what its window shows comes back (hardcopy), quit ends it
+check screen      sh -c 'export SCREENDIR=/tmp/screens; rm -rf $SCREENDIR /tmp/scr.*; mkdir -p -m 700 $SCREENDIR
+                         screen -d -m -S t sh || { echo "screen -d -m: exit $?"; exit 1; }
+                         i=0; until screen -ls | grep -q "[.]t"; do sleep 0.1; i=$((i+1)); [ $i -le 50 ] || { echo "no session"; exit 1; }; done
+                         screen -S t -X stuff "echo screen-ok-\$((6*7)) > /tmp/scr.out; tty > /tmp/scr.tty
+"
+                         i=0; until [ -s /tmp/scr.tty ]; do sleep 0.1; i=$((i+1)); [ $i -le 50 ] || { echo "the command did not run"; exit 1; }; done
+                         grep -q screen-ok-42 /tmp/scr.out || { echo "wrong output: $(cat /tmp/scr.out)"; exit 1; }
+                         grep -q "^/dev/pts/" /tmp/scr.tty || { echo "not on a pty: $(cat /tmp/scr.tty)"; exit 1; }
+                         screen -S t -X hardcopy /tmp/scr.hc
+                         i=0; until grep -q screen-ok /tmp/scr.hc 2>/dev/null; do sleep 0.1; i=$((i+1)); [ $i -le 50 ] || { echo "hardcopy: $(head -3 /tmp/scr.hc 2>&1)"; exit 1; }; done
+                         screen -S t -X quit
+                         i=0; while screen -ls | grep -q "[.]t"; do sleep 0.1; i=$((i+1)); [ $i -le 50 ] || { echo "still there after quit"; exit 1; }; done'
 check lazy-exec   sh -c 'cp /bin/dash /tmp/d1 && cp /bin/dash /tmp/d2 || exit 1
                          /tmp/d1 -c "sleep 1; case x in x) echo alive1;; esac; ulimit -a >/dev/null; exit 3" > /tmp/d1.out & p1=$!
                          /tmp/d2 -c "sleep 1; case x in x) echo alive2;; esac; ulimit -a >/dev/null; exit 4" > /tmp/d2.out & p2=$!

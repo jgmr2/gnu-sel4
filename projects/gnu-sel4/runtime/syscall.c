@@ -352,6 +352,7 @@ static long sys_ioctl(long fd, long req, void *arg)
         if (r >= 0) *(int *)arg = server_result(1);
         return r;
     case TIOCSPTLCK:                              /* unlockpt(): the int, by value */
+    case TIOCPKT:                                 /* packet mode on a pty's master (screen) */
         return server_call(SYS_ioctl, fd, req, *(int *)arg, 0, 0, 0);
     default:
         return server_call(SYS_ioctl, fd, req, (long)arg, 0, 0, 0);

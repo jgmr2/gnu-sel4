@@ -909,6 +909,7 @@ static long path_op(long nr, long dirfd, long a, long b)
         return cred_may_real(cur, mode, last_uid, last_gid, a & 7) ? 0 : -EACCES;
     }
     case __NR_chmod: {
+        if (dev_type(abs) != OF_FREE) return 0;   /* devices (a pty's slave: screen): as chown */
         long ino = fs_lookup(abs, true, NULL, NULL);
         if (ino < 0) return ino;
         if ((r = may_own(last_uid))) return r;

@@ -61,6 +61,11 @@ endif
 #                 For machines without VT-x for seL4, such as CI runners (make test LINUX_VM=no)
 LINUX_VM ?= yes
 export LINUX_VM
+# make TRACE=name: posix_server prints every call of the processes called name on the console
+# (debugging; touch server/posix_server.c when switching it on or off)
+ifdef TRACE
+SERVER_FLAGS += -DTRACE_COMM='"$(TRACE)"'
+endif
 ifeq ($(LINUX_VM),yes)
 VM_ELFS := client_vmm.elf network_copy.elf
 else ifeq ($(LINUX_VM),no)

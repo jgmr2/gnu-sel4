@@ -147,6 +147,9 @@ Principles the plan follows:
          even with 39 bits (the e820 map shows they took effect): something else of AMD/KVM there
          (the IOMMU? the PCI config access?). The test step may fail meanwhile (continue-on-error);
          the build must pass. Next: the serial log artefact with sDDF's PCI scan debug output
+   - [x] The Linux VM stays out of GitHub's runners (decided October 2026): they build and test
+         with LINUX_VM=no; what fails there (the disk reads 0 bytes on AMD) is our own disk, not
+         the VM
    - [ ] The full `make test` on a self-hosted runner with VT-x (the workflow's "full" job, by
          hand); a cache for the CI build (from scratch: ~11 minutes)
    - [ ] How much of POSIX: the Open POSIX Test Suite (in LTP) for a number per area. Expected
@@ -164,7 +167,7 @@ Principles the plan follows:
          the inodes, bitmaps and blocks that point to them. Measured: QEMU killed in the middle of
          ~600 file writes leaves only lazy free counts and one leaked block, which e2fsck -p
          repairs on its own
-4. [~] **Terminals, sessions and job control** (M). Needs: nothing. What makes daily use and ssh real
+4. [x] **Terminals, sessions and job control** (M). Needs: nothing. What makes daily use and ssh real
    - [x] Pseudo-terminals (server/tty.c: the console and 16 ptys, each with its own line
          discipline): `/dev/ptmx`, `/dev/pts/N`, openpty/forkpty, unlockpt, TIOCSWINSZ, ttyname;
          tcdrain/tcflush (TCSBRK, TCFLSH). Test ptytest
@@ -189,10 +192,14 @@ Principles the plan follows:
          ate what was typed ahead). /proc shows the controlling terminal
    - [x] The dropbear ssh server as an s6-rc longrun (sshd: host keys made at first use, in
          /etc/dropbear); the host's port 2223 reaches it (make run, docker compose). Test sshd
-   - [~] GNU screen 5.0.2 ported (/bin/screen; getdtablesize() was INT_MAX before item 5's
-         limits, and its closeallfiles() polled 2 billion descriptors), but a session does not
-         start: `screen -D -m cmd` returns 0 at once without its socket or window. Skipped for
-         now; tmux needs libevent
+   - [x] GNU screen 5.0.2 (/bin/screen; getdtablesize() was INT_MAX before item 5's limits, and
+         its closeallfiles() polled 2 billion descriptors). Its sessions did not start: it puts
+         the pty's master in packet mode (TIOCPKT, now in tty.c: a status byte before each read,
+         flushes of the slave told alone) and chmods the slave (chmod of a device is accepted,
+         as chown was); without either it wrote its error to /dev/null and exited 0. Test screen
+         (a detached session, -X stuff, hardcopy, quit). Found with `make TRACE=name`: posix_server
+         keeps every call of the processes called name, with arguments and result, in a ring
+         that /proc/trace shows (the console loses lines). tmux needs libevent
 5. [x] **Memory limits** (S). Needs: nothing (fork copies, so counting pages is simple)
    - [x] Resource limits kept and enforced by posix_server (getrlimit, setrlimit, prlimit64;
          inherited by fork): RLIMIT_AS is a process's page budget (a page beyond it: killed,
@@ -210,6 +217,13 @@ Principles the plan follows:
          (server/microkit_main.c) with 8, and wait masks are 128 bits. many-procs runs 100
          processes at once; RLIMIT_NPROC's default is 96
 7. [ ] **Linux VM integration II** (M–L). Needs: 1 (credentials across the bridge)
+   - [ ] A minimal VM image, Docker installed with the system (José's idea, October 2026): the
+         VM's initramfs is 264 MB unpacked (92 MB packed), 212 MB of it Docker's static binaries
+         and 46 MB kernel modules. Boot image: the kernel, busybox, the agent and only the modules
+         it needs; Docker goes into the VM's own partition on its first boot after the install,
+         the exact version deps.lock pins, checked by its sha256 (downloaded; a development disk
+         is seeded from fetch-deps.sh's copy, no network). The live ISO, 263 MB, gets smaller by
+         most of that
    - [ ] Latency: a 9P round trip costs ~4.5 ms under QEMU (several VM exits per message:
          queue kick, interrupt status read, EOI). MSI-X and VIRTIO_F_EVENT_IDX in libvmm
    - [ ] AF_VSOCK for native programs (sockets between native and VM processes)

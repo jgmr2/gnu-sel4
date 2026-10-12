@@ -12,6 +12,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <os/sddf.h>
+#include <string.h>
+#include <sddf/util/printf.h>
 #include "server.h"
 #include "syscall_nr.h"       /* Linux x86_64 __NR_* (generated from musl) */
 #include "syscall_names.h"    /* names for the messages (generated from musl) */
@@ -51,6 +53,39 @@ static void report_unimplemented(long n)
         tty_puts(")");
     }
     tty_puts(" not implemented -> ENOSYS\n");
+}
+
+/* make TRACE=name: each call of a process called name, with its first four arguments, in a
+ * ring of the last TRACE_SIZE bytes that /proc/trace shows (the console loses lines) */
+#define TRACE_SIZE 0x40000
+#ifdef TRACE_COMM
+static char trace_ring[TRACE_SIZE];
+static size_t trace_pos;               /* bytes written so far (the ring holds the last ones) */
+
+static void trace_call(long n, long a1, long a2, long a3, long a4, long r)
+{
+    if (strcmp(cur->name, TRACE_COMM)) return;
+    char line[256], num[16];
+    const char *nm = n >= 0 && n < (long)(sizeof(syscall_names) / sizeof(*syscall_names)) ? syscall_names[n] : NULL;
+    if (!nm) { sddf_snprintf(num, sizeof num, "%ld", n); nm = num; }
+    int k = sddf_snprintf(line, sizeof line, "%s %d: %s(0x%lx, 0x%lx, 0x%lx, 0x%lx) = %ld\n",
+                          cur->name, cur->pid, nm, a1, a2, a3, a4, r);
+    if (k > (int)sizeof line - 1) k = sizeof line - 1;
+    for (int i = 0; i < k; i++) trace_ring[trace_pos++ % TRACE_SIZE] = line[i];
+}
+#endif
+
+size_t trace_text(char *dst, size_t max)
+{
+#ifdef TRACE_COMM
+    size_t have = trace_pos < TRACE_SIZE ? trace_pos : TRACE_SIZE, n = have < max ? have : max;
+    size_t from = trace_pos - n;       /* the newest n bytes */
+    for (size_t i = 0; i < n; i++) dst[i] = trace_ring[(from + i) % TRACE_SIZE];
+    return n;
+#else
+    (void)dst; (void)max;
+    return 0;
+#endif
 }
 
 microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
@@ -140,6 +175,9 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
             r = POSIX_STOPPED;                /* (a call that would block simply runs again) */
         }
     }
+#ifdef TRACE_COMM
+    trace_call(n, a1, a2, a3, a4, r);
+#endif
     cur->blocked = r == POSIX_RETRY;          /* for /proc: state S (sleeping) */
     microkit_mr_set(0, r);
     microkit_mr_set(POSIX_MR_DIRECT, reply_direct && r > 0 ? POSIX_DIRECT : 0);

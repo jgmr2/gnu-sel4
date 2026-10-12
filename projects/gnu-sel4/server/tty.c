@@ -35,6 +35,7 @@
 #define TIOCGWINSZ 0x5413
 #define TIOCSWINSZ 0x5414
 #define FIONREAD_  0x541B
+#define TIOCPKT    0x5420
 #define TIOCNOTTY  0x5422
 #define TIOCGSID   0x5429
 #define TIOCGPTN   0x80045430
@@ -100,6 +101,10 @@ struct tty {
     char out[PTY_BUF];
     uint32_t out_head, out_len;
     waitmask_t m_readers, m_writers;
+    /* Packet mode (TIOCPKT, which screen uses): each read of the master starts with a status
+     * byte, 0 before data; a flush of the slave is told alone (TIOCPKT_FLUSHREAD/WRITE) */
+    bool pkt;
+    uint8_t pkt_status;
 };
 static struct tty ttys[NTTY];
 
@@ -426,19 +431,31 @@ long pty_master_read(int i, size_t len)
 {
     struct tty *t = tty_at(i);
     if (!t) return -EIO;
+    char *out = (char *)client_buf;
+    if (t->pkt && t->pkt_status) {                       /* a status packet: one byte */
+        if (!len) return 0;
+        out[0] = t->pkt_status;
+        t->pkt_status = 0;
+        return 1;
+    }
     if (!t->out_len) {
         if (t->slave_opens <= 0 && !t->locked) return -EIO;   /* as Linux: the slave was closed */
         t->m_readers |= WAIT_BIT(cur);
         return POSIX_RETRY;
     }
+    if (t->pkt) {                                        /* TIOCPKT_DATA, then the data */
+        if (len < 2) return -EINVAL;
+        out[0] = 0;
+        out++;
+        len--;
+    }
     size_t n = len < t->out_len ? len : t->out_len;
-    if (n > POSIX_BUF_SIZE) n = POSIX_BUF_SIZE;
-    char *out = (char *)client_buf;
+    if (n > POSIX_BUF_SIZE - 1) n = POSIX_BUF_SIZE - 1;
     for (size_t k = 0; k < n; k++) out[k] = t->out[(t->out_head + k) % PTY_BUF];
     t->out_head = (t->out_head + n) % PTY_BUF;
     t->out_len -= n;
     if (t->writers) { proc_wake_mask(t->writers); t->writers = 0; }   /* the slave may write again */
-    return n;
+    return n + t->pkt;
 }
 
 long pty_master_write(int i, const char *data, size_t len)
@@ -460,7 +477,7 @@ int pty_master_poll(int i, bool want_in, bool want_out, bool wait)
     struct tty *t = tty_at(i);
     if (!t) return 8;                                       /* POLLERR */
     int ready = 0;
-    if (want_in && (t->out_len || (t->slave_opens <= 0 && !t->locked))) ready |= 1;
+    if (want_in && (t->out_len || (t->pkt && t->pkt_status) || (t->slave_opens <= 0 && !t->locked))) ready |= 1;
     if (want_out && t->line_len < LINE_MAX_ && out_room(t, 3)) ready |= 4;
     if (!t->out_len && t->slave_opens <= 0 && !t->locked) ready |= 16;   /* POLLHUP */
     if (!ready && wait) {
@@ -489,6 +506,11 @@ long tty_ioctl(int i, bool master, long req, long arg)
     case TIOCSPTLCK:
         if (!master) return -ENOTTY;
         t->locked = arg != 0;
+        return 0;
+    case TIOCPKT:
+        if (!master) return -ENOTTY;
+        t->pkt = arg != 0;
+        t->pkt_status = 0;
         return 0;
     case TIOCGPGRP:
         microkit_mr_set(1, t->fg_pgrp);
@@ -539,6 +561,10 @@ long tty_ioctl(int i, bool master, long req, long arg)
     case TCFLSH:                       /* tcflush(): 0 = input, 1 = output, 2 = both */
         if (arg == 0 || arg == 2) t->line_len = t->ready_len = 0;
         if ((arg == 1 || arg == 2) && t->pty) t->out_len = 0;
+        if (t->pkt && !master && arg >= 0 && arg <= 2) {    /* told to the master's reader */
+            t->pkt_status |= arg == 0 ? 1 : arg == 1 ? 2 : 3;     /* TIOCPKT_FLUSHREAD, _FLUSHWRITE */
+            if (t->m_readers) { proc_wake_mask(t->m_readers); t->m_readers = 0; }
+        }
         return 0;
     case TCGETS:
         copy_bytes((void *)client_buf, &t->tio, sizeof(t->tio));
