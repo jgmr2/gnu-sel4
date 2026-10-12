@@ -1,7 +1,7 @@
 # GNU/seL4: native system (zsh, coreutils, FreeBSD networking...) + Linux VM with Docker, on seL4
 #
 #   make microkit-tool            (host)   Microkit tool with our patch (Rust in Docker)
-#   make vm-rootfs                (host)   kernel + initramfs for the VM (busybox + Docker), with Docker
+#   make vm-rootfs                (host)   the VM boot image (kernel + initramfs) and its disk seed, with Docker
 #   make vm-lock                  (host)   pins the VM image to today's Alpine packages (deps.lock)
 #   ../../dev.sh make             (Docker) everything: servers, drivers, VMM, sysroot, programs, ports
 #                                          -> build/; installs /bin into the ext2 partition of disk.img

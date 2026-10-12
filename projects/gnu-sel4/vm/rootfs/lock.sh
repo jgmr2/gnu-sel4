@@ -12,19 +12,26 @@
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
 ALPINE=alpine:3.24
-DOCKER_VERSION=29.9.0
-# What build-rootfs.sh installs: the tools that build the image (in the container) and the
-# packages whose files go into the VM
-TOOLS="build-base linux-headers kmod iptables e2fsprogs cpio"
-VM="linux-virt busybox-static ca-certificates-bundle"
+# What build-rootfs.sh installs: the tools that build the image (in the container), the
+# packages whose files go into the VM's boot image (its kernel, and apk to install the rest), and
+# the Alpine system with Docker that the VM installs on its own disk on its first boot: pinned
+# here only for the seed that tests and new disks start from (a real install takes what Alpine
+# has that day)
+TOOLS="build-base linux-headers kmod iptables e2fsprogs e2fsprogs-extra cpio"
+VM="linux-virt busybox-static ca-certificates-bundle apk-tools-static alpine-keys"
+DOCKERROOT=${DOCKERROOT:-$(cat "$(dirname "$0")/packages" 2>/dev/null)}   # vm/rootfs/packages
 
 if [ "${1:-}" = --inside ]; then
     rel=$(cut -d. -f1,2 /etc/alpine-release)
     apk update -q
-    for set in tools vm; do
+    for set in tools vm dockerroot; do
         # tools also takes every package of the base image: a newer library among the tools'
         # dependencies must not leave the base's own users of the old one behind
-        [ $set = tools ] && pkgs="$TOOLS $(apk info -q | tr '\n' ' ')" || pkgs=$VM
+        case $set in
+        tools) pkgs="$TOOLS $(apk info -q | tr '\n' ' ')" ;;
+        vm) pkgs=$VM ;;
+        dockerroot) pkgs=$DOCKERROOT ;;
+        esac
         mkdir -p "/tmp/lock/$set"
         # shellcheck disable=SC2086
         apk fetch --recursive --url -o "/tmp/lock/$set" $pkgs | grep '^https://' | sort |
@@ -33,9 +40,6 @@ if [ "${1:-}" = --inside ]; then
             echo "file third_party/alpine-$rel/$set/$f $url $(sha256sum "/tmp/lock/$set/$f" | cut -d' ' -f1) vm"
         done
     done
-    url=https://download.docker.com/linux/static/stable/x86_64/docker-$DOCKER_VERSION.tgz
-    wget -q -O /tmp/docker.tgz "$url"
-    echo "file third_party/alpine-$rel/docker-$DOCKER_VERSION.tgz $url $(sha256sum /tmp/docker.tgz | cut -d' ' -f1) vm"
     exit 0
 fi
 
@@ -46,7 +50,7 @@ digest=$(docker image inspect "$ALPINE" --format '{{index .RepoDigests 0}}')
 new=$(mktemp)
 {
     echo "image alpine $ALPINE ${digest#*@} vm"
-    docker run --rm -v "$(pwd)/lock.sh:/lock.sh:ro" "$ALPINE@${digest#*@}" sh /lock.sh --inside
+    docker run --rm -e DOCKERROOT="$(cat packages)" -v "$(pwd)/lock.sh:/lock.sh:ro" "$ALPINE@${digest#*@}" sh /lock.sh --inside
 } > "$new"
 begin='# >>> VM image'
 end='# <<< VM image'

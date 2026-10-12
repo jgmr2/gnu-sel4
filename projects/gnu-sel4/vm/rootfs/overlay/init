@@ -1,15 +1,98 @@
 #!/bin/sh
-# Stage 1 (initramfs): copies the system into a tmpfs and switches to it.
-# Docker needs "/" to be a real file system: pivot_root does not work on
-# the initramfs rootfs.
+# Stage 1 (initramfs). The VM's system lives on its own disk (/dev/vda, ext4): Alpine with Docker,
+# installed there with apk on its first boot (TODO item 7), so the boot image carries only the
+# kernel's modules, busybox, apk and our own part. Each boot puts our part into it (the kernel's
+# modules, the bridge agent, init's configuration, in /ours) and switches to it. Without a disk
+# (the live system), or if the install cannot be done yet, the same in RAM.
 #
 # SPDX-License-Identifier: BSD-2-Clause
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 mount -t proc proc /proc
-mkdir -p /newroot
-mount -t tmpfs -o size=90%,mode=755 tmpfs /newroot
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+log() { echo "init: $*"; echo "init: $*" >> /run-boot.log; }
+for m in virtio_blk ext4; do modprobe -q $m; done
+R=/newroot
+mkdir -p $R
 
-tar -C / -cf - --exclude=./proc --exclude=./newroot . | tar -C /newroot -xf -
-mkdir -p /newroot/proc
-umount /proc
-exec switch_root /newroot /sbin/init
+ram_root() {
+    mountpoint -q $R && umount $R
+    mount -t tmpfs -o size=90%,mode=755 tmpfs $R
+}
+
+if [ -b /dev/vda ]; then
+    # Requests of at most 128 KiB so the buffer shared with the disk driver (sDDF) does not overflow
+    echo 128 > /sys/block/vda/queue/max_sectors_kb
+    # An ext2/3/4 superblock: its magic, 0xEF53, at byte 1080
+    if [ "$(dd if=/dev/vda bs=1 skip=1080 count=2 2>/dev/null | od -An -tx2 | tr -d ' ')" = ef53 ]; then
+        # 1: errors corrected, 2: corrected, reboot advised; only 4 and up leave errors behind.
+        # Never a reason to format: that would lose every image and container
+        e2fsck -p /dev/vda >/dev/null 2>&1; r=$?
+        [ $r -ge 4 ] && log "e2fsck /dev/vda: exit $r, errors left (mounting it anyway)"
+        resize2fs /dev/vda >/dev/null 2>&1          # a smaller file system (the seed) fills it
+    else
+        log "/dev/vda has no ext4 file system: formatting it (first boot)"
+        mkfs.ext4 -q -F -L gnu-sel4-vm /dev/vda
+    fi
+    mount -t ext4 /dev/vda $R || { log "cannot mount /dev/vda: running from RAM"; ram_root; }
+else
+    ram_root
+fi
+
+# A disk from before the system moved onto it: Docker's data was its whole top level (it was
+# mounted on /var/lib/docker). Moved where it belongs now; nothing is deleted
+if [ ! -d $R/etc ] && { [ -d $R/overlay2 ] || [ -d $R/image ] || [ -d $R/containers ]; }; then
+    log "moving Docker's data on /dev/vda to /var/lib/docker"
+    mkdir -p $R/var/lib/docker.new
+    for e in $R/* $R/.[!.]*; do
+        [ -e "$e" ] || continue
+        case ${e#$R/} in var|lost+found) continue;; esac
+        mv "$e" $R/var/lib/docker.new/
+    done
+    [ -d $R/var/lib/docker ] && mv $R/var/lib/docker/* $R/var/lib/docker.new/ 2>/dev/null
+    rmdir $R/var/lib/docker 2>/dev/null
+    mv $R/var/lib/docker.new $R/var/lib/docker
+fi
+
+# Alpine and Docker, from Alpine's mirror (the packages are signed: its keys come with us). A
+# seeded disk (tests, new disks: build-rootfs.sh) already has them
+if [ ! -x $R/usr/bin/dockerd ]; then
+    log "installing Alpine $(cat /etc/alpine-branch) and Docker on the VM's disk (needs the network)"
+    modprobe -q virtio_net
+    ip link set lo up
+    ip link set eth0 up 2>/dev/null
+    udhcpc -i eth0 -q -n -t 10 -s /usr/share/udhcpc/default.script >/dev/null 2>&1
+    timeout 15 ntpd -n -q -p pool.ntp.org >/dev/null 2>&1  # TLS needs the right time (busybox's waits forever)
+    mkdir -p $R/etc/apk/keys $R/etc/ssl/certs
+    cp /etc/apk/keys/* $R/etc/apk/keys/
+    cp /etc/ssl/certs/ca-certificates.crt $R/etc/ssl/certs/
+    ln -sf certs/ca-certificates.crt $R/etc/ssl/cert.pem
+    b=$(cat /etc/alpine-branch)
+    printf 'https://dl-cdn.alpinelinux.org/alpine/%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/%s/community\n' "$b" "$b" \
+        > $R/etc/apk/repositories
+    # shellcheck disable=SC2046
+    if apk.static --root $R --initdb --no-cache add $(cat /etc/vm-packages) >> /run-boot.log 2>&1; then
+        log "installed: $(cat $R/etc/alpine-release 2>/dev/null), $($R/usr/bin/dockerd --version 2>/dev/null)"
+    else
+        log "the install failed (no network?): this boot runs from RAM without Docker; the next one tries again"
+        tail -20 /run-boot.log
+        umount $R 2>/dev/null
+        ram_root
+    fi
+fi
+# Not installed (no disk and no network): this initramfs itself, without Docker
+[ -x $R/bin/busybox ] || (cd / && tar -cf - --exclude=./proc --exclude=./sys --exclude=./dev --exclude=./newroot . | tar -C $R -xf -)
+
+# Our part, every boot (it changes with GNU/seL4, not with Alpine): the modules of this kernel,
+# the agent, init's configuration. The accounts are Alpine's (the docker group among them); ours
+# only where there are none
+kver=$(uname -r)
+rm -rf $R/lib/modules/$kver
+mkdir -p $R/lib/modules $R/proc $R/sys $R/dev $R/run $R/tmp
+cp -a /lib/modules/$kver $R/lib/modules/
+for f in etc/passwd etc/group etc/shadow; do [ -e $R/$f ] && rm -f /ours/$f; done
+cp -a /ours/. $R/
+cat /run-boot.log >> $R/var/log/boot-stage1.log 2>/dev/null
+umount /sys /proc 2>/dev/null
+mount --move /dev $R/dev
+exec switch_root $R /sbin/init

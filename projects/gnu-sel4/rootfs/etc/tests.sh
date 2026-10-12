@@ -203,6 +203,15 @@ check vm-bounds   sh -c 'linux sh -c "i=0; until [ -e /mnt/sel4/etc/passwd ] || 
                          true'
 [ -z "$VM" ] ||
 check linux-vm    sh -c 'test "$(linux echo hello from the VM)" = "hello from the VM" && linux sh -c "exit 3"; test $? = 3'
+# The VM's system is on its own disk (Alpine and Docker, installed there with apk; the tests' copy
+# is seeded with them) and Docker answers
+[ -z "$VM" ] ||
+check vm-docker   sh -c 'linux sh -c "grep -q \" / ext4 \" /proc/mounts" || { echo "the VM does not run from its disk: $(linux cat /proc/mounts)"; exit 1; }
+                         i=0; until v=$(linux docker info --format "{{.ServerVersion}} {{.Driver}}" 2>/dev/null) && [ -n "$v" ]; do
+                             sleep 0.5; i=$((i+1)); [ $i -le 60 ] || { echo "dockerd does not answer: $(linux tail -5 /var/log/dockerd.log)"; exit 1; }; done
+                         echo "INFO docker $v"
+                         case "$v" in *overlay2*) ;; *) echo "storage driver: $v"; exit 1;; esac
+                         linux test -d /var/lib/docker/overlay2 || { echo "no /var/lib/docker/overlay2"; exit 1; }'
 case $mode in *" slow "*)
 TEST_TIMEOUT=300
 check bigdisk     sh -c 'before=$(df -k / | tail -1 | xargs echo | cut -d" " -f4); echo "free: $before KiB"

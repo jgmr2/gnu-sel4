@@ -1,10 +1,13 @@
 #!/bin/sh
-# Builds a minimal "distro": Linux kernel + busybox + Docker. Nothing else.
+# Builds the VM's boot image: the Linux kernel and an initramfs with busybox, apk, the kernel's
+# modules and our own part (init, the bridge agent). Alpine and Docker go onto the VM's own disk on
+# its first boot (overlay/init); out/vm-seed.ext4 is that disk already installed, from the same
+# pinned packages, for the tests and new disks (offline).
 # It runs INSIDE an alpine container that is only used as a tool, with no network
 # (see ../../Makefile, target "vm-rootfs"): everything it installs comes from $PKGS, the files
 # pinned in deps.lock (lock.sh) and fetched by fetch-deps.sh, so the image is the same whatever
 # day it is built.
-#   Output: out/vmlinuz  out/initramfs.cpio.gz
+#   Output: out/vmlinuz  out/initramfs.cpio.gz  out/vm-seed.ext4
 #
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
@@ -21,27 +24,22 @@ OUT=out
 
 rm -rf "$ROOT" "$TMP" && mkdir -p "$ROOT" "$TMP/etc/apk" "$OUT"
 cp -r /etc/apk/keys "$TMP/etc/apk/"
-for f in $(pinned tools/) $(pinned vm/) $(pinned docker-); do
+for f in $(pinned tools/) $(pinned vm/) $(pinned dockerroot/); do
     [ -f "$f" ] || { echo "missing $f: run ../../fetch-deps.sh" >&2; exit 1; }
 done
 OFFLINE="--no-network --no-cache --repositories-file /dev/null"
 
-# 1. The pieces: the tools that build the image (compiler, kmod, iptables, e2fsprogs) into this
-#    container; the linux-virt kernel (binary + modules only), static busybox and the CA
-#    certificates into $TMP; Docker's official static binaries.
+# 1. The pieces: the tools that build the image (compiler, kmod, e2fsprogs) into this container;
+#    the linux-virt kernel (binary + modules only), static busybox, static apk, Alpine's keys and
+#    the CA certificates into $TMP.
 # shellcheck disable=SC2086
 apk add $OFFLINE $(pinned tools/) >/dev/null
 # shellcheck disable=SC2086
 apk add $OFFLINE --root "$TMP" --initdb --no-scripts $(pinned vm/) >/dev/null
-# shellcheck disable=SC2046
-set -- $(pinned docker-)
-[ $# -eq 1 ] || { echo "deps.lock: expected one docker-*.tgz" >&2; exit 1; }
-DOCKER_VERSION=$(basename "$1" .tgz); DOCKER_VERSION=${DOCKER_VERSION#docker-}
-tar -xzf "$1" -C "$TMP"
 
 # 2. System skeleton
 cd "$ROOT"
-mkdir -p bin sbin usr/bin usr/sbin etc/ssl/certs lib/modules dev proc sys run tmp root var/log var/lib/docker
+mkdir -p bin sbin usr/bin usr/sbin etc/ssl/certs etc/apk/keys lib/modules dev proc sys run tmp root var/log
 chmod 1777 tmp; chmod 700 root
 cd - >/dev/null
 
@@ -51,16 +49,21 @@ for app in $("$ROOT/bin/busybox" --list-full); do
     [ -e "$ROOT/$app" ] || ln -s /bin/busybox "$ROOT/$app"
 done
 
-# Docker (static binaries: dockerd, containerd, runc, docker, ...)
-cp "$TMP"/docker/* "$ROOT/usr/bin/"
+# apk (static) and Alpine's keys, to install Alpine and Docker on the VM's disk; the CA
+# certificates for its mirror
+cp "$TMP/sbin/apk.static" "$ROOT/sbin/"
+cp "$TMP"/etc/apk/keys/*.pub "$ROOT/etc/apk/keys/" 2>/dev/null || cp "$TMP"/usr/share/apk/keys/x86_64/*.pub "$ROOT/etc/apk/keys/"
 cp "$TMP/etc/ssl/certs/ca-certificates.crt" "$ROOT/etc/ssl/certs/"
+ln -sf certs/ca-certificates.crt "$ROOT/etc/ssl/cert.pem"      # where apk's OpenSSL looks
+echo "v$(cut -d. -f1,2 /etc/alpine-release)" > "$ROOT/etc/alpine-branch"
+cat packages > "$ROOT/etc/vm-packages"
 
 # Agent for the bridge to GNU/seL4 (vm/agent): static binary
 mkdir -p "$ROOT/sbin"
 gcc -O2 -static -Wall -I../../include -o "$ROOT/sbin/sel4-agent" ../agent/sel4-agent.c
 
-# Tools Docker and the boot need, with their dynamic libraries (musl):
-#   iptables (NAT rules for Docker's networks) and mkfs.ext4/e2fsck (persistent disk)
+# What the first stage needs for the disk, with its dynamic libraries (musl): mkfs.ext4, e2fsck
+# and resize2fs (the seed grows to the partition)
 copy_with_libs() {
     for f in "$@"; do
         mkdir -p "$ROOT$(dirname "$f")"
@@ -71,11 +74,7 @@ copy_with_libs() {
         done
     done
 }
-copy_with_libs /usr/sbin/xtables-nft-multi /sbin/mke2fs /sbin/mkfs.ext4 /sbin/e2fsck
-copy_with_libs /usr/lib/xtables/*.so
-for t in iptables ip6tables iptables-save iptables-restore ip6tables-save ip6tables-restore; do
-    ln -sf xtables-nft-multi "$ROOT/usr/sbin/$t"
-done
+copy_with_libs /sbin/mke2fs /sbin/mkfs.ext4 /sbin/e2fsck /usr/sbin/resize2fs
 
 # Kernel and modules (dropping those for hardware a VM does not have)
 KVER=$(ls "$TMP/lib/modules")
@@ -93,18 +92,35 @@ for d in drivers/gpu drivers/media drivers/usb drivers/hid drivers/input drivers
          fs/afs fs/coda fs/lockd fs/nfs_common fs/minix fs/ufs fs/affs fs/befs fs/omfs fs/efs; do
     rm -rf "$ROOT/lib/modules/$KVER/kernel/$d"
 done
-# ctr: containerd's debugging client; Docker does not use it
-rm -f "$ROOT/usr/bin/ctr"
 # busybox modprobe cannot read compressed modules: decompress them
 find "$ROOT/lib/modules" -name "*.ko.gz" -exec gunzip {} +
 depmod -b "$ROOT" "$KVER" 2>/dev/null
 
-# 3. Our own configuration (init, inittab, rc, daemon.json...)
-cp -a overlay/. "$ROOT/"
+# 3. Our own part: /init runs here; the rest (inittab, rc, daemon.json, the agent...) goes into
+#    the VM's system on every boot (/ours). The DHCP script is needed here too
+mkdir -p "$ROOT/ours/sbin"
+cp -a overlay/. "$ROOT/ours/"
+mv "$ROOT/ours/init" "$ROOT/init"
+mv "$ROOT/sbin/sel4-agent" "$ROOT/ours/sbin/"
+mkdir -p "$ROOT/usr/share/udhcpc"
+cp overlay/usr/share/udhcpc/default.script "$ROOT/usr/share/udhcpc/"
 
 # 4. Pack it as an initramfs, the same bytes on every build: files in a fixed order, one fixed
 #    date, GNU cpio's --reproducible (no inode numbers), gzip without a name or a date
 find "$ROOT" -exec touch -h -d "@${SOURCE_DATE_EPOCH:-0}" {} +
 (cd "$ROOT" && find . | LC_ALL=C sort | cpio -o -H newc --quiet --reproducible) | gzip -n -6 > "$OUT/initramfs.cpio.gz"
-echo "kernel $KVER, docker $DOCKER_VERSION"
-du -sh "$ROOT" "$OUT"/*
+# 5. The seed: the VM's disk with Alpine and Docker installed from the pinned packages (offline),
+#    as an ext4 image of 1 GiB that the first stage grows to the partition. Not in the boot image
+SEED=/tmp/seed
+rm -rf "$SEED" && mkdir -p "$SEED/etc/apk/keys"
+cp "$ROOT"/etc/apk/keys/*.pub "$SEED/etc/apk/keys/"
+# shellcheck disable=SC2046
+apk add $OFFLINE --root "$SEED" --initdb $(pinned dockerroot/) >/dev/null
+printf 'https://dl-cdn.alpinelinux.org/alpine/%s/main\nhttps://dl-cdn.alpinelinux.org/alpine/%s/community\n' \
+    "$(cat "$ROOT/etc/alpine-branch")" "$(cat "$ROOT/etc/alpine-branch")" > "$SEED/etc/apk/repositories"
+find "$SEED" -exec touch -h -d "@${SOURCE_DATE_EPOCH:-0}" {} +
+rm -f "$OUT/vm-seed.ext4"
+E2FSPROGS_FAKE_TIME=${SOURCE_DATE_EPOCH:-0} mke2fs -q -t ext4 -L gnu-sel4-vm -U clear -E hash_seed=00000000-0000-0000-0000-000000000000 \
+    -d "$SEED" "$OUT/vm-seed.ext4" 1G
+echo "kernel $KVER, $("$SEED/usr/bin/dockerd" --version 2>/dev/null || echo docker in the seed)"
+du -sh "$ROOT" "$SEED" "$OUT"/*

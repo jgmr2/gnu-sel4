@@ -1,11 +1,11 @@
 #!/bin/sh
-# System boot: mounts, cgroups, modules, persistent disk and network.
+# System boot: mounts, cgroups, modules and network. "/" is already the VM's disk (/init).
 #
 # SPDX-License-Identifier: BSD-2-Clause
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
-mount -t devtmpfs devtmpfs /dev
+mountpoint -q /dev || mount -t devtmpfs devtmpfs /dev
 mkdir -p /dev/pts /dev/shm
 mount -t devpts devpts /dev/pts
 mount -t tmpfs -o mode=1777 shm /dev/shm
@@ -25,18 +25,7 @@ done
 hostname -F /etc/hostname
 ip link set lo up
 
-# Persistent disk: /dev/vda -> /var/lib/docker (images and containers)
-if [ -b /dev/vda ]; then
-    # Requests of at most 128 KiB so the buffer shared with the disk driver (sDDF) does not overflow
-    echo 128 > /sys/block/vda/queue/max_sectors_kb
-    if ! e2fsck -p /dev/vda >/dev/null 2>&1; then
-        echo "rc: /dev/vda has no ext4, formatting it (first boot)..."
-        mkfs.ext4 -q -F -L docker /dev/vda
-    fi
-    mount -t ext4 /dev/vda /var/lib/docker && echo "rc: disk mounted on /var/lib/docker"
-else
-    echo "rc: no disk, Docker will use RAM (lost at shutdown)"
-fi
+grep -q ' / ext4 ' /proc/mounts || echo "rc: no disk, everything is in RAM (lost at shutdown)"
 
 # Network: DHCP on eth0 (QEMU user-net hands out 10.0.2.15, gateway 10.0.2.2, DNS 10.0.2.3)
 echo 1 > /proc/sys/net/ipv4/ip_forward

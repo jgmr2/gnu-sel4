@@ -217,13 +217,21 @@ Principles the plan follows:
          (server/microkit_main.c) with 8, and wait masks are 128 bits. many-procs runs 100
          processes at once; RLIMIT_NPROC's default is 96
 7. [ ] **Linux VM integration II** (M–L). Needs: 1 (credentials across the bridge)
-   - [ ] A minimal VM image, Docker installed with the system (José's idea, October 2026): the
-         VM's initramfs is 264 MB unpacked (92 MB packed), 212 MB of it Docker's static binaries
-         and 46 MB kernel modules. Boot image: the kernel, busybox, the agent and only the modules
-         it needs; Docker goes into the VM's own partition on its first boot after the install,
-         the exact version deps.lock pins, checked by its sha256 (downloaded; a development disk
-         is seeded from fetch-deps.sh's copy, no network). The live ISO, 263 MB, gets smaller by
-         most of that
+   - [x] A minimal VM image, Alpine and Docker installed on the VM's own disk (José's idea,
+         October 2026). The boot image is the kernel and a 15 MB initramfs (was 92 MB: 212 MB of
+         Docker's static binaries unpacked): busybox, apk.static with Alpine's keys, e2fsprogs,
+         the modules the VM uses, the agent. Its first stage mounts /dev/vda as the VM's root;
+         if Docker is not there it installs Alpine and Docker with apk from Alpine's mirror
+         (signed; vm/rootfs/packages), and on every boot it puts our part in (this kernel's
+         modules, the agent, init's configuration). A disk of the old layout (Docker's data at
+         its top) is moved to /var/lib/docker, nothing deleted (tested with a marker file); a
+         failed install boots from RAM and tries again next time. The tests' copy and new disks
+         are seeded with vm/rootfs/out/vm-seed.ext4, the same install from the pinned packages
+         (deps.lock, set dockerroot), so tests need no network. Test vm-docker. Fixed on the way:
+         /etc/rc formatted the disk whenever e2fsck -p returned non-zero, also for 1 ("errors
+         corrected"), which would have lost every image; now only a disk with no ext4 is
+         formatted. The live system (no VM disk) installs into RAM on each boot, so Docker
+         there needs the network
    - [ ] Latency: a 9P round trip costs ~4.5 ms under QEMU (several VM exits per message:
          queue kick, interrupt status read, EOI). MSI-X and VIRTIO_F_EVENT_IDX in libvmm
    - [ ] AF_VSOCK for native programs (sockets between native and VM processes)

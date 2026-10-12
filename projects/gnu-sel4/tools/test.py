@@ -20,6 +20,22 @@ BUILD = os.environ.get("BUILD_DIR") or os.path.join(PROJ, "build")   # docker co
 # The copy goes next to the disk itself (disk.img may be a link to a faster disk)
 COPY = os.environ.get("TEST_COPY") or os.path.join(os.path.dirname(os.path.realpath(DISK)), "test-disk.img")   # TEST_COPY=: another
 MARKER = os.path.join(BUILD, "test-marker")
+SEED = os.path.join(PROJ, "vm", "rootfs", "out", "vm-seed.ext4")
+
+def copy_sparse(src, dst, dst_off):
+    """src's data regions (not its holes) into dst at dst_off"""
+    pos, end = 0, os.fstat(src.fileno()).st_size
+    while pos < end:
+        try:
+            data = os.lseek(src.fileno(), pos, os.SEEK_DATA)
+        except OSError:
+            break
+        hole = os.lseek(src.fileno(), data, os.SEEK_HOLE)
+        src.seek(data); dst.seek(dst_off + data)
+        left = hole - data
+        while left:
+            buf = src.read(min(left, 8 << 20)); dst.write(buf); left -= len(buf)
+        pos = hole
 SCRIPT = os.path.join(BUILD, "test-script")
 CMDS = os.path.join(BUILD, "test-debugfs.cmds")
 
@@ -55,6 +71,12 @@ def main():
             with open(COPY, "wb") as c:
                 c.write(d.read(part1_end))
                 c.truncate(os.path.getsize(DISK))    # the rest (Docker partition) empty, sparse
+                # ... but for the VM's system: Alpine and Docker already installed (the seed), so
+                # its first boot needs no network
+                part2 = int.from_bytes(mbr[470:474], "little") * 512
+                if part2 and os.path.exists(SEED):
+                    with open(SEED, "rb") as s:
+                        copy_sparse(s, c, part2)
 
     with open(MARKER, "w") as m:
         m.write(" ".join(["no-net" if a.no_net else "full"] + (["slow"] if a.slow else []) +

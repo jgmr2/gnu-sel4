@@ -114,7 +114,7 @@ Everything must fit in the low 2 GiB of physical RAM (see the comment in `meta.p
 ```
                       ┌─ posix_server ── processes created on demand: init, zsh, 9pd, coreutils...
 console (fbcon) ──────┤      └─ fs_ext2 ──┐
-serial_virt_rx/tx     └─ CLIENT_VMM ── Linux VM (busybox + Docker + sel4-agent)
+serial_virt_rx/tx     └─ CLIENT_VMM ── Linux VM (Alpine + Docker on its disk, sel4-agent)
                              │  └──────────────────── disk (virtio-blk) ── part. 1: GNU/seL4 ext2
 net (virtio-net) ── net_virt ┬─ copier ──┘                                 part. 2: /var/lib/docker
                               └─ copier ── netstack (FreeBSD TCP/IP) ── posix_server (sockets)
@@ -177,7 +177,7 @@ Third-party ports: `ports/<program>/`.
 | `net/` | netstack: FreeBSD TCP/IP stack (`netstack.c`: sDDF and calls; `dhcp.c`: DHCP client; `host.c`: what F-Stack expects from the OS) |
 | `runtime/`, `musl/`, `tools/` | program runtime, musl patch, `sel4-cc`, `make test` (`test.py`) |
 | `microkit/` | patch to the Microkit tool and `build-tool.sh` |
-| `vm/` | the VM's VMM, `vm/agent/` (sel4-agent), `vm/rootfs/` (busybox + Docker) |
+| `vm/` | the VM's VMM, `vm/agent/` (sel4-agent), `vm/rootfs/` (boot image; Alpine and Docker go onto the VM's disk) |
 | `apps/` | init, 9pd, linux, netcfg, resize, nettest and tests (proctest, phase1test, filetest) |
 | `ports/` | dash, coreutils, ncurses, zsh, vim, procps, curl, socat, dropbear, `gnu` (grep, sed, findutils, diffutils, tar, gzip, less) and `fstack` (builds F-Stack's FreeBSD part) |
 | `rootfs/` | initial contents of the ext2 partition (`/etc/rc`, `/etc/profile`, ...) |

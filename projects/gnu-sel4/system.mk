@@ -442,6 +442,10 @@ $(DISK):
 	truncate -s $$(( 1 + $(EXT2_MB) ))M $@.tmp; truncate -s +$(DOCKER_GB)G $@.tmp; \
 	printf 'label: dos\nstart=2048, size=%sMiB, type=83\ntype=83\n' $(EXT2_MB) | sfdisk -q $@.tmp; \
 	dd if=part.img of=$@.tmp bs=1M seek=1 conv=notrunc status=none; \
+	if [ -z "$(LIVE)" ] && [ -f $(POSIX)/vm/rootfs/out/vm-seed.ext4 ]; then \
+		dd if=$(POSIX)/vm/rootfs/out/vm-seed.ext4 of=$@.tmp bs=1M seek=$$(( 1 + $(EXT2_MB) )) conv=notrunc,sparse status=none; \
+		echo "the VM's partition seeded: Alpine and Docker installed (vm/rootfs/out/vm-seed.ext4)"; \
+	fi; \
 	rm part.img; mv $@.tmp $@; \
 	echo "disk created: $@ (ext2 $(EXT2_MB) MiB + Docker $(DOCKER_GB) GiB, sparse)"
 
