@@ -38,6 +38,7 @@ On the installed system, the license texts of the programs on the disk are in
 | [GNU gzip](https://www.gnu.org/software/gzip/) | Free Software Foundation | GPL-3.0-or-later | gzip, zcat… |
 | [less](https://www.greenwoodsoftware.com/less/) | Mark Nudelman | GPL-3.0-or-later or the Less License | the pager |
 | [e2fsprogs](https://e2fsprogs.sourceforge.net) | Theodore Ts'o and contributors | GPL-2.0 (libext2fs, libe2p: LGPL-2.0; libuuid: BSD-3-Clause; libet, libss: MIT) | e2fsck, mke2fs, tune2fs, dumpe2fs, resize2fs |
+| [GNU screen](https://www.gnu.org/software/screen/) | Free Software Foundation and contributors | GPL-3.0-or-later | the terminal multiplexer |
 | [procps-ng](https://gitlab.com/procps-ng/procps) | the procps-ng developers | GPL-2.0-or-later (library: LGPL-2.1-or-later) | ps, top, free… |
 | [curl](https://curl.se) | Daniel Stenberg and contributors | curl license (MIT-style) | curl |
 | [Mbed TLS](https://www.trustedfirmware.org/projects/mbed-tls/) | the Mbed TLS contributors (Arm, TrustedFirmware) | Apache-2.0 OR GPL-2.0-or-later (used under Apache-2.0) | TLS for curl |

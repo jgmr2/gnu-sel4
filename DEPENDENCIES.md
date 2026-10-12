@@ -16,6 +16,7 @@ image (`docker compose`, see README.md) carries them already fetched.
 | `third_party/ncurses-6.6` | https://ftp.gnu.org/gnu/ncurses/ | 6.6 |
 | `third_party/zsh-5.9.2` | https://www.zsh.org/pub/ | 5.9.2 |
 | `third_party/vim-9.2.1172` | https://github.com/vim/vim | v9.2.1172 |
+| `third_party/screen-5.0.2` | https://ftp.gnu.org/gnu/screen/ | 5.0.2 |
 | `third_party/e2fsprogs-1.47.4` | https://mirrors.edge.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/ | 1.47.4 |
 | `third_party/procps-ng-4.0.7` | https://sourceforge.net/projects/procps-ng/ | 4.0.7 |
 | `third_party/mbedtls-3.6.7` | https://github.com/Mbed-TLS/mbedtls/releases | 3.6.7 (LTS) |
