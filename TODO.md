@@ -285,6 +285,11 @@ Principles the plan follows:
          images on jails
    - [ ] Capsicum (capability mode) or pledge/unveil, enforced where every call already goes
    - [ ] `sysctl` (FreeBSD style) next to the Linux-format /proc
+   - [ ] With Capsicum, its other half (José's idea): reservations as well as limits. A process
+         chosen as critical (init, s6, sshd, nginx...) gets its pages set aside up front, from a
+         pool of their own, and a CPU budget (an MCS scheduling context): it runs like a
+         microcontroller, and what others do cannot starve it. Capsicum says what it may touch,
+         the reservation how much it is guaranteed
 13. [ ] **Self-hosted development loop** (L). Needs: 17 (VM memory), 9 (threads), 11 (restart)
    - [ ] Claude Code + toolchain in the Linux VM, working on the tree through /mnt/sel4
    - [ ] Userland restart: a monitor component that stops the PDs, loads new images and starts
