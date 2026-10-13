@@ -417,6 +417,16 @@ Principles the plan follows:
 16. [ ] **Toolchain identity and other architectures** (L). Needs: nothing, lowest priority
    - [ ] Our own triple (`x86_64-sel4-musl`) instead of `x86_64-linux-musl` (programs see `__linux__`)
    - [ ] ARM64 / Raspberry Pi 4 (sDDF lacks an SD driver)
+   - [ ] ARM64, started October 2026 so Docker runs where VT-x cannot (QEMU's TCG, so qemu-wasm in
+         the browser, emulates ARM's EL2 but not VT-x), alongside x86 and cross-compiled
+         (`make ARCH=aarch64`; development stays on x86 with KVM). Milestones: (1) [x] Microkit's
+         hello built with our clang for qemu_virt_aarch64 (the SDK's kernel: MCS and hypervisor
+         support; an SMP config with 4 cores too) and booted with -machine virt,virtualization=on;
+         (2) posix_server on ARM: its page tables, process start, signals and the FPU, and the
+         system call numbers (aarch64's generic numbering has no open or fork: the runtime maps
+         them to the protocol's); (3) the native system: virtio disk, fs_ext2, the ports
+         cross-built, the suite; (4) netstack (F-Stack) for arm64; (5) the Linux VM with Docker
+         (libvmm's own platform; Alpine aarch64)
    - [ ] The verification argument: today's kernel (x86_64, MCS, VT-x) is outside seL4's proofs.
          Options to weigh: a multikernel (one single-core seL4 per core, its own memory and
          devices, shared memory and IPIs between them; a "system" instance with fs, net, the
