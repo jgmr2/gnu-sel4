@@ -40,6 +40,9 @@ onmessage = async ({ data: { sys, memory, bytes, slot, server, procBufs, args, a
         for (let i = 0; i < 7; i++) regs[i] = mr[i];
         Atomics.store(i32, CALL, 0);
         Atomics.store(i32, LOCK, 0); Atomics.notify(i32, LOCK, 1);
+        // A successful execve: this slot is another program's now (a worker of its own); this one
+        // never runs again, and the page ends its worker
+        if (N === NR.execve && r === 0n) for (;;) Atomics.wait(i32, WAKE, Atomics.load(i32, WAKE));
         if (r !== RETRY) new Uint8Array(memory.buffer).set(sysU8.subarray(stage, stage + outLen(N, Number(r))), BUF);
         return r;
     };

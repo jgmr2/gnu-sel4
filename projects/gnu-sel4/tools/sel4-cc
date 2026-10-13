@@ -25,7 +25,8 @@ FLAGS="-nostdinc -isystem $SYSROOT/include -isystem $($CC -print-resource-dir)/i
 if [ "$ARCH" = wasm32 ]; then
     CC="clang --target=wasm32"
     FLAGS="-nostdinc -isystem $SYSROOT/include -isystem $($CC -print-resource-dir)/include
-           -matomics -mbulk-memory -mexception-handling -mllvm -wasm-enable-sjlj"
+           -matomics -mbulk-memory -mexception-handling -mllvm -wasm-enable-sjlj
+           -D__linux__ -D__linux -D__unix__ -D__unix"          # a Linux-like system on musl, as on the other ports
 fi
 
 link=1

@@ -1,7 +1,7 @@
 /*
  * wasmkit's first program with a libc (TODO item 24), as /sbin/init: plain C on musl and the
  * runtime, compiled with sel4-cc for wasm32. stdio on the console, a file through posix_server
- * and fs_ext2, malloc, the clock, sleep, and its arguments.
+ * and fs_ext2, malloc, the clock, sleep, and its arguments; then it becomes coreutils' ls.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -32,6 +32,12 @@ int main(int argc, char **argv)
     clock_gettime(CLOCK_MONOTONIC, &a);
     sleep(1);
     clock_gettime(CLOCK_MONOTONIC, &b);
-    printf("slept %ld ms. bye\n", (long)((b.tv_sec - a.tv_sec) * 1000 + (b.tv_nsec - a.tv_nsec) / 1000000));
+    printf("slept %ld ms. Now exec: ls -l /bin/ls /bin/coreutils (GNU coreutils for wasm32)\n",
+           (long)((b.tv_sec - a.tv_sec) * 1000 + (b.tv_nsec - a.tv_nsec) / 1000000));
+    fflush(stdout);
+    if (access("/bin/coreutils", X_OK) == 0) {     /* no fork yet: ls takes this process's place */
+        execl("/bin/ls", "ls", "-l", "/bin/ls", "/bin/coreutils", (char *)0);
+        perror("execl");
+    }
     return 0;
 }

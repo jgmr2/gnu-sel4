@@ -9,6 +9,17 @@
  */
 #pragma once
 #include <stdint.h>
+/* printf formats for uint64_t (<inttypes.h>, which sDDF's libc lacks): long is 32 bits on wasm32 */
+#ifndef PRIu64
+#if UINTPTR_MAX > 0xffffffffu
+#define PRIu64 "lu"
+#define PRIx64 "lx"
+#else
+#define PRIu64 "llu"
+#define PRIx64 "llx"
+#endif
+#endif
+#include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <sel4posix/protocol.h>

@@ -24,17 +24,17 @@ size_t perf_text(char *buf, size_t max)
 {
     size_t n = 0;
 #define OUT(...) (n += sddf_snprintf(buf + n, n < max ? max - n : 0, __VA_ARGS__))
-    OUT("tsc_hz %lu 0\n", clock_tsc_hz);
+    OUT("tsc_hz %" PRIu64 " 0\n", clock_tsc_hz);
     for (int i = 0; i < PERF_NSYS; i++) {
         if (!perf_sys[i].n) continue;
         if (i < (int)(sizeof(syscall_names) / sizeof(*syscall_names)) && syscall_names[i])
-            OUT("sys.%s %lu %lu\n", syscall_names[i], perf_sys[i].n, perf_sys[i].cyc);
+            OUT("sys.%s %" PRIu64 " %" PRIu64 "\n", syscall_names[i], perf_sys[i].n, perf_sys[i].cyc);
         else
-            OUT("sys.%d %lu %lu\n", i, perf_sys[i].n, perf_sys[i].cyc);
+            OUT("sys.%d %" PRIu64 " %" PRIu64 "\n", i, perf_sys[i].n, perf_sys[i].cyc);
     }
-    OUT("mem.fault %lu %lu\n", perf_fault.n, perf_fault.cyc);
-    OUT("mem.fork_copy %lu %lu\n", perf_fork_copy.n, perf_fork_copy.cyc);
-    OUT("mem.free_all %lu %lu\n", perf_free_all.n, perf_free_all.cyc);
+    OUT("mem.fault %" PRIu64 " %" PRIu64 "\n", perf_fault.n, perf_fault.cyc);
+    OUT("mem.fork_copy %" PRIu64 " %" PRIu64 "\n", perf_fork_copy.n, perf_fork_copy.cyc);
+    OUT("mem.free_all %" PRIu64 " %" PRIu64 "\n", perf_free_all.n, perf_free_all.cyc);
     static const char *fs_names[32] = {
         "0", "lookup", "stat", "read", "write", "truncate", "getdents", "readlink", "create",
         "unlink", "rename", "symlink", "chmod", "statfs", "setclock", "settimes", "chown", "link",
@@ -42,7 +42,7 @@ size_t perf_text(char *buf, size_t max)
     };
     for (int i = 0; i < 32; i++)
         if (perf_fs[i].n)
-            OUT("fs.%s %lu %lu\n", fs_names[i] ? fs_names[i] : "other", perf_fs[i].n, perf_fs[i].cyc);
+            OUT("fs.%s %" PRIu64 " %" PRIu64 "\n", fs_names[i] ? fs_names[i] : "other", perf_fs[i].n, perf_fs[i].cyc);
     if (n < max) n += vfs_fs_stats(buf + n, max - n);
     return n < max ? n : max;
 #undef OUT

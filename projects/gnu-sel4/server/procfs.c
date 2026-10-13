@@ -233,7 +233,7 @@ static size_t generate(int id, struct proc *p)
     switch (id) {
     case F_MEMINFO: {
         uint64_t total = mem_total() >> 10, free = mem_free() >> 10;
-        OUT("MemTotal:       %8lu kB\nMemFree:        %8lu kB\nMemAvailable:   %8lu kB\n",
+        OUT("MemTotal:       %8" PRIu64 " kB\nMemFree:        %8" PRIu64 " kB\nMemAvailable:   %8" PRIu64 " kB\n",
             total, free, free);
         OUT("Buffers:               0 kB\nCached:                0 kB\nSwapCached:            0 kB\n"
             "Shmem:                 0 kB\nSReclaimable:          0 kB\n"
@@ -241,7 +241,7 @@ static size_t generate(int id, struct proc *p)
         break;
     }
     case F_VMSTAT:                                   /* what procps' vmstat reads: no swap, no page cache */
-        OUT("nr_free_pages %lu\npgpgin 0\npgpgout 0\npswpin 0\npswpout 0\npgfault 0\npgmajfault 0\n",
+        OUT("nr_free_pages %" PRIu64 "\npgpgin 0\npgpgout 0\npswpin 0\npswpout 0\npgfault 0\npgmajfault 0\n",
             mem_free() >> 12);
         break;
     case F_STAT: {
@@ -249,15 +249,15 @@ static size_t generate(int id, struct proc *p)
         uint64_t user = ticks(total_cpu_us), up = ticks(now_us);
         uint64_t idle = up > user ? up - user : 0;
         int total, maxpid, run = count_running(&total, &maxpid);
-        OUT("cpu  %lu 0 0 %lu 0 0 0 0 0 0\ncpu0 %lu 0 0 %lu 0 0 0 0 0 0\n", user, idle, user, idle);
-        OUT("intr 0\nctxt 0\nbtime %lu\nprocesses %d\nprocs_running %d\nprocs_blocked 0\n",
+        OUT("cpu  %" PRIu64 " 0 0 %" PRIu64 " 0 0 0 0 0 0\ncpu0 %" PRIu64 " 0 0 %" PRIu64 " 0 0 0 0 0 0\n", user, idle, user, idle);
+        OUT("intr 0\nctxt 0\nbtime %" PRIu64 "\nprocesses %d\nprocs_running %d\nprocs_blocked 0\n",
             clock_epoch, maxpid, run);
         break;
     }
     case F_UPTIME: {
         account_all();
         uint64_t idle = now_us > total_cpu_us ? now_us - total_cpu_us : 0;
-        OUT("%lu.%02lu %lu.%02lu\n", now_us / 1000000, now_us / 10000 % 100,
+        OUT("%" PRIu64 ".%02" PRIu64 " %" PRIu64 ".%02" PRIu64 "\n", now_us / 1000000, now_us / 10000 % 100,
             idle / 1000000, idle / 10000 % 100);
         break;
     }
@@ -265,7 +265,7 @@ static size_t generate(int id, struct proc *p)
         int total, maxpid, run = count_running(&total, &maxpid);
         procfs_load_tick();
         for (int k = 0; k < 3; k++)                  /* fixed point, 11 bits, as Linux */
-            OUT("%lu.%02lu ", load_avg[k] >> 11, ((load_avg[k] & 2047) * 100) >> 11);
+            OUT("%" PRIu64 ".%02" PRIu64 " ", load_avg[k] >> 11, ((load_avg[k] & 2047) * 100) >> 11);
         OUT("%d/%d %d\n", run, total, maxpid);
         break;
     }
@@ -282,8 +282,8 @@ static size_t generate(int id, struct proc *p)
     case F_P_STAT: {
         procfs_account(p);
         uint64_t pages = p->slot >= 0 ? mem_slot_pages(p->slot) : 0;
-        OUT("%d (%s) %c %d %d %d %d %d 4194304 0 0 0 0 %lu 0 0 0 %d %d 1 0 %lu %lu %lu "
-            "18446744073709551615 0 0 0 0 0 %lu 0 %lu %lu 0 0 0 17 0 0 0 0 0 0 0 0 0 0 0 0 0 %d\n",
+        OUT("%d (%s) %c %d %d %d %d %d 4194304 0 0 0 0 %" PRIu64 " 0 0 0 %d %d 1 0 %" PRIu64 " %" PRIu64 " %" PRIu64 " "
+            "18446744073709551615 0 0 0 0 0 %" PRIu64 " 0 %" PRIu64 " %" PRIu64 " 0 0 0 17 0 0 0 0 0 0 0 0 0 0 0 0 0 %d\n",
             p->pid, p->name, state_of(p), p->orphan ? 1 : p->ppid, p->pgid, p->sid,
             tty_ctty(p) >= 0 ? (int)tty_rdev(tty_ctty(p)) : 0,     /* tty_nr: its controlling terminal */
             tty_ctty(p) >= 0 ? tty_fg_of(tty_ctty(p)) : -1,
@@ -295,7 +295,7 @@ static size_t generate(int id, struct proc *p)
     }
     case F_P_STATM: {
         uint64_t pages = p->slot >= 0 ? mem_slot_pages(p->slot) : 0;
-        OUT("%lu %lu 0 0 0 %lu 0\n", pages, pages, pages);
+        OUT("%" PRIu64 " %" PRIu64 " 0 0 0 %" PRIu64 " 0\n", pages, pages, pages);
         break;
     }
     case F_P_STATUS: {
@@ -308,11 +308,11 @@ static size_t generate(int id, struct proc *p)
             p->gid, p->egid, p->sgid, p->egid, NFD);
         for (int g = 0; g < p->ngroups; g++) OUT("%u ", p->groups[g]);
         OUT("\n");
-        OUT("VmPeak:\t%8lu kB\nVmSize:\t%8lu kB\nVmRSS:\t%8lu kB\nRssAnon:\t%8lu kB\n"
+        OUT("VmPeak:\t%8" PRIu64 " kB\nVmSize:\t%8" PRIu64 " kB\nVmRSS:\t%8" PRIu64 " kB\nRssAnon:\t%8" PRIu64 " kB\n"
             "RssFile:\t       0 kB\nRssShmem:\t       0 kB\nVmSwap:\t       0 kB\nThreads:\t1\n",
             kb, kb, kb, kb);
-        OUT("SigQ:\t0/0\nSigPnd:\t%016lx\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\n"
-            "SigIgn:\t%016lx\nSigCgt:\t%016lx\n", p->sig_pending, p->sig_ignored, p->sig_caught);
+        OUT("SigQ:\t0/0\nSigPnd:\t%016" PRIx64 "\nShdPnd:\t0000000000000000\nSigBlk:\t0000000000000000\n"
+            "SigIgn:\t%016" PRIx64 "\nSigCgt:\t%016" PRIx64 "\n", p->sig_pending, p->sig_ignored, p->sig_caught);
         break;
     }
     case F_P_CMDLINE:

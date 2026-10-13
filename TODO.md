@@ -583,9 +583,16 @@ Principles the plan follows:
          sel4-cc links for wasm32 (compiler-rt from Debian's libclang-rt-18-dev-wasm32).
          wasmkit/hello.c as /sbin/init, plain C: stdio, a file, malloc, the time, printf of
          doubles and long doubles, sleep
-   - [ ] coreutils compiled for wasm32, then dash (experiment 2). Notes: long is 32 bits on
-         wasm32 (server and programs): offsets past 2 GiB are cut, and the server's printf
-         formats for uint64_t (%lu: /proc, perf) are wrong there
+   - [x] coreutils compiled for wasm32 (its port script, SEL4_HOST=wasm32-linux-musl; sel4-cc
+         defines __linux__ there, as the other ports' compilers do): 101 programs, 1.7 MB
+         stripped, in the RAM disk in place of the ARM one; init execs `ls -l`: right. exec on
+         wasm: the old instance waits for ever once execve succeeds (proc.js). The server's
+         uint64_t printf formats are PRIu64/PRIx64 now (long is 32 bits on wasm32; offsets
+         past 2 GiB are still cut there)
+   - [ ] Experiment 2: fork, with binaryen's asyncify (Debian's binaryen package): the stack
+         unwound into the memory, the memory copied into a new worker, both rewound (a vfork
+         with setjmp does not do: the child returns from fork, and dash's child changes the
+         parent's variables). Then dash, the console's line discipline, login
    - [ ] Experiment 2: dash. fork: asyncify (unwind, copy the memory, rewind in a new worker)
          or vfork + exec only
    - [ ] Then the real kernel: seL4 ported to a "wasm" architecture (the portable C as it is;

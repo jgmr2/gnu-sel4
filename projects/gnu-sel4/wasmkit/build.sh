@@ -60,8 +60,19 @@ rm -f "$OUT"/*.o
 start=$(python3 -c 'import sys; m=open(sys.argv[1],"rb").read(512); print(int.from_bytes(m[454:458],"little"))' "$DISK")
 count=$(python3 -c 'import sys; m=open(sys.argv[1],"rb").read(512); print(int.from_bytes(m[458:462],"little"))' "$DISK")
 dd if="$DISK" of="$OUT/part1.img" bs=512 skip="$start" count="$count" status=none
-printf 'rm /sbin/init\nwrite %s /sbin/init\nsif /sbin/init mode 0100755\nsif /sbin/init uid 0\nsif /sbin/init gid 0\n' \
-    "$OUT/hello.wasm" | debugfs -w -f - "$OUT/part1.img" >/dev/null 2>&1
+# The programs built for wasm32 in place of the disk's ARM ones (their links stay): /sbin/init,
+# and coreutils when it is built (SEL4_HOST=wasm32-linux-musl ports/coreutils/build-coreutils.sh
+# in build-wasm/coreutils), without its debug information
+install_prog() {   # install_prog <file> <path>
+    printf 'rm %s\nwrite %s %s\nsif %s mode 0100755\nsif %s uid 0\nsif %s gid 0\n' "$2" "$1" "$2" "$2" "$2" "$2" |
+        debugfs -w -f - "$OUT/part1.img" >/dev/null 2>&1
+}
+install_prog "$OUT/hello.wasm" /sbin/init
+CU=$OUT/../coreutils/src/coreutils
+if [ -f "$CU" ]; then
+    llvm-objcopy --strip-debug "$CU" "$OUT/coreutils.wasm"
+    install_prog "$OUT/coreutils.wasm" /bin/coreutils
+fi
 cp "$HERE/site/index.html" "$HERE/site/wasmkit.js" "$HERE/site/worker.js" "$HERE/site/proc.js" \
     "$HERE/system.json" "$HERE/bench.json" "$OUT/"
 ls -la "$OUT"
