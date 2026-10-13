@@ -1,8 +1,7 @@
 # GNU/seL4 with Docker only (no other host setup):
-#   docker compose up -d                 the pages: http://localhost (the ARM64 build, booted in
-#                                        QEMU here) and https://localhost:8102 (the demo: GNU/seL4
-#                                        compiled to WebAssembly, wasmkit). The rest are tools,
-#                                        run by name:
+#   docker compose up -d                 the page: http://localhost, the ARM64 build booted in QEMU
+#                                        here (serial console and screen). The rest are tools, run
+#                                        by name (wasmkit's page: --profile wasm up -d kit):
 #   docker compose run --rm build        build everything and install it into disk.img
 #   docker compose run --rm test         automated tests in headless QEMU (needs /dev/kvm)
 #   docker compose run --rm shell        a shell in the build environment
@@ -80,7 +79,8 @@ services:
       - "127.0.0.1:8090:8090"        # -> native GNU/seL4:8080
       - "127.0.0.1:2223:2223"        # -> native GNU/seL4:22 (ssh)
     command: tools/web/run.sh
-  kit:                               # the browser demo (TODO item 24): GNU/seL4 compiled to WebAssembly, wasmkit/build.sh's page
+  kit:                               # GNU/seL4 compiled to WebAssembly (TODO item 24, paused): wasmkit/build.sh's page;
+    profiles: [wasm]                 # docker compose --profile wasm up -d kit
     image: gnu-sel4-web:local
     volumes:
       - .:/work

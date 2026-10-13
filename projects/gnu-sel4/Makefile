@@ -94,11 +94,13 @@ endif
 
 # SERIAL_OPTS: where the serial console goes (tools/web/run.sh: a socket for the browser page)
 SERIAL_OPTS ?= -serial mon:stdio
+# ARM: no screen of its own yet (fbcon is x86's); tools/web/run.sh shows its console over VNC
+ARM_DISPLAY_OPTS ?= -display none
 run:
 	@test -f $(IMAGE) || { echo "Missing $(IMAGE): build with ../../dev.sh make"; exit 1; }
 ifeq ($(PLATFORM),qemu-arm)
 	qemu-system-aarch64 -machine virt,virtualization=on -cpu cortex-a57 -m 2G $(SERIAL_OPTS) \
-		-device loader,file=$(IMAGE),addr=0x70000000,cpu-num=0 -display none \
+		-device loader,file=$(IMAGE),addr=0x70000000,cpu-num=0 $(ARM_DISPLAY_OPTS) \
 		-global virtio-mmio.force-legacy=false \
 		-drive file=$(dir $(realpath disk.img))disk-arm.img,format=raw,if=none,id=hd \
 		-device virtio-blk-device,drive=hd,bus=virtio-mmio-bus.1

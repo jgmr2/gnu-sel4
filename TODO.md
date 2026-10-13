@@ -22,6 +22,21 @@ Principles the plan follows:
 - **Cheap and unlocking first; dependencies before what needs them.** Pending items are in the
   order they should be done; each says what it needs.
 
+**Current priority (José, 2026-10-13): ARM64.** Development and testing on the ARM64 build
+(`make PLATFORM=qemu-arm`): it is real seL4, it runs on real hardware, and what is written for it
+ports to x86 (if the original plan comes back: build and test it now and then, not daily) and to
+the browser (wasmkit, item 24, paused: its code stays, as the next port). The page for users is
+the ARM64 system in QEMU on the host, through docker compose (`docker compose up -d web`:
+http://localhost, the serial console and the screen over VNC). qemu-wasm is retired (item 22).
+In order:
+1. ARM64's open items in item 16: s6-rc failing at boot, the network (F-Stack for arm64), its own
+   screen (fbcon: until then the VNC screen is QEMU's text console with the serial on it),
+   asynchronous signals, epoll_event's layout, gzip, PSCI poweroff/reset
+2. The protocol's arguments as int64_t in the server and runtime (long is 32 bits on wasm32,
+   item 24) and the console hang-up SIGHUP reaching a new init: shared code, tested on ARM
+3. The test suite (rootfs/etc/tests.sh) on ARM in CI (item 2), so the ports stay right
+4. Then the plan's order below (items 9, 14, 11...); the Linux VM and Docker stay parked
+
 ## Done
 
 1. [x] **Base system and build environment**
