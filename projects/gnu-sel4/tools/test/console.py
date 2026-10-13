@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # console.py <serial-socket> <step>...: drives a GNU/seL4 serial console for a test, with logs.
 # Steps: expect:<text> (until the console prints it; TIMEOUT seconds each), send:<text> (Enter
-# added, after SETTLE seconds), exit (until QEMU closes the console: it powered off). Every step logs a JSON line;
+# added, after SETTLE seconds), absent:<text> (fails if the console ever printed it), exit (until QEMU closes the console: it powered off). Every step logs a JSON line;
 # a failed one logs what the console showed last. The end: {"test":...,"ok":...,"ms":...}.
 # SPDX-License-Identifier: BSD-2-Clause
 import json, os, socket, sys, time
@@ -20,13 +20,19 @@ else:
     log("no-console", path=sys.argv[1]); sys.exit(1)
 s.settimeout(0.2)
 seen = b""
+everything = b""                     # all the console printed: for absent:
 ok = True
 for step in sys.argv[2:]:
     kind, _, arg = step.partition(":")
     t1 = time.time()
+    if kind == "absent":
+        bad = arg.encode() in everything + seen
+        log("absent", text=arg, ok=not bad)
+        if bad: ok = False; break
+        continue
     if kind == "send":
         time.sleep(SETTLE)
-        s.sendall(arg.encode() + b"\r"); seen = b""
+        s.sendall(arg.encode() + b"\r"); everything += seen; seen = b""
         log("send", text=arg); continue
     closed = False
     while time.time() - t1 < TIMEOUT:
@@ -37,8 +43,11 @@ for step in sys.argv[2:]:
         except socket.timeout: pass
         if kind == "expect" and arg.encode() in seen: break
     done = closed if kind == "exit" else arg.encode() in seen
-    tail = seen[-300:].decode(errors="replace")
-    log(kind, want=arg, ok=done, s=round(time.time() - t1, 2), **({} if done else {"last": tail}))
+    # A failed step: the console's last 1500 bytes, and every line that says FAIL (a test's verdict)
+    text = (everything + seen).decode(errors="replace")
+    extra = {} if done else {"last": seen[-1500:].decode(errors="replace"),
+                             "fail_lines": [l.strip() for l in text.splitlines() if "FAIL" in l][-20:]}
+    log(kind, want=arg, ok=done, s=round(time.time() - t1, 2), **extra)
     if not done: ok = False; break
     if kind == "exit": break
 print(json.dumps({"test": NAME, "ok": ok, "ms": int((time.time() - T0) * 1000)}))

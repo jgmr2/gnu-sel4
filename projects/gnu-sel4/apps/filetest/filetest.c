@@ -101,15 +101,15 @@ int main(void)
     printf("== big file (doubly indirect blocks, larger than the cache) ==\n");
     {
         static unsigned char chunk[65536];
-        int big = open("/big.bin", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+        int big = open("/tmp/big.bin", O_CREAT | O_WRONLY | O_TRUNC, 0644);
         int okw = big >= 0;
         for (int i = 0; okw && i < 96; i++) {                 /* 96 x 64 KiB = 6 MiB */
             for (int j = 0; j < (int)sizeof chunk; j++) chunk[j] = (unsigned char)(i * 7 + j);
             okw = write(big, chunk, sizeof chunk) == (ssize_t)sizeof chunk;
         }
         if (big >= 0) close(big);
-        CHECK(okw && stat("/big.bin", &st) == 0 && st.st_size == 96 * 65536, "write 6 MiB");
-        big = open("/big.bin", O_RDONLY);
+        CHECK(okw && stat("/tmp/big.bin", &st) == 0 && st.st_size == 96 * 65536, "write 6 MiB");
+        big = open("/tmp/big.bin", O_RDONLY);
         int okr = big >= 0;
         for (int i = 95; okr && i >= 0; i -= 5) {             /* scattered reads with pread */
             okr = pread(big, chunk, sizeof chunk, (off_t)i * 65536) == (ssize_t)sizeof chunk;
@@ -119,7 +119,7 @@ int main(void)
         CHECK(okr, "read back with pread and check every byte");
         struct statvfs a, b;
         statvfs("/", &a);
-        CHECK(unlink("/big.bin") == 0, "delete the 6 MiB file");
+        CHECK(unlink("/tmp/big.bin") == 0, "delete the 6 MiB file");
         statvfs("/", &b);
         CHECK(b.f_bfree - a.f_bfree >= 1536, "its blocks were freed (data + indirect)");
         printf("       blocks freed: %lu\n", (unsigned long)(b.f_bfree - a.f_bfree));
