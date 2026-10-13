@@ -27,9 +27,10 @@ docker run --rm -d --name gnu-sel4-qemu-wasm -v "$SRC":/qemu/ -v "$OUT":/out -v 
 docker exec gnu-sel4-qemu-wasm sh -c '
 set -e
 export EXTRA_CFLAGS="-O3 -g -Wno-error=unused-command-line-argument -matomics -mbulk-memory -DNDEBUG -DG_DISABLE_ASSERT -D_GNU_SOURCE -sASYNCIFY=1 -pthread -sPROXY_TO_PTHREAD=1 -sFORCE_FILESYSTEM -sALLOW_TABLE_GROWTH -sINITIAL_MEMORY=2800MB -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=4294901760 -sWASM_BIGINT -sMALLOC=mimalloc --js-library=/build/node_modules/xterm-pty/emscripten-pty.js -sEXPORT_ES6=1 -sASYNCIFY_IMPORTS=ffi_call_js"
-export EXTRA_LDFLAGS="$EXTRA_CFLAGS"
+# The runtime the page and the TCG backend use: TTY (the page replaces its poll), addFunction
+export EXTRA_LDFLAGS="$EXTRA_CFLAGS -sEXPORTED_RUNTIME_METHODS=getTempRet0,setTempRet0,addFunction,removeFunction,TTY,FS"
 cd /qbuild
-[ -f Makefile ] || emconfigure /qemu/configure --static --target-list=aarch64-softmmu --cpu=wasm32 --cross-prefix= \
+emconfigure /qemu/configure --static --target-list=aarch64-softmmu --cpu=wasm32 --cross-prefix= \
     --without-default-features --enable-system --with-coroutine=fiber --enable-virtfs \
     --extra-cflags="$EXTRA_CFLAGS" --extra-cxxflags="$EXTRA_CFLAGS" --extra-ldflags="$EXTRA_LDFLAGS"
 emmake make -j$(nproc) qemu-system-aarch64

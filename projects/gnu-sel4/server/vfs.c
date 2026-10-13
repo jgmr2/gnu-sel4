@@ -398,8 +398,31 @@ static void dev_stat(int type, uint32_t rdev)
 
 /* ---------------- calls ---------------- */
 
+#ifdef __aarch64__
+/* open's flags: the protocol's are x86_64's, and the runtime passes aarch64's as they are. Four
+ * bits are elsewhere there (musl adds its O_LARGEFILE, 0400000, to every open: x86_64's O_NOFOLLOW) */
+static const uint32_t oflag_arch[][2] = {      /* aarch64, x86_64 */
+    { 040000, 0200000 },                       /* O_DIRECTORY */
+    { 0100000, 0400000 },                      /* O_NOFOLLOW */
+    { 0200000, 040000 },                       /* O_DIRECT */
+    { 0400000, 0100000 },                      /* O_LARGEFILE */
+};
+static uint32_t oflags_conv(uint32_t f, int from)  /* from: 0 aarch64 -> x86_64, 1 the other way */
+{
+    uint32_t out = f & ~(uint32_t)0740000;      /* the four bits, the same set in both */
+    for (unsigned i = 0; i < 4; i++) if (f & oflag_arch[i][from]) out |= oflag_arch[i][!from];
+    return out;
+}
+#define OFLAGS_IN(f)  oflags_conv(f, 0)
+#define OFLAGS_OUT(f) oflags_conv(f, 1)
+#else
+#define OFLAGS_IN(f)  (f)
+#define OFLAGS_OUT(f) (f)
+#endif
+
 static long do_open(long dirfd, uint32_t flags, uint32_t mode)
 {
+    flags = OFLAGS_IN(flags);
     char abs[FS_PATH_MAX];
     long r = normalize(dirfd, client_path(0), abs);
     if (r) return r;
@@ -1150,7 +1173,7 @@ static long do_fcntl(long fd, long cmd, long arg)
     }
     case F_GETFD: return cur->fdt[fd].cloexec ? FD_CLOEXEC : 0;
     case F_SETFD: cur->fdt[fd].cloexec = arg & FD_CLOEXEC; return 0;
-    case F_GETFL: return f->flags;
+    case F_GETFL: return OFLAGS_OUT(f->flags);
     case F_SETFL: f->flags = (f->flags & ~(O_APPEND | O_NONBLOCK)) | (arg & (O_APPEND | O_NONBLOCK)); return 0;
     case F_GETLK: case F_SETLK: case F_SETLKW: return 0;     /* a single process: no locks */
     case 1033: case 1034: return f->type == OF_SHM ? 0 : -EINVAL;   /* F_ADD_SEALS, F_GET_SEALS: no seals */

@@ -391,6 +391,8 @@ long tty_read(int i, size_t len)
     }
     size_t n = len < t->ready_len ? len : t->ready_len;
     if (n > POSIX_BUF_SIZE) n = POSIX_BUF_SIZE;
+    if (t->tio.c_lflag & ICANON)                 /* canonical: one line per read(), as POSIX says */
+        for (size_t k = 0; k < n; k++) if (t->line[k] == '\n') { n = k + 1; break; }
     char *out = (char *)client_buf;
     memcpy(out, t->line, n);
     memmove(t->line, t->line + n, t->line_len - n);

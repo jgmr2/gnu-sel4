@@ -51,7 +51,7 @@ static void account_all(void)
 enum {
     F_NONE,
     /* global */
-    F_ROOT, F_SELF, F_MEMINFO, F_STAT, F_UPTIME, F_LOADAVG, F_VERSION, F_MOUNTS,
+    F_ROOT, F_SELF, F_MEMINFO, F_VMSTAT, F_STAT, F_UPTIME, F_LOADAVG, F_VERSION, F_MOUNTS,
     F_SYS, F_SYS_KERNEL, F_OSRELEASE, F_PIDMAX, F_HOSTNAME, F_NET, F_NET_DHCP, F_PERF, F_TRACE,
     /* per process */
     F_PID, F_P_STAT, F_P_STATM, F_P_STATUS, F_P_CMDLINE, F_P_ENVIRON, F_P_COMM, F_P_EXE, F_P_CWD,
@@ -61,6 +61,7 @@ enum {
 static const struct { const char *name; int id, kind, dt; } root_ents[] = {
     { "self", F_SELF, PROCFS_LINK, DT_LNK },
     { "meminfo", F_MEMINFO, PROCFS_FILE, DT_REG },
+    { "vmstat", F_VMSTAT, PROCFS_FILE, DT_REG },
     { "stat", F_STAT, PROCFS_FILE, DT_REG },
     { "uptime", F_UPTIME, PROCFS_FILE, DT_REG },
     { "loadavg", F_LOADAVG, PROCFS_FILE, DT_REG },
@@ -239,6 +240,10 @@ static size_t generate(int id, struct proc *p)
             "SwapTotal:             0 kB\nSwapFree:              0 kB\n");
         break;
     }
+    case F_VMSTAT:                                   /* what procps' vmstat reads: no swap, no page cache */
+        OUT("nr_free_pages %lu\npgpgin 0\npgpgout 0\npswpin 0\npswpout 0\npgfault 0\npgmajfault 0\n",
+            mem_free() >> 12);
+        break;
     case F_STAT: {
         account_all();
         uint64_t user = ticks(total_cpu_us), up = ticks(now_us);

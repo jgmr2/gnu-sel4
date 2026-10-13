@@ -38,11 +38,11 @@ make -j$(nproc) qemu-system-aarch64 >/dev/null
     -device virtio-blk-device,drive=hd,bus=virtio-mmio-bus.1 \
     -serial file:/pack/serial.log -monitor unix:/pack/mon.sock,server,nowait -display none -daemonize
 '
-python3 - "$OUT/pack" <<'PYEOF'
+python3 - "$OUT/pack" "${WAIT:-login:}" <<'PYEOF'
 import os, socket, sys, time
-pack = sys.argv[1]
+pack = sys.argv[1]; WAIT = sys.argv[2].encode()
 t0 = time.time()
-while b"login:" not in (open(f"{pack}/serial.log", "rb").read() if os.path.exists(f"{pack}/serial.log") else b""):
+while WAIT not in (open(f"{pack}/serial.log", "rb").read() if os.path.exists(f"{pack}/serial.log") else b""):
     if time.time() - t0 > 600: sys.exit("no login prompt in 10 minutes")
     time.sleep(2)
 time.sleep(3)

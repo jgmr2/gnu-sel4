@@ -524,6 +524,18 @@ Principles the plan follows:
          QEMU on a 32-bit host simulates at most 2047 MiB (the SDK kernel expects 2 GiB: the last
          MiB is missing); the TCG backend's block modules declare 65535 pages of memory and
          addFunction is left out by emscripten 3.1.50 (both patched into the page's JS)
+   - [x] Starting from a snapshot (make-snapshot.sh: a native QEMU from the same source boots it
+         and saves the state; the page loads it with -incoming): the prompt in ~10 s instead of
+         minutes (the kernel zeroes the boot memory: ~1.5 GiB emulated). The page needs QEMU's TTY
+         runtime exported (its poll replaced), or QEMU's main loop sleeps on the terminal and
+         timers, disk completions and even the VM's start wait for a key
+   - [ ] zsh kills qemu-wasm's vCPU thread: "TypeError: Cannot convert undefined to a BigInt" in
+         ffi_call_js, the TCI interpreter calling helper_wfi (the CPU going idle). The same images
+         run in native QEMU. The demo built step by step meanwhile: init + dash works (vim, top,
+         ps, sudo, the test programs); login, s6-rc and zsh to add one by one
+   - [ ] Each exec translates the program again (fresh physical frames: QEMU's translated code is
+         keyed by physical address); sharing read-only text frames between execs, as a page
+         cache, would keep it
    - [ ] Network through a WebSocket proxy (a small server relaying the guest's traffic), so a
          page can reach nginx or ssh inside the demo
    - [ ] GUI: the guest's framebuffer (virtio-gpu 2D) drawn into a canvas; keyboard and mouse
