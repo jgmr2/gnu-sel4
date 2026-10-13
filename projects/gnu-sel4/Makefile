@@ -98,7 +98,10 @@ run:
 	@test -f $(IMAGE) || { echo "Missing $(IMAGE): build with ../../dev.sh make"; exit 1; }
 ifeq ($(PLATFORM),qemu-arm)
 	qemu-system-aarch64 -machine virt,virtualization=on -cpu cortex-a57 -m 2G $(SERIAL_OPTS) \
-		-device loader,file=$(IMAGE),addr=0x70000000,cpu-num=0 -display none
+		-device loader,file=$(IMAGE),addr=0x70000000,cpu-num=0 -display none \
+		-global virtio-mmio.force-legacy=false \
+		-drive file=$(dir $(realpath disk.img))disk-arm.img,format=raw,if=none,id=hd \
+		-device virtio-blk-device,drive=hd,bus=virtio-mmio-bus.1
 else
 	qemu-system-x86_64 -machine q35 -accel kvm \
 		-cpu host,host-phys-bits=off,phys-bits=39,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave$(QEMU_VMX),+vme,+invtsc \

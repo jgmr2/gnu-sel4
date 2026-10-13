@@ -128,12 +128,14 @@ RTC_PL031_PADDR = 0x0901_0000         # its PL031 real-time clock (server/clock.
 
 
 def generate_arm(sdf, sdf_file, output_dir, board, dtb):
-    """The native system alone: the serial console, ARM's timer, fs_ext2 with the file system in
-    RAM, posix_server. No disk, network or VM yet"""
+    """The native system: the serial console, ARM's timer, the disk (virtio-blk over MMIO),
+    fs_ext2, posix_server. No network or VM yet"""
     serial_driver = ProtectionDomain("serial_driver", "serial_driver.elf", priority=200)
     serial_virt_tx = ProtectionDomain("serial_virt_tx", "serial_virt_tx.elf", priority=199)
     serial_virt_rx = ProtectionDomain("serial_virt_rx", "serial_virt_rx.elf", priority=199, stack_size=0x2000)
     timer_driver = ProtectionDomain("timer_driver", "timer_driver.elf", priority=254)
+    blk_driver = ProtectionDomain("blk_driver", "blk_driver.elf", priority=200, stack_size=0x2000)
+    blk_virt = ProtectionDomain("blk_virt", "blk_virt.elf", priority=199, stack_size=0x2000)
     fs = ProtectionDomain("fs_ext2", "fs_ext2.elf", priority=160, stack_size=0x8000)
     server = ProtectionDomain("posix_server", "posix_server.elf", priority=150, stack_size=0x10000)
 
@@ -154,7 +156,7 @@ def generate_arm(sdf, sdf_file, output_dir, board, dtb):
     sdf.add_mr(rtc)
     server.add_map(Map(rtc, 0x3400_0000, "r", cached=False, setvar_vaddr="rtc_base"))
 
-    for pd in (serial_driver, serial_virt_tx, serial_virt_rx, timer_driver, fs, server):
+    for pd in (serial_driver, serial_virt_tx, serial_virt_rx, timer_driver, blk_driver, blk_virt, fs, server):
         sdf.add_pd(pd)
     sdf.add_channel(Channel(server, fs, a_id=SERVER_FS_CHANNEL_ID, pp_a=True))
 
@@ -163,11 +165,15 @@ def generate_arm(sdf, sdf_file, output_dir, board, dtb):
     serial = Sddf.Serial(sdf, dtb.node(board.serial), serial_driver, serial_virt_tx, virt_rx=serial_virt_rx,
                          enable_color=False, begin_str="GNU/seL4 on ARM64 (no network or VM yet)\r\n")
     serial.add_client(server)
-    for system in (serial, timer_system):
+    blk = Sddf.Blk(sdf, dtb.node(board.blk), blk_driver, blk_virt)
+    blk.add_client(fs, partition=0, data_size=FS_CACHE_SIZE)      # partition 1: GNU/seL4 ext2
+    for system in (serial, timer_system, blk):
         assert system.connect()
         assert system.serialise_config(output_dir)
+    # fs_ext2's block cache, mapped into posix_server too (one-copy reads and writes, as on x86)
+    extra = '\n        <map mr="blk_client_fs_ext2_data" vaddr="0x40000000" perms="rw" setvar_vaddr="fs_cache" />'
     with open(f"{output_dir}/{sdf_file}", "w+") as f:
-        f.write(server_cspace(sdf))
+        f.write(server_cspace(sdf, extra))
 
 
 def generate(sdf, sdf_file, output_dir):

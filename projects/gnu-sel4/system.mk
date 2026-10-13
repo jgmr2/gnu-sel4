@@ -49,8 +49,8 @@ vpath %.c $(SDDF) $(LIBVMM)
 #                 file system is an image inside fs_ext2, no disk driver at all), the firmware's
 #                 1920x1080 framebuffer, no network card driver (net/null_driver.c), no ACPI
 #                 power off yet. make iso builds the ISO
-#   qemu-arm      QEMU's ARM virt machine (TODO item 16, milestone 2): the serial console, the
-#                 file system in RAM (rootfs and our programs; system-arm.mk), no network or VM yet
+#   qemu-arm      QEMU's ARM virt machine (TODO item 16): the serial console, its own disk
+#                 (disk-arm.img next to disk.img, virtio-blk over MMIO); no network or VM yet
 PLATFORM ?= qemu
 export PLATFORM
 ifeq ($(PLATFORM),qemu)
@@ -66,10 +66,8 @@ VMM_FLAGS := -DNO_VM_DISK
 FS_FLAGS := -DFS_RAMDISK
 else ifeq ($(PLATFORM),qemu-arm)
 ETH_ELF :=
-BLK_ELFS :=
-LIVE := 1
+BLK_ELFS := blk_driver.elf blk_virt.elf
 SERVER_FLAGS := -DNO_ACPI_POWEROFF -DNO_NETSTACK
-FS_FLAGS := -DFS_RAMDISK
 else
 $(error unknown PLATFORM $(PLATFORM): qemu, latitude7390 or qemu-arm)
 endif
@@ -464,6 +462,11 @@ ifdef LIVE
 DISK := $(BUILD_DIR)/live-disk.img
 EXT2_MB := 96
 DOCKER_GB := 1
+else ifeq ($(PLATFORM),qemu-arm)
+# ARM's own disk, next to where disk.img's link points (dev.sh mounts that directory)
+DISK := $(dir $(realpath $(POSIX)/disk.img))disk-arm.img
+EXT2_MB := 512
+DOCKER_GB := 8
 else
 DISK := $(POSIX)/disk.img
 EXT2_MB := 512
@@ -479,7 +482,7 @@ $(DISK):
 	truncate -s $$(( 1 + $(EXT2_MB) ))M $$d.tmp; truncate -s +$(DOCKER_GB)G $$d.tmp; \
 	printf 'label: dos\nstart=2048, size=%sMiB, type=83\ntype=83\n' $(EXT2_MB) | sfdisk -q $$d.tmp; \
 	dd if=part.img of=$$d.tmp bs=1M seek=1 conv=notrunc status=none; \
-	if [ -z "$(LIVE)" ] && [ -f $(POSIX)/vm/rootfs/out/vm-seed.ext4 ]; then \
+	if [ -z "$(LIVE)" ] && [ "$(ARCH)" = x86_64 ] && [ -f $(POSIX)/vm/rootfs/out/vm-seed.ext4 ]; then \
 		dd if=$(POSIX)/vm/rootfs/out/vm-seed.ext4 of=$$d.tmp bs=1M seek=$$(( 1 + $(EXT2_MB) )) conv=notrunc,sparse status=none; \
 		echo "the VM's partition seeded: Alpine and Docker installed (vm/rootfs/out/vm-seed.ext4)"; \
 	fi; \

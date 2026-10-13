@@ -61,6 +61,13 @@
 #endif
 static uint64_t clk_epoch = BUILD_TIME, clk_tsc0, clk_hz;
 
+/* A busy wait's hint to the processor: x86's pause, ARM's yield */
+#ifdef __aarch64__
+#define CPU_RELAX() __asm__ volatile("yield" ::: "memory")
+#else
+#define CPU_RELAX() __asm__ volatile("pause" ::: "memory")
+#endif
+
 static inline uint64_t tsc(void)           /* the TSC, or ARM's physical counter */
 {
 #ifdef __aarch64__
@@ -345,7 +352,7 @@ static void batch_wait_all(void)
     if (!batch_inflight) return;
     sddf_notify(blk_config.virt.id);
     while (batch_inflight) {
-        while (blk_queue_empty_resp(&blkq)) __asm__ volatile("pause" ::: "memory");
+        while (blk_queue_empty_resp(&blkq)) CPU_RELAX();
         take_response();
     }
 }
@@ -479,7 +486,7 @@ static void ra_wait(void)
     if (!ra_outstanding) return;
     sddf_notify(blk_config.virt.id);
     while (ra_outstanding) {
-        if (blk_queue_empty_resp(&blkq)) { __asm__ volatile("pause" ::: "memory"); continue; }
+        if (blk_queue_empty_resp(&blkq)) { CPU_RELAX(); continue; }
         take_response();
     }
 }
@@ -489,7 +496,7 @@ static void ra_wait_slot(uint32_t s)       /* until slot s's read-ahead has come
     uint64_t t0 = tsc();
     sddf_notify(blk_config.virt.id);
     while (slots[s].pending) {
-        if (blk_queue_empty_resp(&blkq)) { __asm__ volatile("pause" ::: "memory"); continue; }
+        if (blk_queue_empty_resp(&blkq)) { CPU_RELAX(); continue; }
         take_response();
     }
     st_ra_stall.n++;
@@ -583,7 +590,7 @@ static void bg_poll(void)                  /* what has come back, without waitin
 static void bg_wait(void)
 {
     while (bg_active) {
-        if (blk_queue_empty_resp(&blkq)) { __asm__ volatile("pause" ::: "memory"); continue; }
+        if (blk_queue_empty_resp(&blkq)) { CPU_RELAX(); continue; }
         take_response();
     }
 }
@@ -2294,7 +2301,7 @@ void init(void)
     cache_init();
 
     blk_storage_info_t *info = blk_config.virt.storage_info.vaddr;
-    while (!blk_storage_is_ready(info)) __asm__ volatile("pause" ::: "memory");
+    while (!blk_storage_is_ready(info)) CPU_RELAX();
     disk_blocks = info->capacity;
     mount();
 }
