@@ -43,6 +43,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgcc-14-dev-a
 # printf needs its soft float), which tools/sel4-cc links into WebAssembly programs
 RUN apt-get update && apt-get install -y --no-install-recommends libclang-rt-18-dev-wasm32 \
     && rm -rf /var/lib/apt/lists/*
+# ... and binaryen's wasm-opt: asyncify, for fork on the browser port (TODO item 24, experiment 2)
+RUN apt-get update && apt-get install -y --no-install-recommends binaryen \
+    && rm -rf /var/lib/apt/lists/*
 
 USER dev
 WORKDIR /work
