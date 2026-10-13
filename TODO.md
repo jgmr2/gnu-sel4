@@ -22,20 +22,46 @@ Principles the plan follows:
 - **Cheap and unlocking first; dependencies before what needs them.** Pending items are in the
   order they should be done; each says what it needs.
 
-**Current priority (José, 2026-10-13): ARM64.** Development and testing on the ARM64 build
-(`make PLATFORM=qemu-arm`): it is real seL4, it runs on real hardware, and what is written for it
-ports to x86 (if the original plan comes back: build and test it now and then, not daily) and to
-the browser (wasmkit, item 24, paused: its code stays, as the next port). The page for users is
-the ARM64 system in QEMU on the host, through docker compose (`docker compose up -d web`:
-http://localhost, the serial console and the screen over VNC). qemu-wasm is retired (item 22).
-In order:
-1. ARM64's open items in item 16: s6-rc failing at boot, the network (F-Stack for arm64), its own
-   screen (fbcon: until then the VNC screen is QEMU's text console with the serial on it),
-   asynchronous signals, epoll_event's layout, gzip, PSCI poweroff/reset
-2. The protocol's arguments as int64_t in the server and runtime (long is 32 bits on wasm32,
-   item 24) and the console hang-up SIGHUP reaching a new init: shared code, tested on ARM
-3. The test suite (rootfs/etc/tests.sh) on ARM in CI (item 2), so the ports stay right
-4. Then the plan's order below (items 9, 14, 11...); the Linux VM and Docker stay parked
+**Current priority (José, 2026-10-13): ARM64, then containers, then the web.** No nested
+virtualization: the Linux VM and real hardware (items 7, 18-20) are parked; qemu-wasm is retired
+(item 22); wasmkit (item 24) waits for phase 3. Every step is in cost-benefit order and needs only
+what comes before it. Image standard: OCI, static binaries (Rust or C) in `scratch` images, run
+rootless.
+
+Phase 1 — ARM64 as complete as x86 (without the VM):
+1. Structured logs (S): the JSON Lines standard below, a small log.h for components and
+   programs, /proc/log; everything after logs with it (fewer runs to find what failed)
+2. PSCI poweroff and reset on ARM (S, written: confirm QEMU exits, commit)
+3. The test suite on ARM, then in CI (S-M, item 2): every later step keeps it green
+4. ARM's small gaps (S each): asynchronous signals, epoll_event's layout, gzip
+5. The protocol's arguments as int64_t in server and runtime (S-M): shared code, fixes wasm32
+6. Network on ARM (M-L): sDDF's virtio-net over MMIO, F-Stack for arm64, then TLS (a TLS library,
+   CA certificates) for curl: phase 2 pulls images over HTTPS
+7. ARM's own screen, fbcon (M): the page's VNC shows the real console
+   Decision due during phase 1: where the product runs (ARM boards or ARM servers on bare metal:
+   seL4 needs EL2, which ordinary cloud VMs do not give)
+
+Phase 2 — OCI containers without a Linux kernel:
+1. Linux binaries unmodified (M): the loader rewrites each `svc #0` (0xD4000001, aligned words)
+   to a `brk` at load time, so seL4 never takes a Linux call for one of its own; posix_server
+   serves it as a Linux system call (precedents: zpoline, SaBRe, gVisor's systrap). First a static
+   C program built on Alpine, then static Rust
+2. Threads (L, item 9): Rust's async runtimes need them (Go is not in the standard)
+3. The OCI engine (L), in C, daemonless (Podman's model, not its binary): pull from a registry
+   over HTTPS, digests checked; layers unpacked (whiteouts) into an image store of plain files;
+   an overlay file system server (item 21); `run` with per-container views in posix_server
+   (mount, pid, uts), rootless, limits (item 5), restriction in the style of Capsicum (item 12);
+   `run -d` as an s6 service; a CLI of our own name with `docker` and `podman` aliases
+4. A periodic test: Alpine-built static images run as OCI containers
+
+Phase 3 — the web (only after phase 2 works): wasmkit resumes (fork with asyncify, poll), then a
+WASI layer so OCI images of wasm modules run in the browser.
+
+Logs (the standard, for everything new): JSON Lines, one object per line, UTF-8:
+`{"t":<ns since boot>,"c":"<component>","l":"debug|info|warn|error","ev":"<event>",...fields}`.
+Every loop that waits and every failure path logs (what it waited for, how long, the values
+compared). Components write to their log ring (/proc/log) and, with TRACE, to the console;
+tests read them with jq. A test reports one JSON summary line: {"test":...,"ok":...,"ms":...}.
 
 ## Done
 
