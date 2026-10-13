@@ -1,0 +1,14 @@
+#!/bin/sh
+# pre-commit: cheap checks on what is staged (git config core.hooksPath .githooks)
+# SPDX-License-Identifier: BSD-2-Clause
+bad=0
+git diff --cached --check || bad=1                                   # whitespace errors
+for f in $(git diff --cached --name-only --diff-filter=AM); do
+    case $f in
+    *.py) python3 -m py_compile "$f" || bad=1 ;;
+    *.sh) sh -n "$f" || bad=1 ;;
+    *.jsonl) python3 -c 'import json,sys; [json.loads(l) for l in open(sys.argv[1]) if l.strip()]' "$f" || { echo "pre-commit: $f: not JSON Lines"; bad=1; } ;;
+    *.json) python3 -m json.tool "$f" >/dev/null || bad=1 ;;
+    esac
+done
+exit $bad
