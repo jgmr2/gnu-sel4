@@ -31,11 +31,28 @@ opt() {         # opt <name> <options...>: value of name=..., or "yes" for a bar
     done
 }
 
+# The same file from other places, tried in order when the first fails: ftp.gnu.org often times
+# out from cloud machines (GitHub's runners). The SHA-256 below is what decides, wherever it came from
+mirrors() {
+    echo "$1"
+    case "$1" in https://ftp.gnu.org/gnu/*)
+        echo "https://ftpmirror.gnu.org/${1#https://ftp.gnu.org/gnu/}"
+        echo "https://mirrors.kernel.org/gnu/${1#https://ftp.gnu.org/gnu/}" ;;
+    esac
+}
+
 download() {    # download <url> <sha256> -> path of the verified file in the cache
     f="$CACHE/$2-$(basename "$1")"
     if [ ! -s "$f" ]; then
         mkdir -p "$CACHE"
-        curl -fsSL --retry 3 -o "$f.part" "$1" || {
+        ok=
+        for u in $(mirrors "$1"); do
+            if curl -fsSL --retry 3 --connect-timeout 20 --speed-limit 1024 --speed-time 60 -o "$f.part" "$u"; then
+                ok=1; break
+            fi
+            echo "  (failed: $u)" >&2
+        done
+        [ -n "$ok" ] || {
             echo "download failed: $1" >&2
             case "$1" in */alpine/*) echo "(Alpine keeps only the latest build of each package: 'make vm-lock' in projects/gnu-sel4 pins the current ones)" >&2 ;; esac
             exit 1; }

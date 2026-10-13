@@ -96,10 +96,11 @@ check sudo        sh -c 'out=$(printf "echo s3cret | sudo -k -S -p \"\" id -u | 
                          case "$out" in *UID=0*) echo "a wrong password worked"; exit 1;; esac
                          grep -q "user.*COMMAND=/bin/id" /var/log/sudo.log || { echo "nothing in /var/log/sudo.log"; exit 1; }'
 # sudo runs the command on a pseudo-terminal of its own (use_pty, sudo's default; disks made
-# before the ptys still have "Defaults !use_pty": taken out here, on the test's copy)
+# before the ptys still have "Defaults !use_pty": taken out here, on the test's copy). socat -t:
+# after the input ends it waits for the session (a new home's first zsh is slow: compinit)
 check sudo-pty    sh -c 'cp /etc/sudoers /tmp/sudoers.orig && sed "/use_pty/d" /tmp/sudoers.orig > /etc/sudoers
                          out=$(printf "readlink /proc/self/fd/1\necho s3cret | sudo -k -S -p \"\" readlink /proc/self/fd/1\nexit\n" |
-                               timeout 30 socat - EXEC:"login -f user",pty,setsid,ctty,stderr 2>&1)
+                               timeout 30 socat -t 20 - EXEC:"login -f user",pty,setsid,ctty,stderr 2>&1)
                          cat /tmp/sudoers.orig > /etc/sudoers
                          n=$(echo "$out" | grep -o "^/dev/pts/[0-9]*" | sort -u | wc -l)
                          [ "$n" = 2 ] || { echo "expected the login pty and another one for sudo:"; echo "$out" | tail -8; exit 1; }'
