@@ -1,36 +1,60 @@
 <!doctype html>
 <!-- GNU/seL4 in the browser (tools/web/run.sh): the serial console in a terminal and the screen
-     through noVNC, both from the QEMU running in the `web` container.
+     through noVNC, both from the QEMU running in the `web` container. Mobile first: on a touch
+     screen a key bar and an input field below give the on-screen keyboard and the keys it lacks
+     (Esc, Tab, Ctrl, arrows); what they type goes to the serial console, which on ARM is also
+     what the VNC screen shows (QEMU's chardev hub).
      SPDX-License-Identifier: BSD-2-Clause -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#16181d">
 <title>GNU/seL4</title>
 <link rel="stylesheet" href="xterm.css">
 <style>
-  :root { --bg: #16181d; --panel: #1f2229; --text: #d8dbe2; --muted: #8b90a0; --accent: #6aa6ff; --ok: #5fc48a; --bad: #e0736b; }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; }
-  header { display: flex; gap: 16px; align-items: center; padding: 8px 16px; background: var(--panel); }
-  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
-  .tabs button { background: none; border: 1px solid #343846; color: var(--text); padding: 4px 12px; border-radius: 6px; cursor: pointer; }
-  .tabs button.on { border-color: var(--accent); color: var(--accent); }
-  #state { margin-left: auto; color: var(--muted); }
+  :root { --bg: #16181d; --panel: #1f2229; --line: #343846; --text: #d8dbe2; --muted: #8b90a0;
+          --accent: #6aa6ff; --ok: #5fc48a; --bad: #e0736b; --key: #2a2e38; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); }
+  body { color: var(--text); font: 15px/1.4 system-ui, sans-serif; display: flex; flex-direction: column;
+         height: 100dvh; overflow: hidden; padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left); }
+  header { display: flex; gap: 10px; align-items: center; padding: 8px 12px; background: var(--panel); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .tabs { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .tabs button { background: none; border: 0; color: var(--text); padding: 8px 14px; min-height: 40px; font: inherit; cursor: pointer; }
+  .tabs button + button { border-left: 1px solid var(--line); }
+  .tabs button.on { background: var(--accent); color: #0b1220; font-weight: 600; }
+  #state { margin-left: auto; color: var(--muted); font-size: 13px; }
   #state.ok { color: var(--ok); } #state.bad { color: var(--bad); }
-  main { flex: 1; min-height: 0; padding: 8px 16px 16px; }
+  main { flex: 1; min-height: 0; padding: 6px; }
   .pane { height: 100%; display: none; } .pane.on { display: block; }
   #term { height: 100%; background: #000; padding: 4px; border-radius: 6px; }
   iframe { width: 100%; height: 100%; border: 0; border-radius: 6px; background: #000; }
-  footer { padding: 0 16px 8px; color: var(--muted); font-size: 12px; }
+  /* The touch keyboard: a row of keys and the field the on-screen keyboard types into */
+  #kbd { display: none; background: var(--panel); border-top: 1px solid var(--line);
+         padding: 6px 6px calc(6px + env(safe-area-inset-bottom)); }
+  body.touch #kbd { display: block; }
+  #keys { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
+  #keys::-webkit-scrollbar { display: none; }
+  #keys button { flex: 0 0 auto; min-width: 44px; min-height: 40px; padding: 0 10px; border-radius: 8px;
+                 border: 1px solid var(--line); background: var(--key); color: var(--text); font: 15px ui-monospace, monospace; }
+  #keys button:active, #keys button.held { background: var(--accent); color: #0b1220; }
+  #line { display: flex; gap: 6px; }
+  #in { flex: 1; min-width: 0; min-height: 44px; font-size: 16px; padding: 0 12px; border-radius: 8px;
+        border: 1px solid var(--line); background: #0d0f13; color: var(--text); }
+  #in:focus { outline: 2px solid var(--accent); }
+  #enter { min-width: 64px; border-radius: 8px; border: 0; background: var(--accent); color: #0b1220; font: 600 15px system-ui; }
+  footer { padding: 0 12px 8px; color: var(--muted); font-size: 12px; }
+  body.touch footer { display: none; }
 </style>
 </head>
 <body>
 <header>
   <h1>GNU/seL4</h1>
-  <div class="tabs">
-    <button id="t-term" class="on">Serial console</button>
-    <button id="t-screen">Screen</button>
+  <div class="tabs" role="tablist">
+    <button id="t-term" class="on" role="tab">Console</button>
+    <button id="t-screen" role="tab">Screen</button>
   </div>
   <span id="state">connecting…</span>
 </header>
@@ -38,36 +62,112 @@
   <div id="p-term" class="pane on"><div id="term"></div></div>
   <div id="p-screen" class="pane"><iframe id="screen" title="Screen (noVNC)"></iframe></div>
 </main>
-<footer>After a rebuild: <code>docker compose restart web</code>, then reload this page. Press Enter if the console is blank.</footer>
+<div id="kbd">
+  <div id="keys"></div>
+  <div id="line">
+    <input id="in" type="text" inputmode="text" enterkeyhint="send" placeholder="Type here…"
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" aria-label="Keyboard input">
+    <button id="enter" aria-label="Enter">⏎</button>
+  </div>
+</div>
+<footer>After a rebuild: <code>docker compose restart web</code>, then reload this page.</footer>
 <script src="xterm.js"></script>
 <script>
-  const term = new Terminal({ fontSize: 14, cursorBlink: true, scrollback: 5000 });
+  const touch = matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+  document.body.classList.toggle('touch', touch);
+  const term = new Terminal({ fontSize: touch ? 13 : 14, cursorBlink: true, scrollback: 5000 });
   term.open(document.getElementById('term'));
   const state = document.getElementById('state');
   const enc = new TextEncoder();
   let ws = null;
-  term.onData(d => { if (ws && ws.readyState === 1) ws.send(enc.encode(d)); });
-  function fit() {                     /* the terminal fills its pane */
-    const el = document.getElementById('term'), cw = 9, ch = 17;
-    term.resize(Math.max(40, Math.floor((el.clientWidth - 8) / cw)), Math.max(10, Math.floor((el.clientHeight - 8) / ch)));
+  const send = s => { if (ws && ws.readyState === 1) ws.send(enc.encode(s)); };
+  /* The terminal's own answers to the system's queries (cursor position, "who are you") are not
+     sent: QEMU's text console answers them already (the VNC screen, on the same serial line), and
+     every page open would answer too: the extra answers end up typed at the shell (7;40R) */
+  const ANSWER = /^\x1b\[(\d+;\d+R|[?>][\d;]*c)$/;
+  term.onData(d => { if (!ANSWER.test(d)) send(d); });
+
+  /* The terminal fills its pane; on a phone the page follows the visible part of the screen
+     (iOS does not shrink the page when its keyboard opens) */
+  function fit() {
+    const el = document.getElementById('term'), cw = touch ? 7.8 : 9, ch = touch ? 15.5 : 17;
+    term.resize(Math.max(30, Math.floor((el.clientWidth - 8) / cw)), Math.max(8, Math.floor((el.clientHeight - 8) / ch)));
   }
-  window.addEventListener('resize', fit); fit();
+  function viewport() {
+    if (window.visualViewport) document.body.style.height = visualViewport.height + 'px';
+    fit();
+    term.scrollToBottom();
+  }
+  window.addEventListener('resize', viewport);
+  if (window.visualViewport) visualViewport.addEventListener('resize', viewport);
+  viewport();
+
   function connect() {
     ws = new WebSocket(`ws://${location.hostname}:6081/`, ['binary']);
     ws.binaryType = 'arraybuffer';
-    ws.onopen = () => { state.textContent = 'connected'; state.className = 'ok'; term.focus(); };
+    ws.onopen = () => { state.textContent = 'connected'; state.className = 'ok'; if (!touch) term.focus(); };
     ws.onmessage = e => term.write(new Uint8Array(e.data));
-    ws.onclose = () => { state.textContent = 'disconnected: retrying…'; state.className = 'bad'; setTimeout(connect, 2000); };
+    ws.onclose = () => { state.textContent = 'reconnecting…'; state.className = 'bad'; setTimeout(connect, 2000); };
   }
   connect();
+
+  /* Touch: the special keys, Ctrl held for the next key, and the field whose input is sent as
+     it is typed (what the keyboard adds, and a DEL for each character it takes back) */
+  const input = document.getElementById('in');
+  let ctrl = false;
+  const ctrlBtn = () => document.querySelector('#keys button[data-k="ctrl"]');
+  function typed(s) {
+    if (ctrl && s.length) {                        /* Ctrl + a letter: its control character */
+      const c = s[0].toUpperCase().charCodeAt(0);
+      send(String.fromCharCode(c >= 64 && c < 96 ? c - 64 : c & 31) + s.slice(1));
+      ctrl = false; ctrlBtn().classList.remove('held');
+    } else send(s);
+  }
+  const KEYS = [
+    ['Esc', '\x1b'], ['Tab', '\t'], ['Ctrl', 'ctrl'], ['↑', '\x1b[A'], ['↓', '\x1b[B'], ['←', '\x1b[D'], ['→', '\x1b[C'],
+    ['^C', '\x03'], ['^D', '\x04'], ['^Z', '\x1a'], ['^L', '\x0c'], ['|', '|'], ['/', '/'], ['-', '-'],
+    ['~', '~'], [':', ':'], ['*', '*'], ['&', '&'], ['>', '>'], ['$', '$'], ['Home', '\x1b[H'], ['End', '\x1b[F'],
+    ['PgUp', '\x1b[5~'], ['PgDn', '\x1b[6~'],
+  ];
+  const keys = document.getElementById('keys');
+  for (const [label, k] of KEYS) {
+    const b = document.createElement('button');
+    b.textContent = label; b.dataset.k = k === 'ctrl' ? 'ctrl' : '';
+    b.addEventListener('pointerdown', e => e.preventDefault());   /* the field keeps the focus */
+    b.addEventListener('click', () => {
+      if (k === 'ctrl') { ctrl = !ctrl; b.classList.toggle('held', ctrl); }
+      else typed(k);
+      input.focus();
+    });
+    keys.appendChild(b);
+  }
+  const SENTINEL = ' ';                            /* so that a backspace on an empty field still comes */
+  input.value = SENTINEL;
+  let last = SENTINEL;
+  input.addEventListener('input', () => {
+    const v = input.value;
+    let i = 0;
+    while (i < v.length && i < last.length && v[i] === last[i]) i++;
+    for (let n = last.length - i; n > 0; n--) send('\x7f');
+    if (v.length > i) typed(v.slice(i));
+    last = v;
+    if (v.length > 64 || v.length < 1) { input.value = SENTINEL; last = SENTINEL; }
+  });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); send('\r'); input.value = SENTINEL; last = SENTINEL; }
+  });
+  document.getElementById('enter').addEventListener('pointerdown', e => e.preventDefault());
+  document.getElementById('enter').addEventListener('click', () => { send('\r'); input.focus(); });
+  document.getElementById('term').addEventListener('click', () => { if (touch) input.focus(); });
+
   const show = which => {
     for (const k of ['term', 'screen']) {
       document.getElementById('p-' + k).classList.toggle('on', k === which);
       document.getElementById('t-' + k).classList.toggle('on', k === which);
     }
     const f = document.getElementById('screen');
-    if (which === 'screen' && !f.src) f.src = 'novnc/vnc.html?autoconnect=true&resize=scale&path=websockify';
-    if (which === 'term') { fit(); term.focus(); }
+    if (which === 'screen' && !f.src) f.src = 'novnc/vnc.html?autoconnect=true&resize=scale&path=websockify&show_dot=true';
+    if (which === 'term') { fit(); if (!touch) term.focus(); }
   };
   document.getElementById('t-term').onclick = () => show('term');
   document.getElementById('t-screen').onclick = () => show('screen');

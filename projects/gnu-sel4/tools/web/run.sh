@@ -14,7 +14,9 @@ cp tools/web/index.html /tmp/www/
 x=$(ls -d ../../third_party/xterm-* | head -1)
 cp "$x/lib/xterm.js" "$x/css/xterm.css" /tmp/www/
 websockify --web /tmp/www 0.0.0.0:6080 127.0.0.1:5900 >/tmp/websockify-vnc.log 2>&1 &
-websockify 0.0.0.0:6081 127.0.0.1:4555 >/tmp/websockify-serial.log 2>&1 &
+# The serial console: QEMU's socket (one client) fanned out to every viewer (console-hub.py)
+python3 tools/web/console-hub.py 4555 4560 >/tmp/console-hub.log 2>&1 &
+websockify 0.0.0.0:6081 127.0.0.1:4560 >/tmp/websockify-serial.log 2>&1 &
 echo "web: open http://localhost"
 SOCK="-chardev socket,id=con,host=127.0.0.1,port=4555,server=on,wait=off,telnet=off"
 if [ "${PLATFORM:-}" = qemu-arm ]; then
