@@ -35,7 +35,11 @@
 #include <time.h>
 #include <poll.h>
 #include <sys/select.h>
+#ifdef __wasm__
+#include "wasm.h"            /* the browser port: IPC through the page */
+#else
 #include <microkit.h>
+#endif
 #include <sel4posix/protocol.h>
 #include <sel4posix/procmem.h>
 #include "arch.h"
@@ -51,8 +55,10 @@
 
 /* Programs do not link libmicrokit: IPC with the seL4 API directly.
  * The slot's POSIX_CHANNEL is the capability BASE_ENDPOINT_CAP + channel. */
+#ifndef __wasm__
 #define mr_set(i, v) seL4_SetMR(i, v)
 #define mr_get(i)    seL4_GetMR(i)
+#endif
 
 static uintptr_t brk_cur = PROC_HEAP_BASE, mmap_cur = PROC_MMAP_BASE;
 static long my_pid;
@@ -841,7 +847,13 @@ static int64_t ts_ns(const struct timespec *ts) { return ts ? ts->tv_sec * 10000
 
 static void release(uintptr_t addr, size_t len)
 {
+#ifdef __wasm__
+    /* the memory is the process's own: given back zeroed, as a new page would be */
+    uintptr_t have = __builtin_wasm_memory_size(0) * 65536;
+    if (addr < have) memset((void *)addr, 0, addr + len <= have ? len : have - addr);
+#else
     if (len) server_call(SYS_munmap, addr, len, 0, 0, 0, 0);
+#endif
 }
 
 static long sys_brk(uintptr_t addr)
@@ -851,6 +863,9 @@ static long sys_brk(uintptr_t addr)
             memset((void *)addr, 0, PAGE_UP(addr) - addr);
             release(PAGE_UP(addr), PAGE_UP(brk_cur) - PAGE_UP(addr));
         }
+#ifdef __wasm__
+        if (addr > brk_cur && !wasm_memory_ensure(addr)) return brk_cur;
+#endif
         brk_cur = addr;
     }
     return brk_cur;
@@ -899,6 +914,12 @@ static long sys_mmap(uintptr_t addr, size_t len, int prot, int flags, int fd, ui
     }
     pages_mark(first, n, 1);
     uintptr_t r = PROC_MMAP_BASE + first * 4096;
+#ifdef __wasm__
+    if (!wasm_memory_ensure(r + n * 4096)) {
+        pages_mark(first, n, 0);
+        return -ENOMEM;
+    }
+#endif
     if (anon) {
         if (flags & MAP_FIXED) release(r, n * 4096);  /* replaces whatever was there: zeroed pages */
         return r;

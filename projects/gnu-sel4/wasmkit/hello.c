@@ -1,74 +1,37 @@
 /*
- * wasmkit's first process (TODO item 24, 1b), as /sbin/init: no libc yet (experiment 2), the
- * POSIX protocol by hand, as runtime/syscall.c speaks it. It writes to the console, reads a file
- * through posix_server and fs_ext2, asks the time, sleeps, and exits.
+ * wasmkit's first program with a libc (TODO item 24), as /sbin/init: plain C on musl and the
+ * runtime, compiled with sel4-cc for wasm32. stdio on the console, a file through posix_server
+ * and fs_ext2, malloc, the clock, sleep, and its arguments.
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
-#include <stdint.h>
-#include <sel4posix/procmem.h>
-#include <sel4posix/protocol.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <sys/utsname.h>
 
-#define IMPORT(name) __attribute__((import_module("env"), import_name(#name)))
-IMPORT(wk_call) int64_t wk_call(int64_t n, int64_t a1, int64_t a2, int64_t a3, int64_t a4, int64_t a5, int64_t a6);
-IMPORT(wk_wait) void wk_wait(void);
-IMPORT(wk_now_ns) uint64_t wk_now_ns(void);
-
-enum { NR_read = 0, NR_write = 1, NR_close = 3, NR_nanosleep = 35, NR_getpid = 39, NR_exit_group = 231,
-       NR_openat = 257 };
-#define BUF ((char *)PROC_BUF_BASE)
-
-static long call(long n, long a1, long a2, long a3, long a4)
+int main(int argc, char **argv)
 {
-    for (;;) {
-        long r = wk_call(n, a1, a2, a3, a4, 0, 0);
-        if (r != POSIX_RETRY) return r;
-        wk_wait();                       /* until the server wakes it: then the call again */
-    }
-}
-static long len_(const char *s) { long n = 0; while (s[n]) n++; return n; }
-static long write_(const char *s, long n)
-{
-    for (long i = 0; i < n; i++) BUF[i] = s[i];
-    return call(NR_write, 1, 0, n, 0);
-}
-static void puts_(const char *s) { write_(s, len_(s)); }
-static void putu(uint64_t v)
-{
-    char b[24];
-    int i = sizeof b;
-    do b[--i] = '0' + v % 10; while (v /= 10);
-    write_(b + i, sizeof b - i);
-}
-
-__attribute__((export_name("_start"))) void _start(void)
-{
-    puts_("\r\nhello from a WebAssembly process on posix_server (wasmkit)\r\n");
-    puts_("pid ");
-    putu(call(NR_getpid, 0, 0, 0, 0));
-    puts_("\r\n");
-
-    const char *path = "/etc/os-release";
-    for (long i = 0; i <= len_(path); i++) BUF[i] = path[i];
-    long fd = call(NR_openat, -100, 0, 0, 0);
-    if (fd < 0) { puts_("open failed\r\n"); }
-    else {
-        long n = call(NR_read, fd, 0, 4096, 0);
-        if (n > 0) call(NR_write, 1, 0, n, 0);   /* what read left in the buffer, as it is */
-        call(NR_close, fd, 0, 0, 0);
-    }
-
-    uint64_t t0 = wk_now_ns();
-    enum { N = 1000 };
-    for (int i = 0; i < N; i++) call(NR_getpid, 0, 0, 0, 0);
-    puts_("a system call: ");
-    putu((wk_now_ns() - t0) / N);
-    puts_(" ns\r\nsleeping 1 s (the timer)... ");
-    t0 = wk_now_ns();
-    for (uint64_t target = t0 + 1000000000, now; (now = wk_now_ns()) < target; )   /* as the runtime */
-        if (wk_call(NR_nanosleep, target - now, 0, 0, 0, 0, 0) == POSIX_RETRY) wk_wait();
-    putu((wk_now_ns() - t0) / 1000000);
-    puts_(" ms\r\nbye\r\n");
-    call(NR_exit_group, 0, 0, 0, 0);
-    for (;;) wk_wait();
+    struct utsname u;
+    uname(&u);
+    printf("\nhello from C on musl, a WebAssembly process: %s %s (%s), pid %d, argv[0] %s\n",
+           u.sysname, u.release, u.machine, getpid(), argc ? argv[0] : "?");
+    FILE *f = fopen("/etc/os-release", "r");
+    char line[256];
+    while (f && fgets(line, sizeof line, f)) fputs(line, stdout);
+    if (f) fclose(f);
+    char *big = malloc(8 << 20);
+    memset(big, 'x', 8 << 20);
+    printf("malloc'd and wrote 8 MiB: %s\n", big[(8 << 20) - 1] == 'x' ? "ok" : "WRONG");
+    time_t t = time(NULL);
+    printf("the time: %s", ctime(&t));
+    printf("pi = %.6f, 2^64 = %.0Lf\n", 3.14159265358979, 18446744073709551616.0L);
+    struct timespec a, b;
+    clock_gettime(CLOCK_MONOTONIC, &a);
+    sleep(1);
+    clock_gettime(CLOCK_MONOTONIC, &b);
+    printf("slept %ld ms. bye\n", (long)((b.tv_sec - a.tv_sec) * 1000 + (b.tv_nsec - a.tv_nsec) / 1000000));
+    return 0;
 }

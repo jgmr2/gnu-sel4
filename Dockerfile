@@ -39,6 +39,10 @@ ENV MICROKIT_CONFIG=debug \
 # its own (Debian ships compiler-rt for the host only; tools/sel4-cc uses this one there)
 RUN apt-get update && apt-get install -y --no-install-recommends libgcc-14-dev-arm64-cross \
     && rm -rf /var/lib/apt/lists/*
+# The browser port (TODO item 24): compiler-rt for wasm32 (long double is 128-bit there: musl's
+# printf needs its soft float), which tools/sel4-cc links into WebAssembly programs
+RUN apt-get update && apt-get install -y --no-install-recommends libclang-rt-18-dev-wasm32 \
+    && rm -rf /var/lib/apt/lists/*
 
 USER dev
 WORKDIR /work

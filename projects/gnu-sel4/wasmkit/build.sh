@@ -52,12 +52,9 @@ STACK=1048576 pd posix_server 0x03000000 "fs_buf exec_buf proc_bufs" $SRV "$HERE
     "$HERE/wasmkit.c" "$LIBC" "$SDDF/util/printf.c"
 rm -f "$OUT"/*.o
 
-# The first process, as /sbin/init (no libc yet): linked above its shared buffer (PROC_BUF_BASE)
-# shellcheck disable=SC2086
-clang $CFLAGS -c "$HERE/hello.c" -o "$OUT/hello.o"
-wasm-ld --no-entry --import-memory --shared-memory --initial-memory=16777216 --max-memory=1073741824 \
-    --global-base=$((0x110000)) -z stack-size=262144 "$OUT/hello.o" -o "$OUT/hello.wasm"
-rm -f "$OUT/hello.o"
+# Programs: the sysroot (musl for wasm32, the runtime, sel4-cc), then the first one, /sbin/init
+"$HERE/build-sysroot.sh" "$OUT/../sysroot" >/dev/null
+"$OUT/../sysroot/bin/sel4-cc" -O2 "$HERE/hello.c" -o "$OUT/hello.wasm"
 
 # The RAM disk: partition 1 of the disk (its MBR entry)
 start=$(python3 -c 'import sys; m=open(sys.argv[1],"rb").read(512); print(int.from_bytes(m[454:458],"little"))' "$DISK")

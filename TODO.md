@@ -575,11 +575,17 @@ Principles the plan follows:
          wasmkit/hello.c as /sbin/init (no libc): console, a file read, the clock, nanosleep,
          exit, and the server restarting init. A system call 17-20 us (the buffer's copies:
          ~40 KiB each way, by a guess per call; exact lengths would bring it near 9)
-   - [ ] The runtime and musl for wasm32 (a musl arch: syscall_arch.h calling the runtime,
-         bits/, crt): seL4_Call/seL4_Wait become proc.js's wk_call/wk_wait; brk/mmap on
-         memory.grow; the startup block (argv, envp, auxv) from the page. Then coreutils
-         compiled for it. Note: long is 32 bits on wasm32 (server and programs): offsets
-         past 2 GiB are cut
+   - [x] The runtime and musl for wasm32: musl/wasm32 (an arch musl does not have: ILP32, the
+         protocol's x86_64 system call numbers and open flags, the thread pointer a global,
+         setjmp/longjmp as WebAssembly exceptions in both of clang's interfaces), the runtime's
+         IPC through proc.js (runtime/wasm.h: wk_ipc, wk_wait), brk and mmap in the process's
+         own memory (memory.grow), crt0-wasm32.c and the startup block from the page;
+         sel4-cc links for wasm32 (compiler-rt from Debian's libclang-rt-18-dev-wasm32).
+         wasmkit/hello.c as /sbin/init, plain C: stdio, a file, malloc, the time, printf of
+         doubles and long doubles, sleep
+   - [ ] coreutils compiled for wasm32, then dash (experiment 2). Notes: long is 32 bits on
+         wasm32 (server and programs): offsets past 2 GiB are cut, and the server's printf
+         formats for uint64_t (%lu: /proc, perf) are wrong there
    - [ ] Experiment 2: dash. fork: asyncify (unwind, copy the memory, rewind in a new worker)
          or vfork + exec only
    - [ ] Then the real kernel: seL4 ported to a "wasm" architecture (the portable C as it is;

@@ -1,6 +1,9 @@
 #!/bin/sh
 # Prepares a copy of musl ported to seL4 and builds it.
-#   usage: port-musl.sh <musl-source> <work-dir> <install-prefix> [x86_64|aarch64]
+#   usage: port-musl.sh <musl-source> <work-dir> <install-prefix> [x86_64|aarch64|wasm32]
+#
+# wasm32 (the browser port, TODO item 24) is an architecture musl does not have: wasm32/ here is
+# its arch/ and its source (see wasm32/README).
 #
 # The port consists of:
 #   1. arch/<arch>/syscall_arch.h: instead of the `syscall` (x86_64) or `svc` (aarch64)
@@ -12,8 +15,16 @@
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
 SRC=$1; WORK=$2; PREFIX=$3; ARCH=${4:-x86_64}
+HERE=$(cd "$(dirname "$0")" && pwd)
 
 rm -rf "$WORK"; cp -a "$SRC" "$WORK"; cd "$WORK"
+if [ "$ARCH" = wasm32 ]; then
+    cp -a "$HERE/wasm32/arch" arch/wasm32
+    for d in "$HERE"/wasm32/src/*/; do
+        mkdir -p "src/$(basename "$d")/wasm32" && cp "$d"* "src/$(basename "$d")/wasm32/"
+    done
+    sed -i 's/^arm\*) ARCH=arm ;;$/&\nwasm32*) ARCH=wasm32 ;;/' configure
+fi
 
 cat > arch/$ARCH/syscall_arch.h <<'EOH'
 /* seL4: system calls are translated to IPC in the POSIX runtime */
@@ -49,9 +60,13 @@ rm -f src/process/$ARCH/vfork.s src/signal/$ARCH/restore.s \
 if grep -rlnE '^\s*(syscall|svc)\b' src/*/$ARCH/; then
     echo "port-musl: there is still assembly entering the kernel" >&2; exit 1
 fi
-case $ARCH in aarch64) EXTRA=-mstrict-align ;; *) EXTRA= ;; esac
+case $ARCH in
+aarch64) EXTRA=-mstrict-align; TARGET=$ARCH-linux-musl ;;
+wasm32)  EXTRA="-matomics -mbulk-memory -mexception-handling -mllvm -wasm-enable-sjlj"; TARGET=wasm32 ;;   # a shared memory; setjmp as exceptions
+*)       EXTRA=; TARGET=$ARCH-linux-musl ;;
+esac
 
-CC="clang --target=$ARCH-linux-musl" AR=llvm-ar RANLIB=llvm-ranlib \
+CC="clang --target=$TARGET" AR=llvm-ar RANLIB=llvm-ranlib \
 CFLAGS="-O2 -fno-pic -fno-stack-protector $EXTRA" \
     ./configure --target=$ARCH-linux-musl --prefix="$PREFIX" --disable-shared --disable-wrapper >/dev/null
 make -j"$(nproc)" >/dev/null

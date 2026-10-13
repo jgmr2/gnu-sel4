@@ -7,7 +7,19 @@
 #pragma once
 #include <stdint.h>
 
-#if defined(__x86_64__)
+#if defined(__wasm__)
+/* The browser port: the page's clock in nanoseconds since 1970 (so the epoch is 0 and the
+ * frequency 1e9), its crypto.getRandomValues, and musl's thread pointer global */
+__attribute__((import_module("env"), import_name("wk_now_ns"))) uint64_t wk_now_ns(void);
+__attribute__((import_module("env"), import_name("wk_random"))) uint32_t wk_random(void);
+extern uintptr_t __wasm_tp;
+static inline uint64_t arch_counter(void) { return wk_now_ns(); }
+static inline uint64_t arch_counter_hz(void) { return 1000000000; }
+static inline int arch_hwrand(uint64_t *v) { *v = (uint64_t)wk_random() << 32 | wk_random(); return 1; }
+static inline void arch_set_tp(uintptr_t tp) { __wasm_tp = tp; }
+static inline uintptr_t arch_get_tp(void) { return __wasm_tp; }
+
+#elif defined(__x86_64__)
 
 static inline uint64_t arch_counter(void)          /* the TSC */
 {

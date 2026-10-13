@@ -3,7 +3,7 @@
 // protection domain (wasmkit.h: its channels and name), then one Web Worker per PD (worker.js),
 // each told the addresses of its setvars. Then the devices: the terminal (xterm.js) for the
 // console PD, and the processes posix_server starts (proc.js), a worker each.
-// ?system=<name> picks <name>.json (default: system.json).
+// ?system=<name> picks <name>.json (default: system.json); ?debug tells when processes start and end.
 // SPDX-License-Identifier: BSD-2-Clause
 const CTL = 0x10000, PD_SIZE = 1024, PD0 = CTL + 1024, CH_OFF = 560, NAME_OFF = 688;
 const CONSOLE_IN = 0x04220000, CONSOLE_IN_SIZE = 0x1000, CONSOLE_KEYS = 2;
@@ -12,7 +12,8 @@ const log = s => { out.textContent += s; };
 const t0 = performance.now();
 if (!crossOriginIsolated) log('not cross-origin isolated: no shared memory (serve with COOP/COEP)\n');
 
-const name = new URLSearchParams(location.search).get('system') || 'system';
+const params = new URLSearchParams(location.search);
+const name = params.get('system') || 'system', debug = params.has('debug');   // ?debug: processes' lives
 const sys = await (await fetch(`${name}.json`)).json();
 for (const r of sys.regions)
     if (r.file) { r.data = new Uint8Array(await (await fetch(r.file)).arrayBuffer()); r.size = r.data.length; }
@@ -69,11 +70,16 @@ sys.pds.forEach((p, i) => {
         if (m.type === 'log') say(m.text);
         else if (m.type === 'term') term.write(m.bytes);
         else if (m.type === 'spawn') {
+            if (debug) say(`wasmkit: slot ${m.slot}: a ${m.bytes.length}-byte module, ${m.argc} arguments\n`);
             procs[m.slot]?.terminate();
             const pw = procs[m.slot] = new Worker('proc.js');
             pw.onerror = e => say(`wasmkit: process in slot ${m.slot}: ${e.message}\n`);
+            pw.onmessage = ({ data: c }) => say(`wasmkit: process in slot ${m.slot}: ${c.text}\n`);
             pw.postMessage({ ...m, sys: memory, server: i, procBufs: region.proc_bufs.addr });
-        } else if (m.type === 'end') { procs[m.slot]?.terminate(); procs[m.slot] = undefined; }
+        } else if (m.type === 'end') {
+            if (debug) say(`wasmkit: slot ${m.slot}: ended\n`);
+            procs[m.slot]?.terminate(); procs[m.slot] = undefined;
+        }
     };
     w.onerror = e => say(`wasmkit: ${p.name}: ${e.message}\n`);
     const setvars = sys.setvars.filter(v => v.pd === p.name)

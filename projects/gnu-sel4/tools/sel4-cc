@@ -7,7 +7,9 @@
 #
 # Use it to port programs with their own build system:
 #   ./configure --host=x86_64-linux-musl CC=/path/to/sysroot/bin/sel4-cc
-# (aarch64-linux-musl for an ARM build: the sysroot's `arch` file says which)
+# (aarch64-linux-musl for an ARM build: the sysroot's `arch` file says which; wasm32: the browser
+# port, TODO item 24, a WebAssembly module importing a shared memory, linked above its shared
+# buffer, with setjmp/longjmp as WebAssembly exceptions)
 #
 # SPDX-License-Identifier: BSD-2-Clause
 SYSROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -20,13 +22,24 @@ CCACHE=
 # The compiler's own headers too (arm_neon.h, intrinsics), which -nostdinc leaves out
 FLAGS="-nostdinc -isystem $SYSROOT/include -isystem $($CC -print-resource-dir)/include -fno-pic -fno-stack-protector"
 [ "$ARCH" = aarch64 ] && FLAGS="$FLAGS -mstrict-align"
+if [ "$ARCH" = wasm32 ]; then
+    CC="clang --target=wasm32"
+    FLAGS="-nostdinc -isystem $SYSROOT/include -isystem $($CC -print-resource-dir)/include
+           -matomics -mbulk-memory -mexception-handling -mllvm -wasm-enable-sjlj"
+fi
 
 link=1
 for a in "$@"; do
     case "$a" in -c|-S|-E|-M|-MM) link=0 ;; esac
 done
 
-if [ "$link" = 1 ]; then
+if [ "$link" = 1 ] && [ "$ARCH" = wasm32 ]; then
+    # shellcheck disable=SC2086
+    exec $CC $FLAGS -nostdlib -Wl,--import-memory,--shared-memory,--initial-memory=16777216 \
+        -Wl,--max-memory=1073741824,--global-base=1114112,-z,stack-size=1048576 -L"$SYSROOT/lib" \
+        "$SYSROOT/lib/crt0.o" "$@" "$SYSROOT/lib/libsel4posix.a" "$SYSROOT/lib/libc.a" \
+        "$($CC -print-resource-dir)/lib/wasi/libclang_rt.builtins-wasm32.a"
+elif [ "$link" = 1 ]; then
     # compiler-rt: what the compiler calls on its own (128-bit division, etc.)
     RT=$($CC --rtlib=compiler-rt -print-libgcc-file-name)
     # aarch64: Debian's compiler-rt is the host's only; the cross libgcc instead (Dockerfile)

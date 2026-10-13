@@ -1,0 +1,8 @@
+musl's arch/wasm32 for GNU/seL4's browser port (TODO item 24): port-musl.sh copies arch/ into
+musl's arch/wasm32 and src/ over musl's src/. ILP32 like arm, little endian, 64-bit time_t (no
+time32 compatibility: a new ABI), long double is IEEE quad as clang has it on wasm32. The system
+call numbers are x86_64's, the POSIX protocol's (runtime/syscall.c needs no map), and so are the
+open flags (generic bits/fcntl.h). No assembly: the thread pointer is a global (__wasm_tp),
+setjmp/longjmp are WebAssembly exceptions (clang's -mllvm -wasm-enable-sjlj; src/setjmp/wasm32).
+Copied from musl: bits/float.h (aarch64's), bits/syscall.h.in (x86_64's), bits/signal.h and
+bits/user.h (arm's: only their definitions are used).

@@ -31,12 +31,22 @@
 #define PROC_BUF_BASE     0x30000000UL      /* = POSIX_BUF_SIZE bytes */
 #endif
 #define PROC_IPCBUF       0x30100000UL      /* 4 KiB, after the shared buffer */
+#ifdef __wasm__                             /* in the process's own memory, grown as they are used */
+#define PROC_HEAP_BASE    0x04000000UL
+#define PROC_HEAP_SIZE    0x10000000UL      /* 256 MiB */
+#else
 #define PROC_HEAP_BASE    0x40000000UL
 #define PROC_HEAP_SIZE    0x10000000UL      /* 256 MiB */
+#endif
 #define PROC_STACK_BASE   0x60000000UL
 #define PROC_STACK_SIZE   0x00800000UL      /* 8 MiB */
+#ifdef __wasm__
+#define PROC_MMAP_BASE    0x14000000UL
+#define PROC_MMAP_SIZE    0x20000000UL      /* 512 MiB: up to the 1 GiB a process's memory may grow to */
+#else
 #define PROC_MMAP_BASE    0x80000000UL
 #define PROC_MMAP_SIZE    0x40000000UL      /* 1 GiB */
+#endif
 
 /* Each slot's window inside posix_server, for the shared and IPC buffers only:
  * address v of the process in slot s is seen at PROC_WIN_BASE + (s << PROC_WIN_SHIFT) + v.
