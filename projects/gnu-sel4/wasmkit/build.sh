@@ -69,10 +69,14 @@ install_prog() {   # install_prog <file> <path>
 }
 install_prog "$OUT/init.wasm" /sbin/init
 install_prog "$OUT/hello.wasm" /bin/hello
-for p in coreutils/src/coreutils:/bin/coreutils dash/src/dash:/bin/dash; do
+PS=procps/inst/usr/local/bin NC=ncurses/inst/usr/bin
+for p in coreutils/src/coreutils:/bin/coreutils dash/src/dash:/bin/dash \
+         $(for b in ps top free uptime pgrep pkill pidof watch vmstat pwdx tload; do echo "$PS/$b:/bin/$b"; done) \
+         $(for b in clear tput reset tset infocmp tic toe tabs; do echo "$NC/$b:/bin/$b"; done); do
     [ -f "$OUT/../${p%%:*}" ] || continue
-    llvm-objcopy --strip-debug "$OUT/../${p%%:*}" "$OUT/$(basename "${p%%:*}").wasm"
-    install_prog "$OUT/$(basename "${p%%:*}").wasm" "${p##*:}"
+    mkdir -p "$OUT/progs"
+    llvm-objcopy --strip-debug "$OUT/../${p%%:*}" "$OUT/progs/$(basename "${p%%:*}").wasm"
+    install_prog "$OUT/progs/$(basename "${p%%:*}").wasm" "${p##*:}"
 done
 cp "$HERE/site/index.html" "$HERE/site/wasmkit.js" "$HERE/site/worker.js" "$HERE/site/proc.js" \
     "$HERE/system.json" "$HERE/bench.json" "$OUT/"

@@ -10,6 +10,7 @@ class H(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         self.send_header("Cross-Origin-Opener-Policy", "same-origin")
         self.send_header("Cross-Origin-Embedder-Policy", "credentialless")
+        self.send_header("Cache-Control", "no-store")         # a rebuilt page is the page, workers too
         super().end_headers()
     def send_head(self):
         path = self.translate_path(self.path)

@@ -7,7 +7,7 @@
 const PD0 = 0x10000 + 1024, PD_SIZE = 1024, PROCS = 0x18000, FROM_PROC = 0x100;
 const BUF = 0x10000, BUF_SIZE = 0x100000, PATH2 = 0x8000;
 const NR = { read: 0, write: 1, pread64: 17, pwrite64: 18, readv: 19, writev: 20, getdents64: 217,
-             readlink: 89, readlinkat: 267, getcwd: 79, execve: 59, recvfrom: 45, sendto: 44 };
+             readlink: 89, readlinkat: 267, getcwd: 79, execve: 59, exit: 60, exit_group: 231, recvfrom: 45, sendto: 44 };
 const RETRY = -0x7000n;
 
 onmessage = async ({ data: { sys, memory, bytes, slot, server, procBufs, args, argc, envc, debug } }) => {
@@ -42,9 +42,11 @@ onmessage = async ({ data: { sys, memory, bytes, slot, server, procBufs, args, a
         for (let i = 0; i < 7; i++) regs[i] = mr[i];
         Atomics.store(i32, CALL, 0);
         Atomics.store(i32, LOCK, 0); Atomics.notify(i32, LOCK, 1);
-        // A successful execve: this slot is another program's now (a worker of its own); this one
-        // never runs again, and the page ends its worker
-        if (N === NR.execve && r === 0n) for (;;) Atomics.wait(i32, WAKE, Atomics.load(i32, WAKE));
+        // A successful execve, or exit: this slot is another program's now (a worker of its own,
+        // or init again); this one never runs again (musl calls exit again if exit_group
+        // returns: the server would take it for the new program's), and the page ends its worker
+        if ((N === NR.execve && r === 0n) || N === NR.exit || N === NR.exit_group)
+            for (;;) Atomics.wait(i32, WAKE, Atomics.load(i32, WAKE));
         if (r !== RETRY) new Uint8Array(memory.buffer).set(sysU8.subarray(stage, stage + outLen(N, Number(r))), BUF);
         return r;
     };

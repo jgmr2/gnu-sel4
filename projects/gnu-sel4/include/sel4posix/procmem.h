@@ -31,9 +31,11 @@
 #define PROC_BUF_BASE     0x30000000UL      /* = POSIX_BUF_SIZE bytes */
 #endif
 #define PROC_IPCBUF       0x30100000UL      /* 4 KiB, after the shared buffer */
-#ifdef __wasm__                             /* in the process's own memory, grown as they are used */
-#define PROC_HEAP_BASE    0x04000000UL
-#define PROC_HEAP_SIZE    0x10000000UL      /* 256 MiB */
+#ifdef __wasm__                             /* in the process's own memory, which grows (it is
+                                               contiguous) up to what is used: low, just above the
+                                               program (its data and stack, from 0x110000) */
+#define PROC_HEAP_BASE    0x00800000UL
+#define PROC_HEAP_SIZE    0x00800000UL      /* 8 MiB of brk (musl's malloc maps the rest) */
 #else
 #define PROC_HEAP_BASE    0x40000000UL
 #define PROC_HEAP_SIZE    0x10000000UL      /* 256 MiB */
@@ -41,8 +43,8 @@
 #define PROC_STACK_BASE   0x60000000UL
 #define PROC_STACK_SIZE   0x00800000UL      /* 8 MiB */
 #ifdef __wasm__
-#define PROC_MMAP_BASE    0x14000000UL
-#define PROC_MMAP_SIZE    0x20000000UL      /* 512 MiB: up to the 1 GiB a process's memory may grow to */
+#define PROC_MMAP_BASE    0x01000000UL
+#define PROC_MMAP_SIZE    0x3f000000UL      /* up to the 1 GiB a process's memory may grow to */
 #else
 #define PROC_MMAP_BASE    0x80000000UL
 #define PROC_MMAP_SIZE    0x40000000UL      /* 1 GiB */

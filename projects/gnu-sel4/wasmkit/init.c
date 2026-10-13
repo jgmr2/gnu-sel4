@@ -6,12 +6,16 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
 
 int main(void)
 {
+    /* When a program that had the console exits, the server hangs the terminal up: its SIGHUP
+     * reaches this init that replaces it (TODO item 24). Ignored, by the shell too */
+    signal(SIGHUP, SIG_IGN);
     setsid();
     int fd = open("/dev/console", O_RDWR);
     if (fd >= 0) {

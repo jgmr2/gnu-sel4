@@ -595,6 +595,13 @@ Principles the plan follows:
          Found: a wake-up given to a slot reached the program that had exec'd away (still
          waiting until the page ends its worker), not the new one: slot_signal wakes every
          waiter. ?debug shows a process's retries and wake-ups
+   - [x] ncurses and procps compiled for wasm32 (their port scripts): ps aux, free, uptime,
+         clear, tput in the RAM disk (`exec ps aux` from dash: right). Process memory: the
+         heap and mmap now start just above the program (a wasm memory is contiguous: mmap at
+         320 MiB had made every process 320 MiB). A process stays parked after exit or exit
+         _group (musl calls exit again if exit_group returns: the server took it for init's).
+         init ignores SIGHUP: the hang-up of the console when a program that had it exits
+         reached the init that replaced it (the server's order of events there, to look at)
    - [ ] Experiment 2: fork, with binaryen's asyncify (Debian's binaryen package): the stack
          unwound into the memory, the memory copied into a new worker, both rewound (a vfork
          with setjmp does not do: the child returns from fork, and dash's child changes the
