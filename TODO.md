@@ -493,3 +493,24 @@ Principles the plan follows:
    - [ ] Audio, accelerated graphics (today: the firmware's framebuffer only)
    - [ ] Side channels: kernel mitigations, the VM on its own cores, seL4's domain scheduler
    - [ ] Console scrollback
+21. [ ] **File systems as servers: one per partition, a factory, FUSE** (L). Needs: 11 (servers
+        split out of posix_server), 9 (threads, for FUSE file systems), 14 (the ext4 server is the
+        first of them). Precedent: GNU Hurd's translators
+   - [ ] Probing: each partition's type from its magic numbers (as blkid does)
+   - [ ] A factory that starts one file system server per partition, on demand, holding a
+         capability to that partition only: a malicious file system (a USB stick) crashes its
+         own server, nothing else
+   - [ ] One VFS that posix_server talks to, whatever server is behind a mount point
+   - [ ] FUSE as IPC: the FUSE protocol carried to a server instead of /dev/fuse, so ntfs-3g,
+         exFAT, apfs-fuse, sshfs and rclone run unchanged
+   - [ ] Btrfs, XFS and ZFS: mounted in the Linux VM and exported (virtio-fs or 9p). Semantics
+         (permissions, case, xattrs) are adapted; formats are never converted in place
+22. [ ] **A demo in the browser** (M). Needs: nothing for the console; 8 (the desktop) for the GUI
+   - [ ] The system emulated in WebAssembly with qemu-wasm (x86_64 runs today's build; v86 is
+         32-bit only; RISC-V would be the fastest, item 16)
+   - [ ] Network through a WebSocket proxy (a small server relaying the guest's traffic), so a
+         page can reach nginx or ssh inside the demo
+   - [ ] GUI: the guest's framebuffer (virtio-gpu 2D) drawn into a canvas; keyboard and mouse
+         from the page. 3D through WebGPU is research
+   - [ ] A landing page with the demo behind a button (COOP/COEP headers on that page only, for
+         SharedArrayBuffer; the image on a CDN with CORS), published by CI on every build
