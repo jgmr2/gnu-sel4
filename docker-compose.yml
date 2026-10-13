@@ -1,4 +1,7 @@
 # GNU/seL4 with Docker only (no other host setup):
+#   docker compose up -d                 the pages: http://localhost (the ARM64 build, booted in
+#                                        QEMU here) and http://localhost:8101 (the demo, QEMU in
+#                                        the browser: tools/wasm). The rest are tools, run by name:
 #   docker compose run --rm build        build everything and install it into disk.img
 #   docker compose run --rm test         automated tests in headless QEMU (needs /dev/kvm)
 #   docker compose run --rm shell        a shell in the build environment
@@ -30,15 +33,18 @@ x-gnu-sel4: &gnu-sel4
 services:
   build:
     <<: *gnu-sel4
+    profiles: [tools]
     command: make
   test:
     <<: *gnu-sel4
+    profiles: [tools]
     devices:
       - /dev/kvm
     user: root                       # /dev/kvm belongs to the host's kvm group
     command: make test
   run:
     <<: *gnu-sel4
+    profiles: [tools]
     devices:
       - /dev/kvm
     user: root                       # /dev/kvm belongs to the host's kvm group
@@ -60,8 +66,9 @@ services:
       - .:/work
       - ${DISK_DIR:-./projects/gnu-sel4}:${DISK_DIR:-/work/projects/gnu-sel4}   # where disk.img's link points
     working_dir: /work/projects/gnu-sel4
-    environment:
-      BUILD_DIR: /work/projects/gnu-sel4/build   # what ../../dev.sh make built
+    environment:                     # the ARM64 build (make PLATFORM=qemu-arm); ./web.sh x86: the other
+      PLATFORM: ${WEB_PLATFORM:-qemu-arm}
+      BUILD_DIR: /work/projects/gnu-sel4/${WEB_BUILD:-build-qemu-arm}
     devices:
       - /dev/kvm
     ports:
@@ -72,14 +79,39 @@ services:
       - "127.0.0.1:8090:8090"        # -> native GNU/seL4:8080
       - "127.0.0.1:2223:2223"        # -> native GNU/seL4:22 (ssh)
     command: tools/web/run.sh
+  demo:                              # the browser demo (TODO item 22): tools/wasm/make-site.sh's pages
+    image: gnu-sel4-web:local
+    volumes:
+      - .:/work
+    working_dir: /work/projects/gnu-sel4
+    environment:
+      SERVE_HOST: 0.0.0.0
+      SERVE_CERT: /work/.cache/demo-tls/cert.pem
+      SERVE_KEY: /work/.cache/demo-tls/key.pem
+      DEMO_HOST: ${DEMO_HOST:-localhost}
+    ports:                           # DEMO_BIND=0.0.0.0 (in .env): other devices too, at https://DEMO_HOST:8101
+      - "${DEMO_BIND:-127.0.0.1}:8101:8101"   # init + dash, from a snapshot at its prompt
+    # HTTPS with a certificate of its own, made once (for localhost and DEMO_HOST; each device
+    # accepts it the first time)
+    command: >
+      sh -c 'd=/work/.cache/demo-tls; mkdir -p $$d;
+      [ -f $$d/cert.pem ] && grep -qx "$$DEMO_HOST" $$d/host 2>/dev/null ||
+      { openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj /CN=gnu-sel4-demo
+      -keyout $$d/key.pem -out $$d/cert.pem
+      -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,$$(case $$DEMO_HOST in *[!0-9.]*) echo DNS;; *) echo IP;; esac):$$DEMO_HOST"
+      2>/dev/null && echo "$$DEMO_HOST" > $$d/host; };
+      exec python3 tools/wasm/serve.py build-wasm/site-dash 8101'
   shell:
     <<: *gnu-sel4
+    profiles: [tools]
     command: bash
   vm-deps:                           # the VM image's pinned pieces (deps.lock) -> third_party/
     <<: *gnu-sel4
+    profiles: [tools]
     working_dir: /work
     command: ./fetch-deps.sh --only-vm
   vm-rootfs:                         # as make vm-rootfs (deps.lock, "VM image")
+    profiles: [tools]
     depends_on:
       vm-deps:
         condition: service_completed_successfully

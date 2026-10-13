@@ -2,6 +2,8 @@
 # serve.py <site-dir> [port]: serves the browser demo with the headers SharedArrayBuffer needs.
 # A file with a .gz beside it (make-site.sh compresses the packed images) goes out compressed,
 # and the browser undoes it (Content-Encoding: gzip).
+# SERVE_HOST: the address to listen on (127.0.0.1). SERVE_CERT and SERVE_KEY: HTTPS, which other
+# devices need (SharedArrayBuffer only in a secure context: https, or localhost).
 # SPDX-License-Identifier: BSD-2-Clause
 import http.server, sys, functools, os
 class H(http.server.SimpleHTTPRequestHandler):
@@ -21,4 +23,10 @@ class H(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         return f
 port = int(sys.argv[2]) if len(sys.argv) > 2 else 8099
-http.server.ThreadingHTTPServer(("127.0.0.1", port), functools.partial(H, directory=sys.argv[1])).serve_forever()
+srv = http.server.ThreadingHTTPServer((os.environ.get("SERVE_HOST", "127.0.0.1"), port), functools.partial(H, directory=sys.argv[1]))
+if os.environ.get("SERVE_CERT"):
+    import ssl
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(os.environ["SERVE_CERT"], os.environ["SERVE_KEY"])
+    srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+srv.serve_forever()

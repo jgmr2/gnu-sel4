@@ -16,3 +16,4 @@
 /.cache/
 projects/gnu-sel4/disk.img.*
 __pycache__/
+/.env
