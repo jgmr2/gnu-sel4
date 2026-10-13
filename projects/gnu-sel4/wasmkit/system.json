@@ -1,21 +1,103 @@
 {
-  "comment": "wasmkit's system (TODO item 24, experiment 1): what a Microkit .system file says, by hand for now",
-  "memory_pages": 16384,
-  "pds": [
-    { "name": "fs_ext2", "wasm": "fs_ext2.wasm" },
-    { "name": "bench", "wasm": "bench.wasm" }
-  ],
-  "channels": [
-    { "a": "bench", "a_id": 0, "b": "fs_ext2", "b_id": 1 }
-  ],
-  "regions": [
-    { "name": "fs_buf", "addr": 67108864, "size": 1048576 },
-    { "name": "ramdisk", "addr": 83886080, "file": "part1.img" }
-  ],
-  "setvars": [
-    { "pd": "fs_ext2", "symbol": "fs_buf", "region": "fs_buf" },
-    { "pd": "bench", "symbol": "fs_buf", "region": "fs_buf" },
-    { "pd": "fs_ext2", "symbol": "ramdisk_start", "region": "ramdisk" },
-    { "pd": "fs_ext2", "symbol": "ramdisk_end", "region": "ramdisk", "end": true }
-  ]
+ "comment": "wasmkit's system (TODO item 24, 1b): posix_server with fs_ext2, a console and a timer; regions as layout.h",
+ "memory_pages": 16384,
+ "pds": [
+  {
+   "name": "fs_ext2",
+   "wasm": "fs_ext2.wasm"
+  },
+  {
+   "name": "console",
+   "wasm": "console.wasm"
+  },
+  {
+   "name": "timer",
+   "wasm": "timer.wasm"
+  },
+  {
+   "name": "posix_server",
+   "wasm": "posix_server.wasm"
+  }
+ ],
+ "channels": [
+  {
+   "a": "posix_server",
+   "a_id": 21,
+   "b": "fs_ext2",
+   "b_id": 1
+  },
+  {
+   "a": "posix_server",
+   "a_id": 30,
+   "b": "console",
+   "b_id": 0
+  },
+  {
+   "a": "posix_server",
+   "a_id": 31,
+   "b": "console",
+   "b_id": 1
+  },
+  {
+   "a": "posix_server",
+   "a_id": 32,
+   "b": "timer",
+   "b_id": 0
+  }
+ ],
+ "regions": [
+  {
+   "name": "fs_buf",
+   "addr": 67108864,
+   "size": 1048576
+  },
+  {
+   "name": "exec_buf",
+   "addr": 83886080,
+   "size": 16777216
+  },
+  {
+   "name": "proc_bufs",
+   "addr": 100663296,
+   "size": 134217728
+  },
+  {
+   "name": "ramdisk",
+   "addr": 234881024,
+   "file": "part1.img"
+  }
+ ],
+ "setvars": [
+  {
+   "pd": "fs_ext2",
+   "symbol": "fs_buf",
+   "region": "fs_buf"
+  },
+  {
+   "pd": "fs_ext2",
+   "symbol": "ramdisk_start",
+   "region": "ramdisk"
+  },
+  {
+   "pd": "fs_ext2",
+   "symbol": "ramdisk_end",
+   "region": "ramdisk",
+   "end": true
+  },
+  {
+   "pd": "posix_server",
+   "symbol": "fs_buf",
+   "region": "fs_buf"
+  },
+  {
+   "pd": "posix_server",
+   "symbol": "exec_buf",
+   "region": "exec_buf"
+  },
+  {
+   "pd": "posix_server",
+   "symbol": "proc_bufs",
+   "region": "proc_bufs"
+  }
+ ]
 }

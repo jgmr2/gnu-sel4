@@ -10,7 +10,17 @@
 #include <stdbool.h>
 #include <sel4/sel4.h>
 
-#if defined(__x86_64__)
+#if defined(__wasm__)
+/* The browser port (wasmkit, TODO item 24): no frames or threads of seL4's here; the clock is the
+ * page's, in nanoseconds; random bytes from the page's crypto.getRandomValues */
+#define ARCH_UNAME          "wasm32"
+uint64_t wasmkit_now_ns(void);
+__attribute__((import_module("env"), import_name("wk_random"))) uint32_t wk_random(void);
+static inline uint64_t arch_counter(void) { return wasmkit_now_ns(); }
+static inline uint64_t arch_counter_hz(void) { return 1000000000; }
+static inline bool arch_hwrand(uint64_t *v) { *v = (uint64_t)wk_random() << 32 | wk_random(); return true; }
+
+#elif defined(__x86_64__)
 #include <sel4/sel4_arch/mapping.h>      /* SEL4_MAPPING_LOOKUP_*, seL4_MappingFailedLookupLevel */
 
 #define ARCH_FRAME_OBJECT   seL4_X86_4K

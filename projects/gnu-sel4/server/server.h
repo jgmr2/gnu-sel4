@@ -197,6 +197,12 @@ uint64_t mem_free(void);
 bool slot_make(int s);
 seL4_CPtr slot_tcb(int s);
 void slot_signal(int s);
+void slot_suspend(int s);                      /* stopped (SIGSTOP) until slot_resume */
+void slot_resume(int s);
+void slot_halt(int s);                         /* it runs no more: exit (wasm: its worker ends) */
+#ifdef __wasm__
+long mem_wasm_exec(int s, long ino, uint64_t size, const char *args, size_t args_len, uint32_t argc, uint32_t envc);
+#endif
 uintptr_t proc_win(int s, uintptr_t vaddr);    /* the shared buffer of slot s (contiguous) */
 uint8_t *mem_page_ptr(int s, uintptr_t v);     /* byte v of slot s as the server sees it (page must exist) */
 bool mem_copy_in(int s, uintptr_t v, const void *src, size_t n);   /* src NULL: clear */

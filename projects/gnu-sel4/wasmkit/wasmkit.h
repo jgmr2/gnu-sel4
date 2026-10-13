@@ -38,4 +38,19 @@ struct wk_sys {
 };
 
 #define WK_SYS ((struct wk_sys *)WK_CTL_BASE)
+
+/* Processes (posix_server's, experiment 1b): each a worker with a memory of its own, so its
+ * calls are made by its JS (proc.js), from a block of its own here. A call's call_from is
+ * WK_FROM_PROC + its slot; the server wakes it on wake (POSIX_RETRY) */
+#define WK_PROC_BASE 0x18000
+#define WK_MAX_PROC  128
+#define WK_FROM_PROC 0x100
+struct wk_proc {                            /* 256 bytes each */
+    uint32_t wake;                          /* bumped by the server: the process may call again */
+    uint32_t pad[3];
+    seL4_Word mr[16];                       /* its message registers */
+    uint8_t spare[256 - 16 - 128];
+};
+#define WK_PROCS ((struct wk_proc *)WK_PROC_BASE)
+_Static_assert(sizeof(struct wk_proc) == 256, "wk_proc layout");
 _Static_assert(sizeof(struct wk_pd) == 1024, "wk_pd layout");

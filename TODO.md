@@ -567,9 +567,19 @@ Principles the plan follows:
          client. In headless Chrome: a call 9 us (31 without a short spin before sleeping),
          a 5-deep lookup + 4 KiB read 59 us, a 3.5 MiB file read at 655 MB/s; booted in 0.35 s
          (qemu-wasm: minutes, and an `ls` took 2.5 s)
-   - [ ] Experiment 1b: posix_server on wasmkit: a process is a Worker with its own memory
-         (the server reads and writes it directly); exec instantiates a .wasm from fs_ext2;
-         the runtime's calls over shared memory; the console on xterm.js
+   - [x] Experiment 1b: posix_server on wasmkit, with fs_ext2, a console PD (xterm.js) and a
+         timer PD (sDDF's protocols: tty.c and clock.c unchanged). A process is a Worker with a
+         memory of its own (isolated); server/mem_wasm.c replaces mem.c (copies through the
+         server's worker; each process's shared buffer is a megabyte of the system's, copied
+         around each call by proc.js); exec reads a .wasm from fs_ext2 and the page starts it.
+         wasmkit/hello.c as /sbin/init (no libc): console, a file read, the clock, nanosleep,
+         exit, and the server restarting init. A system call 17-20 us (the buffer's copies:
+         ~40 KiB each way, by a guess per call; exact lengths would bring it near 9)
+   - [ ] The runtime and musl for wasm32 (a musl arch: syscall_arch.h calling the runtime,
+         bits/, crt): seL4_Call/seL4_Wait become proc.js's wk_call/wk_wait; brk/mmap on
+         memory.grow; the startup block (argv, envp, auxv) from the page. Then coreutils
+         compiled for it. Note: long is 32 bits on wasm32 (server and programs): offsets
+         past 2 GiB are cut
    - [ ] Experiment 2: dash. fork: asyncify (unwind, copy the memory, rewind in a new worker)
          or vfork + exec only
    - [ ] Then the real kernel: seL4 ported to a "wasm" architecture (the portable C as it is;

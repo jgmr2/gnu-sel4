@@ -132,12 +132,14 @@ static void set_name(struct proc *p, const char *path)
     p->name[n] = 0;
 }
 
+#ifndef __wasm__
 static long start_thread(int slot, seL4_UserContext *ctx)
 {
     seL4_Error e = seL4_TCB_WriteRegisters(slot_tcb(slot), seL4_True, 0,
                                            sizeof(*ctx) / sizeof(seL4_Word), ctx);
     return e == seL4_NoError ? 0 : -EIO;
 }
+#endif
 
 /* ------------------------------------------------------------------ */
 /* exec: ELF loader                                                   */
@@ -211,6 +213,16 @@ static long load_program(struct proc *p, const char *path, const char *args, uin
         return load_program(p, interp_copy, newargs, nargc + (argc ? argc - 1 : 0), envc);
     }
 
+#ifdef __wasm__
+    /* The browser port: a WebAssembly module, instantiated by the page in a worker of its own */
+    if (memcmp(&eh, "\0asm", 4)) return -ENOEXEC;
+    int slot = p->slot;
+    mem_free_all(slot);
+    p->img_ino = 0;
+    p->nseg = 0;
+    size_t args_len = 0;
+    for (uint32_t i = 0; i < argc + envc; i++) args_len += strlen(args + args_len) + 1;
+#else
     if (memcmp(eh.e_ident, ELFMAG, SELFMAG) || eh.e_ident[EI_CLASS] != ELFCLASS64 ||
         eh.e_machine != ARCH_ELF_MACHINE || eh.e_type != ET_EXEC || eh.e_phnum > MAX_PHDRS ||
         eh.e_phentsize != sizeof(Elf64_Phdr))
@@ -315,6 +327,7 @@ static long load_program(struct proc *p, const char *path, const char *args, uin
         return -ENOMEM;
     }
 
+#endif
     /* For /proc: program and arguments */
     size_t el = strlen(abs);
     if (el >= sizeof p->exe) el = sizeof p->exe - 1;
@@ -337,10 +350,14 @@ static long load_program(struct proc *p, const char *path, const char *args, uin
     p->sig_pending &= p->sig_ignored ? ~p->sig_ignored : ~0ULL;
     set_name(p, abs);
 
+#ifdef __wasm__
+    return mem_wasm_exec(slot, ino, size, args, args_len, argc, envc);
+#else
     seL4_UserContext ctx;
     memset(&ctx, 0, sizeof ctx);
     arch_ctx_start(&ctx, eh.e_entry, sp, 0);
     return start_thread(slot, &ctx);
+#endif
 }
 
 static long sys_execve(void)
@@ -364,6 +381,10 @@ static long sys_execve(void)
 
 static long sys_fork(uintptr_t brk_cur, uintptr_t mmap_cur, uintptr_t sp, uintptr_t entry, uintptr_t fs_base)
 {
+#ifdef __wasm__
+    (void)brk_cur; (void)mmap_cur; (void)sp; (void)entry; (void)fs_base;
+    return -ENOSYS;                      /* the browser port: TODO item 24, experiment 2 */
+#else
     if (brk_cur < PROC_HEAP_BASE || brk_cur > PROC_HEAP_BASE + PROC_HEAP_SIZE ||
         mmap_cur < PROC_MMAP_BASE || mmap_cur > PROC_MMAP_BASE + PROC_MMAP_SIZE ||
         sp < PROC_STACK_BASE + 0x4000 || sp > PROC_STACK_BASE + PROC_STACK_SIZE ||
@@ -420,6 +441,7 @@ static long sys_fork(uintptr_t brk_cur, uintptr_t mmap_cur, uintptr_t sp, uintpt
         return -EAGAIN;
     }
     return c->pid;
+#endif
 }
 
 /* ------------------------------------------------------------------ */
@@ -433,7 +455,7 @@ void proc_exit(struct proc *p, int status)
 {
     if (p->state != P_RUN) return;
     if (p->slot >= 0) {
-        seL4_TCB_Suspend(slot_tcb(p->slot));
+        slot_halt(p->slot);
         procfs_account(p);
         mem_free_all(p->slot);
         slot_owner[p->slot] = NULL;
@@ -598,7 +620,7 @@ static void proc_stop(struct proc *p, int sig)
     p->cont_reported = true;
     p->sig_pending &= ~SIGBIT(SIGCONT);
     if (p == cur) p->stop_self = true;
-    else if (p->slot >= 0) seL4_TCB_Suspend(slot_tcb(p->slot));
+    else if (p->slot >= 0) slot_suspend(p->slot);
     tell_parent(p);
 }
 
@@ -608,7 +630,7 @@ static void proc_continue(struct proc *p)
     p->stopped = false;
     p->cont_reported = false;
     p->sig_pending &= ~(SIGBIT(SIGSTOP) | SIGBIT(SIGTSTP) | SIGBIT(SIGTTIN) | SIGBIT(SIGTTOU));
-    if (p->slot >= 0) seL4_TCB_Resume(slot_tcb(p->slot));   /* nothing if it was not suspended */
+    if (p->slot >= 0) slot_resume(p->slot);   /* nothing if it was not suspended */
     proc_wake(p);                                    /* a parked call retries */
     tell_parent(p);
 }
@@ -796,7 +818,7 @@ static long sys_reboot(long magic, long cmd)
         return -EINVAL;
     vfs_unmount();
     for (int i = 0; i < NPROC; i++)                    /* nobody runs (or writes) any more */
-        if (procs[i].state == P_RUN && procs[i].slot >= 0) seL4_TCB_Suspend(slot_tcb(procs[i].slot));
+        if (procs[i].state == P_RUN && procs[i].slot >= 0) slot_halt(procs[i].slot);
     if ((uint32_t)cmd == RB_POWER_OFF) {
 #ifndef NO_ACPI_POWEROFF
         tty_puts("[posix] file system clean; powering off\n");
@@ -883,6 +905,7 @@ void proc_image_release(uint32_t ino)
     }
 }
 
+#ifndef __wasm__                          /* the browser port: no page faults */
 bool proc_fault(int slot, long label)
 {
     struct proc *p = proc_by_slot(slot);
@@ -945,6 +968,7 @@ bool proc_fault(int slot, long label)
     proc_exit(p, sig);
     return false;                          /* no reply: the slot stays stopped */
 }
+#endif
 
 /* ------------------------------------------------------------------ */
 /* Dispatch                                                           */

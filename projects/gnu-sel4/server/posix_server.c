@@ -197,6 +197,7 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
 /* Process faults. With VT-x, libmicrokit never replies to a fault (it assumes it
  * comes from a vCPU): if the process has to be resumed, the reply is sent right here
  * through Microkit's reply object. */
+#ifndef __wasm__                          /* the browser port has no page faults */
 #define MICROKIT_REPLY_CAP 4
 
 seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo *reply)
@@ -208,6 +209,7 @@ seL4_Bool fault(microkit_child child, microkit_msginfo msginfo, microkit_msginfo
     if (ok) seL4_Send(MICROKIT_REPLY_CAP, seL4_MessageInfo_new(0, 0, 0, 0));
     return seL4_False;
 }
+#endif
 
 void notified(microkit_channel ch)
 {

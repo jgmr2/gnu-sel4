@@ -203,6 +203,9 @@ uintptr_t proc_win(int s, uintptr_t vaddr)
 
 seL4_CPtr slot_tcb(int s) { return slots[s].tcb; }
 void slot_signal(int s) { seL4_Signal(slots[s].ntfn); }
+void slot_suspend(int s) { seL4_TCB_Suspend(slots[s].tcb); }
+void slot_resume(int s) { seL4_TCB_Resume(slots[s].tcb); }
+void slot_halt(int s) { seL4_TCB_Suspend(slots[s].tcb); }
 
 static uint32_t *leaf(struct slot *sl, uintptr_t v, bool create)
 {

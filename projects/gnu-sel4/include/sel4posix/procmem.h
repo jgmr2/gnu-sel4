@@ -25,7 +25,11 @@
 
 #define PROC_IMG_BASE     0x10000000UL
 #define PROC_IMG_SIZE     0x10000000UL      /* 256 MiB */
+#ifdef __wasm__
+#define PROC_BUF_BASE     0x10000UL         /* the browser port: 1 MiB below the program (linked at 0x110000) */
+#else
 #define PROC_BUF_BASE     0x30000000UL      /* = POSIX_BUF_SIZE bytes */
+#endif
 #define PROC_IPCBUF       0x30100000UL      /* 4 KiB, after the shared buffer */
 #define PROC_HEAP_BASE    0x40000000UL
 #define PROC_HEAP_SIZE    0x10000000UL      /* 256 MiB */

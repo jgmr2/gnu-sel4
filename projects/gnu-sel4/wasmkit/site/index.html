@@ -1,11 +1,14 @@
 <!doctype html>
-<!-- wasmkit, experiment 1 of the browser port (TODO item 24): GNU/seL4's fs_ext2 compiled to
-     WebAssembly, with Microkit's API on Web Workers. SPDX-License-Identifier: BSD-2-Clause -->
+<!-- wasmkit, the browser port (TODO item 24): GNU/seL4's components compiled to WebAssembly,
+     with Microkit's API on Web Workers. ?system=bench: experiment 1a's benchmark.
+     SPDX-License-Identifier: BSD-2-Clause -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>wasmkit</title>
+<link rel="stylesheet" href="https://unpkg.com/xterm@5.3.0/css/xterm.css">
+<script src="https://unpkg.com/xterm@5.3.0/lib/xterm.js"></script>
 <style>
   :root { --bg: #16181d; --fg: #d8dbe2; }
   @media (prefers-color-scheme: light) { :root { --bg: #fafafa; --fg: #1d1f24; } }
@@ -15,6 +18,7 @@
 </head>
 <body>
 <pre id="out"></pre>
+<div id="terminal"></div>
 <script type="module" src="wasmkit.js"></script>
 </body>
 </html>

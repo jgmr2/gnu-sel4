@@ -20,6 +20,14 @@ typedef bool seL4_Bool;
 typedef struct { seL4_Word label; seL4_Uint16 count; } seL4_MessageInfo_t;
 
 #define seL4_MsgMaxLength 120
+#define seL4_False false
+#define seL4_True true
+
+static inline seL4_MessageInfo_t seL4_MessageInfo_new(seL4_Word label, seL4_Word caps, seL4_Word extra, seL4_Word length)
+{
+    (void)caps; (void)extra;
+    return (seL4_MessageInfo_t){ label, (seL4_Uint16)length };
+}
 
 seL4_Word seL4_GetMR(int i);
 void seL4_SetMR(int i, seL4_Word v);

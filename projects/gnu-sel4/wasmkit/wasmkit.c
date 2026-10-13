@@ -15,6 +15,7 @@
  */
 #include <microkit.h>
 #include <stddef.h>
+#include <stdbool.h>
 #include "wasmkit.h"
 
 #define ATOMIC_LOAD(p)      __atomic_load_n((p), __ATOMIC_SEQ_CST)
@@ -99,13 +100,32 @@ microkit_msginfo microkit_ppcall(microkit_channel ch, microkit_msginfo msginfo)
 
 static void serve_call(void)
 {
-    struct wk_pd *from = &WK_SYS->pd[me->call_from];
-    __builtin_memcpy(me->mr, from->mr, sizeof me->mr);
+    seL4_Word *mr;                               /* the caller's registers: a PD's or a process's */
+    size_t n;
+    if (me->call_from >= WK_FROM_PROC) { mr = WK_PROCS[me->call_from - WK_FROM_PROC].mr; n = 16; }
+    else { mr = WK_SYS->pd[me->call_from].mr; n = WK_MRS; }
+    __builtin_memcpy(me->mr, mr, n * sizeof *mr);
     microkit_msginfo reply = protected(me->call_ch, me->call_info);
-    __builtin_memcpy(from->mr, me->mr, sizeof me->mr);
+    __builtin_memcpy(mr, me->mr, n * sizeof *mr);
     me->call_info = reply;
     ATOMIC_STORE(&me->call, WK_CALL_REPLY);
     wake(&me->call);
+}
+
+/* Optional, for a component: its configuration before init (what Microkit's tool patches into
+ * an ELF: sDDF's config structures), and a deadline for its waits (absolute, wasmkit_now_ns;
+ * 0: none), with what to do when it passes */
+__attribute__((weak)) void wasmkit_configure(void) {}
+__attribute__((weak)) uint64_t wasmkit_deadline(void) { return 0; }
+__attribute__((weak)) void wasmkit_timeout(void) {}
+
+static void wait_events(uint32_t seq)
+{
+    uint64_t dl = wasmkit_deadline();
+    if (!dl) { wait_while(&me->seq, seq); return; }
+    uint64_t now = wk_now_ns();
+    if (now < dl) __builtin_wasm_memory_atomic_wait32((int *)&me->seq, (int)seq, (long long)(dl - now));
+    if (wk_now_ns() >= dl) wasmkit_timeout();
 }
 
 /* The worker's entry: this PD's init, then its events for ever */
@@ -114,6 +134,7 @@ __attribute__((export_name("wasmkit_run"))) void wasmkit_run(unsigned id)
     me_id = id;
     me = &WK_SYS->pd[id];
     __builtin_memcpy(microkit_name, me->name, sizeof microkit_name);
+    wasmkit_configure();
     init();
     for (;;) {
         uint32_t seq = ATOMIC_LOAD(&me->seq);
@@ -128,6 +149,6 @@ __attribute__((export_name("wasmkit_run"))) void wasmkit_run(unsigned id)
             serve_call();
             did = true;
         }
-        if (!did) wait_while(&me->seq, seq);
+        if (!did) wait_events(seq);
     }
 }

@@ -21,7 +21,12 @@ uint64_t clock_epoch, clock_tsc0, clock_tsc_hz;
 
 uint64_t clock_rdtsc(void) { return arch_counter(); }   /* the TSC, or ARM's counter */
 
-#ifdef __aarch64__
+#if defined(__wasm__)
+/* The page's clock: the seconds since 1970 */
+__attribute__((import_module("env"), import_name("wk_epoch"))) uint64_t wk_epoch(void);
+static uint64_t read_rtc(void) { return wk_epoch(); }
+static uint64_t tsc_frequency(void) { return arch_counter_hz(); }
+#elif defined(__aarch64__)
 /* The PL031 real-time clock (QEMU virt: 0x9010000, mapped by meta.py): its data register is
  * the seconds since 1970 */
 uintptr_t rtc_base;
