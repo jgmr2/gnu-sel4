@@ -1,5 +1,5 @@
 #!/bin/sh
-# make-demo-disk.sh <arm-disk> <out>: the browser demo's disk (TODO item 22). qemu-wasm loads
+# make-demo-disk.sh <arm-disk> <out>: the browser demo's disk (TODO items 22, 24: wasmkit/build.sh's RAM disk). qemu-wasm loads
 # its images whole into the page's memory, so: partition 1 of the ARM build's disk (GNU/seL4's
 # ext2) alone, shrunk to its contents plus some room, in an MBR disk of its own. No VM partition.
 # That disk has been used: its accounts go back to rootfs/'s (no password: one is chosen on the
@@ -14,7 +14,7 @@ start=$(python3 -c 'import sys; m=open(sys.argv[1],"rb").read(512); print(int.fr
 count=$(python3 -c 'import sys; m=open(sys.argv[1],"rb").read(512); print(int.from_bytes(m[458:462],"little"))' "$DISK")
 dd if="$DISK" of="$TMP" bs=512 skip="$start" count="$count" conv=sparse status=none
 e2fsck -fy "$TMP" >/dev/null 2>&1 || true
-ROOTFS=$(cd "$(dirname "$0")/../../rootfs" && pwd)
+ROOTFS=$(cd "$(dirname "$0")/../rootfs" && pwd)
 empty() {   # empty <dir>: the files and directories in it, all but .keep
     debugfs -R "ls -p $1" "$TMP" 2>/dev/null | awk -F/ 'NF > 6 && $6 != "." && $6 != ".." && $6 != ".keep" {print $3 " " $6}' |
     while read -r mode name; do

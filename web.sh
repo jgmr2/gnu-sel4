@@ -1,7 +1,7 @@
 #!/bin/sh
 # ./web.sh: the pages (docker compose up: web and demo). web boots GNU/seL4's ARM64 build (what
 # ../../dev.sh make PLATFORM=qemu-arm built) and serves its serial console at http://localhost;
-# demo serves the browser demo at http://localhost:8101. disk.img may be a link to another disk:
+# kit serves the browser demo at https://localhost:8102. disk.img may be a link to another disk:
 # its directory is mounted too (DISK_DIR, kept in .env so a plain docker compose up finds it).
 # Extra arguments go to docker compose up.
 #   ./web.sh x86    the x86_64 build instead (make: serial console and screen)
@@ -17,5 +17,5 @@ if [ "${1:-}" = x86 ]; then
     shift
     export WEB_PLATFORM=qemu WEB_BUILD=build
 fi
-echo "web: http://localhost   demo: http://localhost:8101"
+echo "web: http://localhost   demo: https://localhost:8102"
 exec docker compose up "$@"

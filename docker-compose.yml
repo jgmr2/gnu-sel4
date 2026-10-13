@@ -1,8 +1,8 @@
 # GNU/seL4 with Docker only (no other host setup):
 #   docker compose up -d                 the pages: http://localhost (the ARM64 build, booted in
-#                                        QEMU here), https://localhost:8101 (the demo, QEMU in the
-#                                        browser: tools/wasm) and https://localhost:8102 (no
-#                                        emulator: wasmkit). The rest are tools, run by name:
+#                                        QEMU here) and https://localhost:8102 (the demo: GNU/seL4
+#                                        compiled to WebAssembly, wasmkit). The rest are tools,
+#                                        run by name:
 #   docker compose run --rm build        build everything and install it into disk.img
 #   docker compose run --rm test         automated tests in headless QEMU (needs /dev/kvm)
 #   docker compose run --rm shell        a shell in the build environment
@@ -80,7 +80,7 @@ services:
       - "127.0.0.1:8090:8090"        # -> native GNU/seL4:8080
       - "127.0.0.1:2223:2223"        # -> native GNU/seL4:22 (ssh)
     command: tools/web/run.sh
-  demo:                              # the browser demo (TODO item 22): tools/wasm/make-site.sh's pages
+  kit:                               # the browser demo (TODO item 24): GNU/seL4 compiled to WebAssembly, wasmkit/build.sh's page
     image: gnu-sel4-web:local
     volumes:
       - .:/work
@@ -90,10 +90,10 @@ services:
       SERVE_CERT: /work/.cache/demo-tls/cert.pem
       SERVE_KEY: /work/.cache/demo-tls/key.pem
       DEMO_HOST: ${DEMO_HOST:-localhost}
-    ports:                           # DEMO_BIND=0.0.0.0 (in .env): other devices too, at https://DEMO_HOST:8101
-      - "${DEMO_BIND:-127.0.0.1}:8101:8101"   # init + dash, from a snapshot at its prompt
+    ports:                           # DEMO_BIND=0.0.0.0 (in .env): other devices too, at https://DEMO_HOST:8102
+      - "${DEMO_BIND:-127.0.0.1}:8102:8102"
     # HTTPS with a certificate of its own, made once (for localhost and DEMO_HOST; each device
-    # accepts it the first time)
+    # accepts it the first time): other devices need a secure context for shared memory
     command: >
       sh -c 'd=/work/.cache/demo-tls; mkdir -p $$d;
       [ -f $$d/cert.pem ] && grep -qx "$$DEMO_HOST" $$d/host 2>/dev/null ||
@@ -101,20 +101,7 @@ services:
       -keyout $$d/key.pem -out $$d/cert.pem
       -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,$$(case $$DEMO_HOST in *[!0-9.]*) echo DNS;; *) echo IP;; esac):$$DEMO_HOST"
       2>/dev/null && echo "$$DEMO_HOST" > $$d/host; };
-      exec python3 tools/wasm/serve.py build-wasm/site-dash 8101'
-  kit:                               # the browser port without an emulator (TODO item 24): wasmkit/build.sh's page
-    image: gnu-sel4-web:local
-    volumes:
-      - .:/work
-    working_dir: /work/projects/gnu-sel4
-    environment:
-      SERVE_HOST: 0.0.0.0
-      SERVE_CERT: /work/.cache/demo-tls/cert.pem    # demo's certificate (it makes it)
-      SERVE_KEY: /work/.cache/demo-tls/key.pem
-    depends_on: [demo]
-    ports:
-      - "${DEMO_BIND:-127.0.0.1}:8102:8102"
-    command: python3 tools/wasm/serve.py build-wasm/kit 8102
+      exec python3 wasmkit/serve.py build-wasm/kit 8102'
   shell:
     <<: *gnu-sel4
     profiles: [tools]

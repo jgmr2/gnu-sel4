@@ -1,8 +1,9 @@
 #!/bin/sh
 # wasmkit/build.sh <disk.img> <out-dir>: the browser port (TODO item 24): GNU/seL4's components
 # compiled to WebAssembly, run by wasmkit (Microkit's API on Web Workers), with partition 1 of
-# <disk.img> as fs_ext2's RAM disk. Run inside ../../dev.sh (clang, wasm-ld, debugfs), after the
-# ARM build (its generated syscall tables). Serve <out-dir> with tools/wasm/serve.py (COOP/COEP:
+# <disk.img> as fs_ext2's RAM disk: a scrubbed copy of the ARM build's (make-demo-disk.sh), whose
+# programs this replaces with their wasm32 builds. Run inside ../../dev.sh (clang, wasm-ld, debugfs), after the
+# ARM build (its generated syscall tables). Serve <out-dir> with wasmkit/serve.py (COOP/COEP:
 # shared memory). system.json: posix_server (1b); bench.json (?system=bench): experiment 1a.
 #
 # The one shared memory, laid out by hand for now: layout.h (and system.json, bench.json).
@@ -70,7 +71,7 @@ install_prog() {   # install_prog <file> <path>
 install_prog "$OUT/init.wasm" /sbin/init
 install_prog "$OUT/hello.wasm" /bin/hello
 PS=procps/inst/usr/local/bin NC=ncurses/inst/usr/bin
-for p in coreutils/src/coreutils:/bin/coreutils dash/src/dash:/bin/dash \
+for p in coreutils/src/coreutils:/bin/coreutils dash/src/dash:/bin/dash vim/src/vim:/bin/vim \
          $(for b in ps top free uptime pgrep pkill pidof watch vmstat pwdx tload; do echo "$PS/$b:/bin/$b"; done) \
          $(for b in clear tput reset tset infocmp tic toe tabs; do echo "$NC/$b:/bin/$b"; done); do
     [ -f "$OUT/../${p%%:*}" ] || continue

@@ -516,32 +516,30 @@ Principles the plan follows:
    - [ ] Btrfs, XFS and ZFS: mounted in the Linux VM and exported (virtio-fs or 9p). Semantics
          (permissions, case, xattrs) are adapted; formats are never converted in place
 22. [ ] **A demo in the browser** (M). Needs: nothing for the console; 8 (the desktop) for the GUI
-   - [x] The system emulated in WebAssembly with qemu-wasm, the ARM64 build (October 2026):
-         tools/wasm/build-qemu-wasm.sh (ktock/qemu-wasm pinned, aarch64-softmmu, 2800 MiB growable
-         heap), make-demo-disk.sh (partition 1 shrunk to its contents), make-site.sh (the page,
-         the images packed), serve.py (COOP/COEP). Boots in the browser through the loader at EL2,
-         the kernel and the CapDL initializer to GNU/seL4's own components. Found on the way:
-         QEMU on a 32-bit host simulates at most 2047 MiB (the SDK kernel expects 2 GiB: the last
-         MiB is missing); the TCG backend's block modules declare 65535 pages of memory and
-         addFunction is left out by emscripten 3.1.50 (both patched into the page's JS)
-   - [x] Starting from a snapshot (make-snapshot.sh: a native QEMU from the same source boots it
-         and saves the state; the page loads it with -incoming): the prompt in ~10 s instead of
-         minutes (the kernel zeroes the boot memory: ~1.5 GiB emulated). The page needs QEMU's TTY
-         runtime exported (its poll replaced), or QEMU's main loop sleeps on the terminal and
-         timers, disk completions and even the VM's start wait for a key
-   - [ ] zsh kills qemu-wasm's vCPU thread: "TypeError: Cannot convert undefined to a BigInt" in
-         ffi_call_js, the TCI interpreter calling helper_wfi (the CPU going idle). The same images
-         run in native QEMU. The demo built step by step meanwhile: init + dash works (vim, top,
-         ps, sudo, the test programs); login, s6-rc and zsh to add one by one
-   - [ ] Each exec translates the program again (fresh physical frames: QEMU's translated code is
-         keyed by physical address); sharing read-only text frames between execs, as a page
-         cache, would keep it
-   - [ ] Network through a WebSocket proxy (a small server relaying the guest's traffic), so a
-         page can reach nginx or ssh inside the demo
-   - [ ] GUI: the guest's framebuffer (virtio-gpu 2D) drawn into a canvas; keyboard and mouse
-         from the page. 3D through WebGPU is research
-   - [ ] A landing page with the demo behind a button (COOP/COEP headers on that page only, for
-         SharedArrayBuffer; the image on a CDN with CORS), published by CI on every build
+   - [x] ~~The ARM64 build emulated in qemu-wasm~~: retired 2026-10-13 for wasmkit (item 24),
+         kept in projects/gnu-sel4/archive/qemu-wasm (its README: what each script did, the
+         last commits where it ran). It worked (from a snapshot, login in ~10 s), but two
+         layers of translation cost too much: an `ls` in 2.5 s, a cold boot in minutes (the
+         kernel zeroing 1.5 GiB of emulated memory), 3 GB per tab, snapshots to retake after
+         every change, and zsh crashed qemu-wasm's TCI interpreter (helper_wfi). What it left:
+         - the demo disk is a scrubbed copy (wasmkit/make-demo-disk.sh: accounts from rootfs/,
+           homes and /tmp emptied), or the owner's password hash and history are published
+         - sDDF's virtio-blk now negotiates VIRTIO_F_VERSION_1 (libvmm/dep/sddf patch), and
+           fetch-deps.sh applies a submodule's patches
+         - a QEMU 8.2 fix, the EL2 generic timers migrated (archive/qemu-wasm/patches): worth
+           offering upstream if newer QEMU lacks it
+         - snapshots (`migrate file:` / `-incoming`) skip a whole boot; an emscripten page must
+           export the TTY runtime and replace its poll, or its main loop sleeps on the terminal
+         - the page over HTTPS (wasmkit/serve.py, the compose service kit): other devices need
+           a secure context for shared memory; Cache-Control: no-store for the workers
+   - [ ] Network through a WebSocket proxy (a small server relaying the traffic: on wasmkit,
+         a PD in place of the netstack, the server's sockets unchanged), so a page can reach a
+         server inside the demo
+   - [ ] GUI: a framebuffer PD drawn into a canvas; keyboard and mouse from the page. 3D
+         through WebGPU is research
+   - [ ] A landing page with the demo (wasmkit's page) behind a button (COOP/COEP headers on
+         that page only, for SharedArrayBuffer; the images on a CDN with CORS), published by CI
+         on every build
 23. [ ] **A native client: the same images, one layer less** (M). Needs: 22 (the images and their
         page), 16 (ARM). For real work rather than demos (José's idea, October 2026): a small
         launcher (Rust or Go) with QEMU, that fetches signed updates from the project's domain
