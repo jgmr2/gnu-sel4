@@ -10,7 +10,8 @@ const NR = { read: 0, write: 1, pread64: 17, pwrite64: 18, readv: 19, writev: 20
              readlink: 89, readlinkat: 267, getcwd: 79, execve: 59, recvfrom: 45, sendto: 44 };
 const RETRY = -0x7000n;
 
-onmessage = async ({ data: { sys, memory, bytes, slot, server, procBufs, args, argc, envc } }) => {
+onmessage = async ({ data: { sys, memory, bytes, slot, server, procBufs, args, argc, envc, debug } }) => {
+    const trace = debug ? t => postMessage({ type: 'log', text: t }) : () => {};
     const sv = PD0 + server * PD_SIZE, me = PROCS + slot * 256, stage = procBufs + slot * BUF_SIZE;
     const i32 = new Int32Array(sys.buffer), mr = new BigInt64Array(sys.buffer, me + 16, 16);
     const sysU8 = new Uint8Array(sys.buffer);
@@ -37,6 +38,7 @@ onmessage = async ({ data: { sys, memory, bytes, slot, server, procBufs, args, a
         Atomics.add(i32, SEQ, 1); Atomics.notify(i32, SEQ);
         for (let k = 0; Atomics.load(i32, CALL) !== 2; k++) if (k > 20000) Atomics.wait(i32, CALL, 1);
         const r = mr[0];
+        if (r === RETRY) trace(`call ${N}: retry (wake ${wake0})`);
         for (let i = 0; i < 7; i++) regs[i] = mr[i];
         Atomics.store(i32, CALL, 0);
         Atomics.store(i32, LOCK, 0); Atomics.notify(i32, LOCK, 1);
@@ -50,7 +52,7 @@ onmessage = async ({ data: { sys, memory, bytes, slot, server, procBufs, args, a
         memory,
         wk_ipc: p => { call(new BigInt64Array(memory.buffer, p, 7)); },        // the runtime (runtime/wasm.h)
         wk_call: (...a) => call(a),                                           // wasmkit/hello.c, no libc
-        wk_wait() { Atomics.wait(i32, WAKE, wake0); },
+        wk_wait() { trace(`wait from ${wake0}`); const w = Atomics.wait(i32, WAKE, wake0); trace(`woken: ${w}, wake ${Atomics.load(i32, WAKE)}`); },
         wk_mr: i => mr[i],
         wk_now_ns: () => BigInt(Math.round((performance.timeOrigin + performance.now()) * 1e6)),
         wk_random: () => crypto.getRandomValues(new Uint32Array(1))[0],

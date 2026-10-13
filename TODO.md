@@ -589,6 +589,12 @@ Principles the plan follows:
          wasm: the old instance waits for ever once execve succeeds (proc.js). The server's
          uint64_t printf formats are PRIu64/PRIx64 now (long is 32 bits on wasm32; offsets
          past 2 GiB are still cut there)
+   - [x] dash compiled for wasm32 (its port script), and wasmkit/init.c as /sbin/init: the
+         console as process 1's terminal, then `-sh` in its place. Builtins, variables,
+         arithmetic, globbing, cd, `exec ls`: right; anything that forks says "Cannot fork".
+         Found: a wake-up given to a slot reached the program that had exec'd away (still
+         waiting until the page ends its worker), not the new one: slot_signal wakes every
+         waiter. ?debug shows a process's retries and wake-ups
    - [ ] Experiment 2: fork, with binaryen's asyncify (Debian's binaryen package): the stack
          unwound into the memory, the memory copied into a new worker, both rewound (a vfork
          with setjmp does not do: the child returns from fork, and dash's child changes the

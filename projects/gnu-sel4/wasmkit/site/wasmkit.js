@@ -63,6 +63,7 @@ const say = s => term ? term.write(s.replace(/\n/g, '\r\n')) : log(s);
 
 const region = Object.fromEntries(sys.regions.map(r => [r.name, r]));
 const procs = [];
+window.wasmkit = { memory };                         // for inspection from the console
 say(`wasmkit: ${sys.pds.length} protection domains, ${(end >> 20)} MiB of shared memory, loaded in ${Math.round(performance.now() - t0)} ms\n`);
 sys.pds.forEach((p, i) => {
     const w = new Worker('worker.js');
@@ -75,7 +76,7 @@ sys.pds.forEach((p, i) => {
             const pw = procs[m.slot] = new Worker('proc.js');
             pw.onerror = e => say(`wasmkit: process in slot ${m.slot}: ${e.message}\n`);
             pw.onmessage = ({ data: c }) => say(`wasmkit: process in slot ${m.slot}: ${c.text}\n`);
-            pw.postMessage({ ...m, sys: memory, server: i, procBufs: region.proc_bufs.addr });
+            pw.postMessage({ ...m, sys: memory, server: i, procBufs: region.proc_bufs.addr, debug });
         } else if (m.type === 'end') {
             if (debug) say(`wasmkit: slot ${m.slot}: ended\n`);
             procs[m.slot]?.terminate(); procs[m.slot] = undefined;

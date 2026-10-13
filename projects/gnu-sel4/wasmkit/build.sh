@@ -47,32 +47,33 @@ for f in "$POSIX"/server/*.c; do
     case $f in */memcpy.c|*/microkit_main.c|*/mem.c) continue;; esac
     SRV="$SRV $f"
 done
-CFLAGS="$CFLAGS -I$POSIX/build-qemu-arm -DNO_NETSTACK -DNO_ACPI_POWEROFF" \
+CFLAGS="$CFLAGS -I$POSIX/build-qemu-arm -DNO_NETSTACK -DNO_ACPI_POWEROFF ${SRV_FLAGS:-}" \
 STACK=1048576 pd posix_server 0x03000000 "fs_buf exec_buf proc_bufs" $SRV "$HERE/server_conf.c" \
     "$HERE/wasmkit.c" "$LIBC" "$SDDF/util/printf.c"
 rm -f "$OUT"/*.o
 
-# Programs: the sysroot (musl for wasm32, the runtime, sel4-cc), then the first one, /sbin/init
+# Programs: the sysroot (musl for wasm32, the runtime, sel4-cc), then init and a test (hello)
 "$HERE/build-sysroot.sh" "$OUT/../sysroot" >/dev/null
-"$OUT/../sysroot/bin/sel4-cc" -O2 "$HERE/hello.c" -o "$OUT/hello.wasm"
+for p in init hello; do "$OUT/../sysroot/bin/sel4-cc" -O2 "$HERE/$p.c" -o "$OUT/$p.wasm"; done
 
 # The RAM disk: partition 1 of the disk (its MBR entry)
 start=$(python3 -c 'import sys; m=open(sys.argv[1],"rb").read(512); print(int.from_bytes(m[454:458],"little"))' "$DISK")
 count=$(python3 -c 'import sys; m=open(sys.argv[1],"rb").read(512); print(int.from_bytes(m[458:462],"little"))' "$DISK")
 dd if="$DISK" of="$OUT/part1.img" bs=512 skip="$start" count="$count" status=none
 # The programs built for wasm32 in place of the disk's ARM ones (their links stay): /sbin/init,
-# and coreutils when it is built (SEL4_HOST=wasm32-linux-musl ports/coreutils/build-coreutils.sh
-# in build-wasm/coreutils), without its debug information
+# /bin/hello, and the ports when they are built (SEL4_HOST=wasm32-linux-musl with their port
+# scripts, in build-wasm/<port>), without their debug information
 install_prog() {   # install_prog <file> <path>
     printf 'rm %s\nwrite %s %s\nsif %s mode 0100755\nsif %s uid 0\nsif %s gid 0\n' "$2" "$1" "$2" "$2" "$2" "$2" |
         debugfs -w -f - "$OUT/part1.img" >/dev/null 2>&1
 }
-install_prog "$OUT/hello.wasm" /sbin/init
-CU=$OUT/../coreutils/src/coreutils
-if [ -f "$CU" ]; then
-    llvm-objcopy --strip-debug "$CU" "$OUT/coreutils.wasm"
-    install_prog "$OUT/coreutils.wasm" /bin/coreutils
-fi
+install_prog "$OUT/init.wasm" /sbin/init
+install_prog "$OUT/hello.wasm" /bin/hello
+for p in coreutils/src/coreutils:/bin/coreutils dash/src/dash:/bin/dash; do
+    [ -f "$OUT/../${p%%:*}" ] || continue
+    llvm-objcopy --strip-debug "$OUT/../${p%%:*}" "$OUT/$(basename "${p%%:*}").wasm"
+    install_prog "$OUT/$(basename "${p%%:*}").wasm" "${p##*:}"
+done
 cp "$HERE/site/index.html" "$HERE/site/wasmkit.js" "$HERE/site/worker.js" "$HERE/site/proc.js" \
     "$HERE/system.json" "$HERE/bench.json" "$OUT/"
 ls -la "$OUT"

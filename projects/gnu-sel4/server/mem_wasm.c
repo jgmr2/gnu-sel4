@@ -37,7 +37,9 @@ uintptr_t proc_win(int s, uintptr_t vaddr)
 void slot_signal(int s)
 {
     __atomic_add_fetch(&WK_PROCS[s].wake, 1, __ATOMIC_SEQ_CST);
-    __builtin_wasm_memory_atomic_notify((int *)&WK_PROCS[s].wake, 1);
+    /* every waiter: a program that exec'd away may still wait on its slot's word until the page
+     * ends its worker, and one wake-up given to it would be lost for the slot's new program */
+    __builtin_wasm_memory_atomic_notify((int *)&WK_PROCS[s].wake, 1u << 30);
 }
 void slot_suspend(int s) { (void)s; }    /* a worker cannot be paused: its next call stops it */
 void slot_resume(int s) { slot_signal(s); }
