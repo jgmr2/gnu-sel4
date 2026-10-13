@@ -889,6 +889,7 @@ bool proc_fault(int slot, long label)
     if (!p) return false;
     /* The fault's registers first: loading a page calls fs_ext2, which overwrites them */
     uintptr_t a = label == seL4_Fault_VMFault ? microkit_mr_get(seL4_VMFault_Addr) : microkit_mr_get(0);
+    uintptr_t pc = label == seL4_Fault_VMFault ? microkit_mr_get(seL4_VMFault_IP) : 0;
     long vec = label == seL4_Fault_UserException ? microkit_mr_get(seL4_UserException_Number) : 0;
     if (label == seL4_Fault_VMFault && p->img_ino &&
         a >= PROC_IMG_BASE && a < PROC_IMG_BASE + PROC_IMG_SIZE && !image_cluster(p, a)) {
@@ -923,6 +924,23 @@ bool proc_fault(int slot, long label)
     for (int i = 15; i >= 0; i--, v >>= 4) hex[i] = "0123456789abcdef"[v & 15];
     hex[16] = 0;
     tty_puts(hex);
+    if (pc) {                              /* where: the instruction (addr2line on the program) */
+        v = pc;
+        for (int i = 15; i >= 0; i--, v >>= 4) hex[i] = "0123456789abcdef"[v & 15];
+        tty_puts(" (pc 0x");
+        tty_puts(hex);
+        tty_puts(")");
+    }
+#ifdef __aarch64__
+    seL4_UserContext r;                    /* who jumped there: the link register */
+    if (!seL4_TCB_ReadRegisters(slot_tcb(slot), false, 0, sizeof r / sizeof(seL4_Word), &r)) {
+        v = r.x30;
+        for (int i = 15; i >= 0; i--, v >>= 4) hex[i] = "0123456789abcdef"[v & 15];
+        tty_puts(" (lr 0x");
+        tty_puts(hex);
+        tty_puts(")");
+    }
+#endif
     tty_puts("\n");
     proc_exit(p, sig);
     return false;                          /* no reply: the slot stays stopped */

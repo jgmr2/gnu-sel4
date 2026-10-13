@@ -7,7 +7,7 @@ set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 . "$(dirname "$0")/../port-lib.sh"
 if port_prepare "$SRC" "$BUILD"; then
-./configure --host=x86_64-linux-musl CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2" \
+./configure --host=${SEL4_HOST:-x86_64-linux-musl} CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2" \
     --disable-openssl --disable-readline --disable-libwrap --disable-fips \
     sc_cv_termios_ispeed=no sc_cv_sys_crdly_shift=9 sc_cv_sys_tabdly_shift=11 sc_cv_sys_csize_shift=4 \
     >configure.log 2>&1 || { tail -30 configure.log; exit 1; }

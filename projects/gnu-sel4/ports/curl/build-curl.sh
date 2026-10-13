@@ -20,7 +20,7 @@ cp -r "$BUILD/mbedtls/include/mbedtls" "$BUILD/mbedtls/include/psa" "$SYSROOT/in
 cp "$BUILD/mbedtls/library/"libmbed*.a "$SYSROOT/lib/"
 
 # curl: HTTP(S) and FTP; nothing that needs threads or libraries we do not have
-./configure --host=x86_64-linux-musl CC="$CC" CFLAGS="-O2" \
+./configure --host=${SEL4_HOST:-x86_64-linux-musl} CC="$CC" CFLAGS="-O2" \
     --with-mbedtls="$SYSROOT" --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt --without-ca-path \
     --disable-shared --enable-static --disable-threaded-resolver --disable-docs --disable-manual \
     --without-libpsl --without-zlib --without-brotli --without-zstd --without-nghttp2 --without-nghttp3 \

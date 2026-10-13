@@ -12,7 +12,7 @@ SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd); shift 3
 if port_prepare "$SRC" "$BUILD" "$@" "$SYSROOT/lib/libncursesw.a"; then
 # No Linux kernel headers in the sysroot: copy_file_range is declared missing so that
 # gnulib uses its portable version (the Linux one checks <linux/version.h>).
-./configure --host=x86_64-linux-musl --build=x86_64-pc-linux-gnu --prefix=/usr \
+./configure --host=${SEL4_HOST:-x86_64-linux-musl} --build=x86_64-pc-linux-gnu --prefix=/usr \
     CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2" \
     ac_cv_func_copy_file_range=no gl_cv_host_operating_system=GNU/seL4 \
     --disable-nls --disable-acl --disable-xattr --without-selinux --disable-rpath "$@" \

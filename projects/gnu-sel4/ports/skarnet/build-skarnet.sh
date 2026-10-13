@@ -26,7 +26,7 @@ if [ "$NAME" = skalibs ]; then
     # what musl declares but posix_server does not implement yet, so skalibs uses its portable
     # fallbacks: signalfd (self-pipe), posix_spawn (fork + exec), waitid, splice, sendfile,
     # namespaces, chroot, settimeofday.
-    [ -z "$FRESH" ] || ./configure --host=x86_64-linux-musl --prefix=/ --libdir=/lib --includedir=/include \
+    [ -z "$FRESH" ] || ./configure --host=${SEL4_HOST:-x86_64-linux-musl} --prefix=/ --libdir=/lib --includedir=/include \
         --sysdepdir=/lib/skalibs/sysdeps --enable-static --disable-shared \
         --with-sysdep-devurandom=yes --with-sysdep-posixspawnearlyreturn=no \
         --with-sysdep-procselfexe=/proc/self/exe --with-sysdep-selectinfinite=yes \
@@ -39,7 +39,7 @@ if [ "$NAME" = skalibs ]; then
     echo "skalibs: $(ls "$SYSROOT/lib/libskarnet.a")"
 else
     MULTI=; [ "$NAME" = execline ] && MULTI=--enable-multicall      # one binary + symlinks
-    [ -z "$FRESH" ] || ./configure --host=x86_64-linux-musl --prefix=/ --bindir=/bin --libexecdir=/usr/libexec --enable-static-libc --disable-shared $MULTI \
+    [ -z "$FRESH" ] || ./configure --host=${SEL4_HOST:-x86_64-linux-musl} --prefix=/ --bindir=/bin --libexecdir=/usr/libexec --enable-static-libc --disable-shared $MULTI \
         --with-sysdeps="$SYSROOT/lib/skalibs/sysdeps" --with-include="$SYSROOT/include" \
         --with-lib="$SYSROOT/lib" --with-lib="$SYSROOT/lib/skalibs" \
         CC="$CC" CFLAGS="-O2" AR=llvm-ar RANLIB=llvm-ranlib >configure.log 2>&1 || { tail -30 configure.log; exit 1; }

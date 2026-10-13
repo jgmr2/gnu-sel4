@@ -17,7 +17,8 @@ CC="clang --target=$ARCH-linux-musl"
 # built again from scratch reuses what it compiled before
 CCACHE=
 [ -n "${CCACHE_DIR:-}" ] && command -v ccache >/dev/null 2>&1 && CCACHE=ccache
-FLAGS="-nostdinc -isystem $SYSROOT/include -fno-pic -fno-stack-protector"
+# The compiler's own headers too (arm_neon.h, intrinsics), which -nostdinc leaves out
+FLAGS="-nostdinc -isystem $SYSROOT/include -isystem $($CC -print-resource-dir)/include -fno-pic -fno-stack-protector"
 [ "$ARCH" = aarch64 ] && FLAGS="$FLAGS -mstrict-align"
 
 link=1

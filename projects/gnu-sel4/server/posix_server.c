@@ -15,6 +15,7 @@
 #include <string.h>
 #include <sddf/util/printf.h>
 #include "server.h"
+#include "arch.h"
 #include "syscall_nr.h"       /* Linux x86_64 __NR_* (generated from musl) */
 #include "syscall_names.h"    /* names for the messages (generated from musl) */
 
@@ -36,7 +37,7 @@ static long sys_uname(void)
     copy_str(u + 1 * 65, "gnu-sel4", 65);
     copy_str(u + 2 * 65, "microkit-2.3.1", 65);
     copy_str(u + 3 * 65, "posix_server 0.4", 65);
-    copy_str(u + 4 * 65, "x86_64", 65);
+    copy_str(u + 4 * 65, ARCH_UNAME, 65);
     copy_str(u + 5 * 65, "(none)", 65);
     return 0;
 }
@@ -72,6 +73,9 @@ static void trace_call(long n, long a1, long a2, long a3, long a4, long r)
                           cur->name, cur->pid, nm, a1, a2, a3, a4, r);
     if (k > (int)sizeof line - 1) k = sizeof line - 1;
     for (int i = 0; i < k; i++) trace_ring[trace_pos++ % TRACE_SIZE] = line[i];
+#ifdef TRACE_CONSOLE
+    tty_puts(line);                    /* make TRACE=name TRACE_CONSOLE=1: on the console too */
+#endif
 }
 #endif
 

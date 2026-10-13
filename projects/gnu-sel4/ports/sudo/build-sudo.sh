@@ -10,7 +10,7 @@ set -eu
 SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 . "$(dirname "$0")/../port-lib.sh"
 if port_prepare "$SRC" "$BUILD"; then
-./configure --host=x86_64-linux-musl --build=x86_64-pc-linux-gnu --prefix=/usr --sysconfdir=/etc \
+./configure --host=${SEL4_HOST:-x86_64-linux-musl} --build=x86_64-pc-linux-gnu --prefix=/usr --sysconfdir=/etc \
     --localstatedir=/var --with-rundir=/run/sudo --with-vardir=/var/db/sudo \
     CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2" \
     --disable-shared --enable-static-sudoers --disable-shared-libutil \

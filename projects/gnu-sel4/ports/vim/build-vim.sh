@@ -11,7 +11,7 @@ SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 if port_prepare "$SRC" "$BUILD" "$SYSROOT/lib/libncursesw.a"; then
 # Answers to the checks configure cannot run when cross-compiling.
 # timer_create with SIGEV_THREAD needs threads: vim will use setitimer.
-./configure --host=x86_64-linux-musl --build=x86_64-pc-linux-gnu \
+./configure --host=${SEL4_HOST:-x86_64-linux-musl} --build=x86_64-pc-linux-gnu \
     CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2" \
     --prefix=/usr --with-features=normal --with-tlib=ncursesw \
     --disable-gui --without-x --disable-netbeans --disable-channel --disable-terminal \

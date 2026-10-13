@@ -536,6 +536,42 @@ static long copy_out(long r, void *dst, size_t size)
 }
 
 #define K_STAT_SIZE   144     /* Linux x86_64 struct stat */
+
+/* The server answers stat with Linux x86_64's struct stat (the protocol). On x86_64 that is
+ * musl's struct stat as it is; aarch64's (the generic one, 128 bytes) has its fields in another
+ * order: copied field by field (copying 144 bytes into it overwrote the caller's stack) */
+struct proto_stat {
+    uint64_t dev, ino, nlink;
+    uint32_t mode, uid, gid, pad0;
+    uint64_t rdev;
+    int64_t size, blksize, blocks;
+    int64_t atime, atime_ns, mtime, mtime_ns, ctime, ctime_ns;
+    int64_t unused[3];
+};
+_Static_assert(sizeof(struct proto_stat) == K_STAT_SIZE, "struct proto_stat");
+
+static void stat_from_proto(struct stat *st, const void *buf)
+{
+#ifdef __x86_64__
+    memcpy(st, buf, K_STAT_SIZE);
+#else
+    struct proto_stat k;
+    memcpy(&k, buf, sizeof k);
+    memset(st, 0, sizeof *st);
+    st->st_dev = k.dev; st->st_ino = k.ino; st->st_nlink = k.nlink; st->st_mode = k.mode;
+    st->st_uid = k.uid; st->st_gid = k.gid; st->st_rdev = k.rdev; st->st_size = k.size;
+    st->st_blksize = k.blksize; st->st_blocks = k.blocks;
+    st->st_atim.tv_sec = k.atime; st->st_atim.tv_nsec = k.atime_ns;
+    st->st_mtim.tv_sec = k.mtime; st->st_mtim.tv_nsec = k.mtime_ns;
+    st->st_ctim.tv_sec = k.ctime; st->st_ctim.tv_nsec = k.ctime_ns;
+#endif
+}
+
+static long stat_out(long r, void *dst)
+{
+    if (r >= 0 && dst) stat_from_proto(dst, (void *)PROC_BUF_BASE);
+    return r;
+}
 #define K_STATFS_SIZE 120     /* Linux x86_64 struct statfs */
 
 /* ------------------------------------------------------------------ */
@@ -1039,7 +1075,7 @@ static long sys_statx(long dirfd, const char *path, long flags, unsigned mask, s
     if (r) return r;
     r = server_call(SYS_newfstatat, dirfd, 0, 0, flags & (AT_SYMLINK_NOFOLLOW | AT_EMPTY_PATH), 0, 0);
     if (r < 0) return r;
-    memcpy(&st, (void *)PROC_BUF_BASE, sizeof st);
+    stat_from_proto(&st, (void *)PROC_BUF_BASE);
     memset(sx, 0, sizeof *sx);
     sx->stx_mask = STATX_BASIC_STATS;
     sx->stx_blksize = st.st_blksize;
@@ -1147,8 +1183,9 @@ static long sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, lo
     /* processes */
     case SYS_fork:
     case SYS_vfork:          return sys_fork();
-    case SYS_clone:          /* fork as aarch64's musl makes it: clone(SIGCHLD); no threads yet */
-        return a1 == SIGCHLD && !a2 ? sys_fork() : -ENOSYS;
+    case SYS_clone:          /* fork and vfork as aarch64's musl makes them: clone(SIGCHLD), and
+                                * with CLONE_VM|CLONE_VFORK (a fork here, as SYS_vfork is); no threads */
+        return (a1 & ~(0x100 | 0x4000)) == SIGCHLD && !a2 ? sys_fork() : -ENOSYS;
     case SYS_execve:         return sys_execve((const char *)a1, (char *const *)a2, (char *const *)a3);
     case SYS_wait4:          return sys_wait4(a1, (int *)a2, a3, (struct rusage *)a4);
     case SYS_exit:
@@ -1327,9 +1364,9 @@ static long sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, lo
     case SYS_open:           return PATH_CALL_BLOCKING(a1, n, 0, a2, a3, 0, 0);
     case SYS_openat:         return PATH_CALL_BLOCKING(a2, n, a1, 0, a3, a4, 0);
     case SYS_stat:
-    case SYS_lstat:          { long r = PATH_CALL(a1, n, 0, 0, 0, 0, 0, 0); return copy_out(r, (void *)a2, K_STAT_SIZE); }
-    case SYS_newfstatat:     { long r = PATH_CALL(a2, n, a1, 0, 0, a4, 0, 0); return copy_out(r, (void *)a3, K_STAT_SIZE); }
-    case SYS_fstat:          return copy_out(server_call(n, a1, 0, 0, 0, 0, 0), (void *)a2, K_STAT_SIZE);
+    case SYS_lstat:          { long r = PATH_CALL(a1, n, 0, 0, 0, 0, 0, 0); return stat_out(r, (void *)a2); }
+    case SYS_newfstatat:     { long r = PATH_CALL(a2, n, a1, 0, 0, a4, 0, 0); return stat_out(r, (void *)a3); }
+    case SYS_fstat:          return stat_out(server_call(n, a1, 0, 0, 0, 0, 0), (void *)a2);
     case SYS_getdents64: {
         long r = server_call(n, a1, 0, a3 < POSIX_BUF_SIZE ? a3 : POSIX_BUF_SIZE, 0, 0, 0);
         return r > 0 ? copy_out(r, (void *)a2, r) : r;

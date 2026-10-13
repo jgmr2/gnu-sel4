@@ -14,7 +14,7 @@ if port_prepare "$SRC" "$BUILD"; then
 cp "$HERE/mksignames.c" src/mksignames.c
 git apply -p1 "$HERE/ctrl-c-at-prompt.patch"
 
-./configure --host=x86_64-linux-musl --enable-static \
+./configure --host=${SEL4_HOST:-x86_64-linux-musl} --enable-static \
     CC="$SYSROOT/bin/sel4-cc" CC_FOR_BUILD=clang \
     CFLAGS="-O2 -g" >configure.log 2>&1 || { tail -30 configure.log; exit 1; }
 fi

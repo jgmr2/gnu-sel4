@@ -12,7 +12,7 @@ SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 . "$(dirname "$0")/../port-lib.sh"
 if port_prepare "$SRC" "$BUILD"; then
 # --with-build-cc: the tools ncurses uses while building run on the host
-./configure --host=x86_64-linux-musl --build=x86_64-pc-linux-gnu \
+./configure --host=${SEL4_HOST:-x86_64-linux-musl} --build=x86_64-pc-linux-gnu \
     CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2" --with-build-cc=clang \
     --prefix=/usr --with-terminfo-dirs=/usr/share/terminfo --with-default-terminfo-dir=/usr/share/terminfo \
     --enable-widec --with-normal --without-shared --without-debug --without-cxx --without-cxx-binding \

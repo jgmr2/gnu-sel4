@@ -6,6 +6,8 @@
 SUPPORTED_BOARDS := x86_64_generic_vtx x86_64_generic qemu_virt_aarch64
 # The processor architecture of the native system (TODO item 16: ARM64 alongside x86_64)
 ARCH := $(if $(filter qemu_virt_aarch64,$(MICROKIT_BOARD)),aarch64,x86_64)
+# The ports' configure --host (ports/*/build-*.sh)
+export SEL4_HOST := $(ARCH)-linux-musl
 # Third-party sources (fetch-deps.sh puts them in $(DEPS)/third_party)
 TP := $(DEPS)/third_party
 TOOLCHAIN ?= clang
@@ -65,7 +67,7 @@ FS_FLAGS := -DFS_RAMDISK
 else ifeq ($(PLATFORM),qemu-arm)
 ETH_ELF :=
 BLK_ELFS :=
-ARM_RAMFS := 1
+LIVE := 1
 SERVER_FLAGS := -DNO_ACPI_POWEROFF -DNO_NETSTACK
 FS_FLAGS := -DFS_RAMDISK
 else
@@ -80,7 +82,7 @@ export LINUX_VM
 # make TRACE=name: posix_server prints every call of the processes called name on the console
 # (debugging; touch server/posix_server.c when switching it on or off)
 ifdef TRACE
-SERVER_FLAGS += -DTRACE_COMM='"$(TRACE)"'
+SERVER_FLAGS += -DTRACE_COMM='"$(TRACE)"' $(if $(TRACE_CONSOLE),-DTRACE_CONSOLE)
 endif
 ifeq ($(LINUX_VM),yes)
 VM_ELFS := client_vmm.elf network_copy.elf
@@ -140,9 +142,9 @@ posix_server.elf: $(addprefix server_,$(addsuffix .o,$(SERVER_SRCS)))
 # --- ext2 file server ---
 fs_ext2.o: $(POSIX)/fs/ext2/fs_ext2.c $(POSIX)/include/sel4posix/fs_protocol.h
 	$(CC) $(CFLAGS) $(FS_FLAGS) -I$(POSIX)/include -DBUILD_TIME=$(shell date +%s) -c $< -o $@
-ifneq ($(LIVE)$(ARM_RAMFS),)
+ifdef LIVE
 # The live file system: the installed partition (see install.stamp), linked into fs_ext2; on
-# qemu-arm the image system-arm.mk makes
+# qemu-arm the same (it sets LIVE)
 fs_ext2_ramdisk.o: $(POSIX)/fs/ext2/ramdisk.S live-part1.img
 	$(CC) -c -x assembler-with-cpp -DRAMDISK_IMAGE=\"live-part1.img\" -target $(TARGET) $< -o $@
 fs_ext2.elf: fs_ext2.o fs_ext2_ramdisk.o
@@ -316,6 +318,11 @@ GNU_PROGS := grep/grep grep/egrep grep/fgrep sed/sed findutils/find findutils/xa
 	     diffutils/cmp diffutils/diff diffutils/diff3 diffutils/sdiff tar/tar \
 	     gzip/gzip gzip/gunzip gzip/zcat gzip/zgrep gzip/zless gzip/zmore gzip/zdiff gzip/zcmp less/less \
 	     screen/screen
+ifeq ($(ARCH),aarch64)
+# gzip's `head` macro breaks aarch64's <bits/signal.h> (struct _aarch64_ctx head): left out there for now
+GNU_PKGS := $(filter-out gzip-%,$(GNU_PKGS))
+GNU_PROGS := $(filter-out gzip/%,$(GNU_PROGS))
+endif
 GNU_ARGS_diffutils := gl_cv_func_strcasecmp_works=yes
 GNU_ARGS_less := --with-regex=posix LIBS=-lncursesw
 # screen: no PAM (sudo and login check passwords themselves); termcap from ncursesw
@@ -545,6 +552,11 @@ install.stamp: $(DISK) licenses/.built $(SKARNET_BUILT) $(BINS) $(foreach b,$(EX
 	echo "installed in /bin: $(APPS) $(foreach b,$(EXTRA_BINS),$(lastword $(subst :, ,$(b)))) + $$(wc -l < coreutils/programs.txt) coreutils programs"
 
 ifdef LIVE
+ifeq ($(PLATFORM),qemu-arm)
+# ARM in QEMU: the installed partition as it is (straight to the login; tests with tools/test.py)
+live-part1.img: install.stamp
+	dd if=$(DISK) of=$@.tmp bs=1M skip=1 count=$(EXT2_MB) status=none && mv $@.tmp $@
+else
 live-part1.img: install.stamp FORCE
 	set -e; \
 	dd if=$(DISK) of=$@.tmp bs=1M skip=1 count=$(EXT2_MB) status=none; \
@@ -556,11 +568,8 @@ live-part1.img: install.stamp FORCE
 	e2fsck -fy $@.tmp >/dev/null 2>&1 || true; \
 	rm -f live-marker; mv $@.tmp $@
 endif
-
-ifeq ($(ARCH),aarch64)
-all: $(IMAGE_FILE)
-else
-all: $(IMAGE_FILE) install.stamp
 endif
+
+all: $(IMAGE_FILE) install.stamp
 .PHONY: all sysroot FORCE
 FORCE:

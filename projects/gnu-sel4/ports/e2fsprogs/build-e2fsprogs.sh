@@ -14,7 +14,7 @@ if port_prepare "$SRC" "$BUILD"; then
 # No Linux kernel headers in the sysroot: e2fsprogs includes <linux/...> under __linux__, so it
 # is built as a generic Unix (-U__linux__): configure finds no <linux/fs.h> and the library uses
 # its portable paths (the device size comes from lseek(SEEK_END))
-./configure --host=x86_64-linux-musl --build=x86_64-pc-linux-gnu --prefix=/usr \
+./configure --host=${SEL4_HOST:-x86_64-linux-musl} --build=x86_64-pc-linux-gnu --prefix=/usr \
     CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2 -U__linux__ -U__linux -Ulinux" BUILD_CC=clang \
     --disable-nls --disable-rpath --disable-fuse2fs --disable-debugfs --disable-imager \
     --disable-defrag --disable-uuidd --disable-e2initrd-helper --disable-tdb \

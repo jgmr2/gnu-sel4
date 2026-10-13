@@ -13,7 +13,7 @@ if port_prepare "$SRC" "$BUILD"; then
 # stdbuf needs dynamic libraries (LD_PRELOAD): not applicable on GNU/seL4.
 # No Linux kernel headers in the sysroot: copy_file_range is declared missing so that
 # gnulib uses its portable version (the Linux one checks <linux/version.h>).
-./configure --host=x86_64-linux-musl CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2 -g" \
+./configure --host=${SEL4_HOST:-x86_64-linux-musl} CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2 -g" \
     ac_cv_func_copy_file_range=no gl_cv_host_operating_system=GNU/seL4 \
     --enable-single-binary=symlinks --enable-no-install-program=stdbuf \
     --disable-nls --disable-acl --disable-xattr --disable-libcap --without-selinux \

@@ -12,7 +12,7 @@ SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 if port_prepare "$SRC" "$BUILD" "$SYSROOT/lib/libncursesw.a"; then
 # coreutils already provides kill; no NUMA nor systemd. ncursesw (top, watch) is in the sysroot
 # and its flags are given by hand: there is no pkg-config (PKG_CONFIG=true just passes the check).
-./configure --host=x86_64-linux-musl CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2 -g" \
+./configure --host=${SEL4_HOST:-x86_64-linux-musl} CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2 -g" \
     --disable-shared --enable-static --disable-nls --disable-rpath --disable-kill \
     --disable-numa --without-systemd --without-elogind --enable-watch8bit \
     ac_cv_func_malloc_0_nonnull=yes ac_cv_func_realloc_0_nonnull=yes \

@@ -9,7 +9,7 @@ SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 . "$(dirname "$0")/../port-lib.sh"
 if port_prepare "$SRC" "$BUILD"; then
 # scp calls ssh by its path: here /bin/dbclient (symlink to the multi-call binary)
-./configure --host=x86_64-linux-musl CC="$SYSROOT/bin/sel4-cc" \
+./configure --host=${SEL4_HOST:-x86_64-linux-musl} CC="$SYSROOT/bin/sel4-cc" \
     CFLAGS="-O2 -DDROPBEAR_PATH_SSH_PROGRAM='\"/bin/dbclient\"'" \
     --disable-zlib --disable-syslog --disable-lastlog --disable-utmp --disable-utmpx \
     --disable-wtmp --disable-wtmpx --disable-pututline --disable-pututxline --disable-pam \

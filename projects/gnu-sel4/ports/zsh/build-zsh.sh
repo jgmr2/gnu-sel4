@@ -11,7 +11,7 @@ SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd)
 if port_prepare "$SRC" "$BUILD" "$SYSROOT/lib/libncursesw.a"; then
 # When cross-compiling configure cannot run its checks: it is given the answers
 # (all valid for musl + posix_server)
-./configure --host=x86_64-linux-musl --build=x86_64-pc-linux-gnu \
+./configure --host=${SEL4_HOST:-x86_64-linux-musl} --build=x86_64-pc-linux-gnu \
     CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2" \
     --prefix=/usr --enable-etcdir=/etc --disable-dynamic --disable-gdbm --disable-pcre --disable-cap \
     --with-tcsetpgrp --with-term-lib="ncursesw" \

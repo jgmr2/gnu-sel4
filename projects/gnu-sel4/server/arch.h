@@ -16,6 +16,7 @@
 #define ARCH_FRAME_OBJECT   seL4_X86_4K
 #define ARCH_VSPACE_OBJECT  seL4_X64_PML4Object
 #define ARCH_ELF_MACHINE    62                  /* EM_X86_64 */
+#define ARCH_UNAME          "x86_64"            /* uname -m */
 
 static inline seL4_Error arch_page_map(seL4_CPtr frame, seL4_CPtr vspace, uintptr_t vaddr, seL4_CapRights_t rights)
 {
@@ -76,6 +77,7 @@ static inline bool arch_hwrand(uint64_t *v)
 #define ARCH_FRAME_OBJECT   seL4_ARM_SmallPageObject
 #define ARCH_VSPACE_OBJECT  seL4_ARM_VSpaceObject
 #define ARCH_ELF_MACHINE    183                 /* EM_AARCH64 */
+#define ARCH_UNAME          "aarch64"
 
 static inline seL4_Error arch_page_map(seL4_CPtr frame, seL4_CPtr vspace, uintptr_t vaddr, seL4_CapRights_t rights)
 {
