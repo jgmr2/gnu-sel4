@@ -14,7 +14,7 @@
 </style>
 </head>
 <body>
-<header><b>GNU/seL4</b> — ARM64, emulated in your browser <span class="note">(booting takes a while: everything is emulated here)</span></header>
+<header><b>GNU/seL4</b> — ARM64, emulated in your browser <span class="note">(everything is emulated here: the first commands are slow)</span></header>
 <div id="terminal"></div>
 <script src="./load.js"></script>
 <script type="module">
@@ -24,6 +24,7 @@
   import initEmscriptenModule from './qemu-system-aarch64.js';
   const xterm = new Terminal({ rows: 40, cols: 120 });
   xterm.open(document.getElementById('terminal'));
+  xterm.write('Loading GNU/seL4 (about 50 MB)... it starts at the login prompt: click here and press Enter.\r\n');
   const { master, slave } = openpty();
   xterm.loadAddon(master);
   Module.pty = slave;

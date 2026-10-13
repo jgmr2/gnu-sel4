@@ -1,11 +1,13 @@
 #!/bin/sh
-# make-site.sh <qemu-wasm-dir> <loader.img> <demo-disk.img> <site-dir>: the browser demo's files
-# (TODO item 22): qemu-wasm, the page, and the images packed with emscripten's file packager.
+# make-site.sh <qemu-wasm-dir> <loader.img> <demo-disk.img> <site-dir> [<vm.state>]: the browser
+# demo's files (TODO item 22): qemu-wasm, the page, and the images packed with emscripten's file
+# packager, compressed. With a snapshot (make-snapshot.sh: its disk.img and vm.state) the page
+# starts from it, at the login prompt, instead of booting.
 # Serve <site-dir> with serve.py (COOP/COEP headers: SharedArrayBuffer needs them).
 #
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
-QW=$(realpath "$1"); LOADER=$(realpath "$2"); DISKIMG=$(realpath "$3"); SITE=$4
+QW=$(realpath "$1"); LOADER=$(realpath "$2"); DISKIMG=$(realpath "$3"); SITE=$4; STATE=${5:-}
 HERE=$(cd "$(dirname "$0")" && pwd)
 rm -rf "$SITE" && mkdir -p "$SITE/pack"
 cp "$HERE/site/index.html" "$HERE/site/module.js" "$SITE/"
@@ -25,8 +27,13 @@ open(p, "w").write(s)
 PYEOF
 cp "$QW/qemu-system-aarch64.wasm" "$QW/qemu-system-aarch64.worker.js" "$SITE/"
 cp "$LOADER" "$SITE/pack/loader.img"; cp "$DISKIMG" "$SITE/pack/disk.img"
+if [ -n "$STATE" ]; then
+    cp "$STATE" "$SITE/pack/vm.state"
+    echo "Module['arguments'].push('-incoming', 'file:/pack/vm.state');" >> "$SITE/module.js"
+fi
 SITE=$(realpath "$SITE")
 docker run --rm -v "$SITE":/site -w /site gnu-sel4-qemu-wasm-build \
     sh -c '/emsdk/upstream/emscripten/tools/file_packager.py qemu-system-aarch64.data --preload /site/pack@/pack > load.js'
 rm -rf "$SITE/pack"
+gzip -6 "$SITE/qemu-system-aarch64.data" "$SITE/qemu-system-aarch64.wasm"   # serve.py sends the .gz
 ls -la "$SITE"
