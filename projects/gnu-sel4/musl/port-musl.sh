@@ -1,21 +1,21 @@
 #!/bin/sh
 # Prepares a copy of musl ported to seL4 and builds it.
-#   usage: port-musl.sh <musl-source> <work-dir> <install-prefix>
+#   usage: port-musl.sh <musl-source> <work-dir> <install-prefix> [x86_64|aarch64]
 #
 # The port consists of:
-#   1. arch/x86_64/syscall_arch.h: instead of the `syscall` instruction (which
-#      would enter the seL4 kernel, not Linux) each __syscallN calls
+#   1. arch/<arch>/syscall_arch.h: instead of the `syscall` (x86_64) or `svc` (aarch64)
+#      instruction (which would enter the seL4 kernel, not Linux) each __syscallN calls
 #      __sel4_syscall(), implemented by the runtime (projects/gnu-sel4/runtime).
-#   2. Deleting the x86_64 assembly that uses `syscall` directly; musl has
-#      generic C versions of all of it that go through __syscall().
+#   2. Deleting the assembly that enters the kernel directly; musl has generic C versions of
+#      all of it that go through __syscall().
 #
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
-SRC=$1; WORK=$2; PREFIX=$3
+SRC=$1; WORK=$2; PREFIX=$3; ARCH=${4:-x86_64}
 
 rm -rf "$WORK"; cp -a "$SRC" "$WORK"; cd "$WORK"
 
-cat > arch/x86_64/syscall_arch.h <<'EOH'
+cat > arch/$ARCH/syscall_arch.h <<'EOH'
 /* seL4: system calls are translated to IPC in the POSIX runtime */
 #define __SYSCALL_LL_E(x) (x)
 #define __SYSCALL_LL_O(x) (x)
@@ -42,16 +42,18 @@ static __inline long __syscall6(long n, long a1, long a2, long a3, long a4, long
 #define IPC_64 0
 EOH
 
-rm -f src/process/x86_64/vfork.s src/signal/x86_64/restore.s \
-      src/thread/x86_64/clone.s src/thread/x86_64/__set_thread_area.s \
-      src/thread/x86_64/syscall_cp.s src/thread/x86_64/__unmapself.s
-if grep -rln '^\s*syscall\b' src/*/x86_64/; then
-    echo "port-musl: there is still assembly using 'syscall'" >&2; exit 1
+# (aarch64's __set_thread_area is C writing tpidr_el0 itself: it stays)
+rm -f src/process/$ARCH/vfork.s src/signal/$ARCH/restore.s \
+      src/thread/$ARCH/clone.s src/thread/x86_64/__set_thread_area.s \
+      src/thread/$ARCH/syscall_cp.s src/thread/$ARCH/__unmapself.s
+if grep -rlnE '^\s*(syscall|svc)\b' src/*/$ARCH/; then
+    echo "port-musl: there is still assembly entering the kernel" >&2; exit 1
 fi
+case $ARCH in aarch64) EXTRA=-mstrict-align ;; *) EXTRA= ;; esac
 
-CC="clang --target=x86_64-linux-musl" AR=llvm-ar RANLIB=llvm-ranlib \
-CFLAGS="-O2 -fno-pic -fno-stack-protector" \
-    ./configure --target=x86_64-linux-musl --prefix="$PREFIX" --disable-shared --disable-wrapper >/dev/null
+CC="clang --target=$ARCH-linux-musl" AR=llvm-ar RANLIB=llvm-ranlib \
+CFLAGS="-O2 -fno-pic -fno-stack-protector $EXTRA" \
+    ./configure --target=$ARCH-linux-musl --prefix="$PREFIX" --disable-shared --disable-wrapper >/dev/null
 make -j"$(nproc)" >/dev/null
 make install >/dev/null
 echo "musl installed in $PREFIX"

@@ -1,6 +1,6 @@
 #!/bin/sh
 # ./web.sh: boots GNU/seL4 (what ../../dev.sh make built) in the `web` container and serves its
-# serial console and screen at http://localhost:6080. disk.img may be a link to another disk:
+# serial console and screen at http://localhost (port 80). disk.img may be a link to another disk:
 # its directory is mounted too (DISK_DIR). Extra arguments go to docker compose up.
 #
 # SPDX-License-Identifier: BSD-2-Clause

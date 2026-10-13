@@ -38,6 +38,8 @@
 #include <microkit.h>
 #include <sel4posix/protocol.h>
 #include <sel4posix/procmem.h>
+#include "arch.h"
+#include "rt_sysmap.h"       /* SYS_* as x86_64's numbers: the protocol (tools/gen-sysmap.py) */
 #include <sel4posix/net_protocol.h>
 #include <sys/socket.h>
 #include <sys/epoll.h>
@@ -544,12 +546,7 @@ static long copy_out(long r, void *dst, size_t size)
 
 uint64_t __posix_epoch, __posix_tsc0, __posix_tsc_hz = 1000000000;
 
-static uint64_t rdtsc(void)
-{
-    uint32_t lo, hi;
-    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    return (uint64_t)hi << 32 | lo;
-}
+static uint64_t rdtsc(void) { return arch_counter(); }   /* the TSC, or ARM's counter */
 
 /* Nanoseconds since boot */
 static uint64_t now_ns(void)
@@ -752,16 +749,11 @@ static long sys_timerfd_gettime(int fd, struct itimerspec *cur)
 /* getrandom(): from the processor's generator (RDRAND); without it, a TSC mix (not cryptographic) */
 static uint64_t rand64(void)
 {
-    unsigned long long v;
-    for (int i = 0; i < 10; i++) {
-        unsigned char ok;
-        __asm__ volatile("rdrand %0; setc %1" : "=r"(v), "=qm"(ok));
-        if (ok) return v;
-    }
+    uint64_t v;
+    for (int i = 0; i < 10; i++)
+        if (arch_hwrand(&v)) return v;
     static uint64_t x;
-    uint32_t lo, hi;
-    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    x ^= ((uint64_t)hi << 32 | lo) + 0x9e3779b97f4a7c15ULL;
+    x ^= arch_counter() + 0x9e3779b97f4a7c15ULL;
     x ^= x << 13; x ^= x >> 7; x ^= x << 17;
     return x;
 }
@@ -907,19 +899,8 @@ static long sys_munmap(uintptr_t addr, size_t len)
     return 0;
 }
 
-static long set_fs_base(uintptr_t base)
-{
-    /* seL4 x86_64 is configured with FSGSBASE_INST: wrfsbase in user mode */
-    __asm__ volatile("wrfsbase %0" :: "r"(base) : "memory");
-    return 0;
-}
-
-static uintptr_t get_fs_base(void)
-{
-    uintptr_t base;
-    __asm__ volatile("rdfsbase %0" : "=r"(base));
-    return base;
-}
+static long set_fs_base(uintptr_t base) { arch_set_tp(base); return 0; }   /* the thread pointer */
+static uintptr_t get_fs_base(void) { return arch_get_tp(); }
 
 /* ------------------------------------------------------------------ */
 /* Processes                                                          */
@@ -1135,6 +1116,10 @@ static long sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, lo
 
 long __sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6)
 {
+#ifdef __aarch64__
+    /* musl's aarch64 numbers to the protocol's (x86_64's); -1: none (ENOSYS) */
+    n = (unsigned long)n < sizeof sysmap_aarch64 / sizeof *sysmap_aarch64 ? sysmap_aarch64[n] : -1;
+#endif
     __posix_in_call++;
     long r = sel4_syscall(n, a1, a2, a3, a4, a5, a6);
     __posix_in_call--;
@@ -1152,7 +1137,9 @@ static long sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, lo
     case SYS_madvise:        return 0;
     case SYS_mremap:         return -ENOMEM;
     /* thread / TLS */
+#ifdef SYS_arch_prctl
     case SYS_arch_prctl:     return a1 == ARCH_SET_FS ? set_fs_base(a2) : -EINVAL;
+#endif
     case SYS_set_thread_area: return set_fs_base(a1);
     case SYS_set_tid_address:
     case SYS_gettid:
@@ -1160,6 +1147,8 @@ static long sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, lo
     /* processes */
     case SYS_fork:
     case SYS_vfork:          return sys_fork();
+    case SYS_clone:          /* fork as aarch64's musl makes it: clone(SIGCHLD); no threads yet */
+        return a1 == SIGCHLD && !a2 ? sys_fork() : -ENOSYS;
     case SYS_execve:         return sys_execve((const char *)a1, (char *const *)a2, (char *const *)a3);
     case SYS_wait4:          return sys_wait4(a1, (int *)a2, a3, (struct rusage *)a4);
     case SYS_exit:

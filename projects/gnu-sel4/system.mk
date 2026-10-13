@@ -3,7 +3,9 @@
 # Input variables: MICROKIT_SDK MICROKIT_BOARD MICROKIT_CONFIG SDDF LIBVMM POSIX BUILD_DIR DEPS
 #
 # SPDX-License-Identifier: BSD-2-Clause
-SUPPORTED_BOARDS := x86_64_generic_vtx x86_64_generic
+SUPPORTED_BOARDS := x86_64_generic_vtx x86_64_generic qemu_virt_aarch64
+# The processor architecture of the native system (TODO item 16: ARM64 alongside x86_64)
+ARCH := $(if $(filter qemu_virt_aarch64,$(MICROKIT_BOARD)),aarch64,x86_64)
 # Third-party sources (fetch-deps.sh puts them in $(DEPS)/third_party)
 TP := $(DEPS)/third_party
 TOOLCHAIN ?= clang
@@ -159,15 +161,20 @@ SYSROOT := $(BUILD_DIR)/sysroot
 LIBC    := $(SYSROOT)/lib/libc.a
 SEL4CC  := $(SYSROOT)/bin/sel4-cc
 $(LIBC): $(POSIX)/musl/port-musl.sh
-	$(POSIX)/musl/port-musl.sh $(MUSL_SRC) /tmp/musl-sel4 $(SYSROOT)
+	$(POSIX)/musl/port-musl.sh $(MUSL_SRC) /tmp/musl-sel4-$(ARCH) $(SYSROOT) $(ARCH)
 
-RT_CFLAGS := --target=x86_64-linux-musl -O2 -g -Wall -fno-pic -fno-stack-protector -mfsgsbase \
-	     -nostdinc -isystem $(SYSROOT)/include -I$(BOARD_DIR)/include -I$(POSIX)/include
-RT_DEPS := $(wildcard $(POSIX)/include/sel4posix/*.h) $(LIBC)
+# The runtime speaks x86_64's system call numbers to posix_server on every architecture
+# (rt_sysmap.h: the protocol's numbers, and aarch64's mapped to them)
+rt_sysmap.h: $(POSIX)/tools/gen-sysmap.py $(MUSL_SRC)/arch/x86_64/bits/syscall.h.in $(MUSL_SRC)/arch/aarch64/bits/syscall.h.in
+	python3 $< $(MUSL_SRC) > $@
+RT_ARCH_FLAGS := $(if $(filter aarch64,$(ARCH)),-mstrict-align,-mfsgsbase)
+RT_CFLAGS := --target=$(ARCH)-linux-musl -O2 -g -Wall -fno-pic -fno-stack-protector $(RT_ARCH_FLAGS) \
+	     -nostdinc -isystem $(SYSROOT)/include -I$(BOARD_DIR)/include -I$(POSIX)/include -I.
+RT_DEPS := $(wildcard $(POSIX)/include/sel4posix/*.h) $(POSIX)/runtime/arch.h rt_sysmap.h $(LIBC)
 rt_%.o: $(POSIX)/runtime/%.c $(RT_DEPS)
 	clang $(RT_CFLAGS) -c $< -o $@
-rt_crt0.o: $(POSIX)/runtime/crt0.S
-	clang --target=x86_64-linux-musl -c $< -o $@
+rt_crt0.o: $(POSIX)/runtime/crt0$(if $(filter aarch64,$(ARCH)),-aarch64).S
+	clang --target=$(ARCH)-linux-musl -c $< -o $@
 $(SYSROOT)/lib/crt0.o: rt_crt0.o
 	cp $< $@
 $(SYSROOT)/lib/libsel4posix.a: rt_start.o rt_syscall.o

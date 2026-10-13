@@ -2,7 +2,7 @@
 #   docker compose run --rm build        build everything and install it into disk.img
 #   docker compose run --rm test         automated tests in headless QEMU (needs /dev/kvm)
 #   docker compose run --rm shell        a shell in the build environment
-#   ./web.sh                             the system in the browser: http://localhost:6080 (serial
+#   ./web.sh                             the system in the browser: http://localhost (serial
 #                                        console and screen); after a rebuild, docker compose restart web
 #   docker compose run --rm vm-rootfs    kernel + initramfs of the Linux VM (once, before build:
 #                                        vm-deps fetches the pinned packages, then no network)
@@ -51,7 +51,7 @@ services:
       - "127.0.0.1:8090:8090"        # -> native GNU/seL4:8080
       - "127.0.0.1:2223:2223"        # -> native GNU/seL4:22 (ssh)
     command: make run DISPLAY_OPTS="-display vnc=0.0.0.0:0 -vga none -device bochs-display,addr=0x5"
-  web:                               # ./web.sh: the system in the browser, http://localhost:6080
+  web:                               # ./web.sh: the system in the browser, http://localhost
     build:
       context: .
       target: web
@@ -65,7 +65,7 @@ services:
     devices:
       - /dev/kvm
     ports:
-      - "127.0.0.1:6080:6080"        # the page and the screen (noVNC)
+      - "127.0.0.1:80:6080"          # the page and the screen (noVNC): http://localhost
       - "127.0.0.1:6081:6081"        # the serial console (WebSocket)
       - "127.0.0.1:6082:8080"        # -> VM:80 (not 8080 on the host: often taken)
       - "127.0.0.1:2222:2222"        # -> VM:22
