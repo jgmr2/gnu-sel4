@@ -5,5 +5,8 @@
 # syslog, it logs to stderr (s6-svscan's log, /tmp/s6-svscan.log).
 #
 # SPDX-License-Identifier: BSD-2-Clause
+# A system without a network (the ARM build for now) has nothing to listen on: the service only
+# idles (still supervised), as 9pd does without the VM
+/bin/netcfg present || { echo "sshd: no network in this system: idle"; exec sleep infinity; }
 mkdir -p /etc/dropbear
 exec /bin/dropbear -F -R -p 22 </dev/null 2>&1

@@ -19,7 +19,7 @@
 
 static int usage(void)
 {
-    fprintf(stderr, "usage: netcfg | netcfg dhcp | netcfg static IP/PREFIX [gateway IP] [dns IP [IP]] | netcfg apply\n");
+    fprintf(stderr, "usage: netcfg | netcfg dhcp | netcfg static IP/PREFIX [gateway IP] [dns IP [IP]] | netcfg apply | netcfg present\n");
     return 2;
 }
 
@@ -47,6 +47,16 @@ static int apply(struct net_cfg *c)
     }
     close(s);
     return 0;
+}
+
+/* Is there a network in this system? (posix_server says ENETDOWN to sockets without one: the ARM
+ * build for now) */
+static int present(void)
+{
+    int s = socket(AF_INET, SOCK_DGRAM, 0);
+    if (s < 0) return 0;
+    close(s);
+    return 1;
 }
 
 static int show(void)
@@ -84,7 +94,12 @@ int main(int argc, char **argv)
     if (argc == 1) return show();
     if (!strcmp(argv[1], "dhcp")) return apply(&c);
     if (!strcmp(argv[1], "static")) return parse_static(argc - 2, argv + 2, &c) ? usage() : apply(&c);
+    if (!strcmp(argv[1], "present")) return present() ? 0 : 1;
     if (!strcmp(argv[1], "apply")) {
+        if (!present()) {                              /* at boot: nothing to configure is no failure */
+            fprintf(stderr, "netcfg: no network in this system: nothing to configure\n");
+            return 0;
+        }
         FILE *f = fopen("/etc/netcfg.conf", "r");
         if (!f) return 0;                              /* no file: DHCP (what netstack already does) */
         char l[160], *args[8];
