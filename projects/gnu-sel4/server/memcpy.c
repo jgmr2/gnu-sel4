@@ -7,9 +7,12 @@
  */
 #include <stddef.h>
 
+#ifdef __x86_64__                 /* elsewhere the library's */
+
 void *memcpy(void *restrict dst, const void *restrict src, size_t n)
 {
     void *r = dst;
     __asm__ volatile("rep movsb" : "+D"(dst), "+S"(src), "+c"(n) : : "memory");
     return r;
 }
+#endif

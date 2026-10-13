@@ -201,6 +201,7 @@ uintptr_t proc_win(int s, uintptr_t vaddr);    /* the shared buffer of slot s (c
 uint8_t *mem_page_ptr(int s, uintptr_t v);     /* byte v of slot s as the server sees it (page must exist) */
 bool mem_copy_in(int s, uintptr_t v, const void *src, size_t n);   /* src NULL: clear */
 bool mem_copy_user(int s, uintptr_t v, const void *src, size_t n);
+void mem_sync_code(int s, uintptr_t v);
 bool mem_copy_from_user(int s, uintptr_t v, void *dst, size_t n);
 bool mem_has_page(int s, uintptr_t v);
 #define PROC_PRIO_NORMAL 100                   /* below posix_server (150), above the VM (90) */

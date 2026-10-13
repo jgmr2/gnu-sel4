@@ -29,6 +29,7 @@
 #include <sddf/util/printf.h>
 #include <sel4/sel4_arch/mapping.h>
 #include "server.h"
+#include "arch.h"
 
 #define ROOT_CNODE   (((seL4_CPtr)SRV_ROOT_CNODE_SLOT << 58) | SRV_ROOT_CNODE_SLOT)
 #define ROOT_REF(n)  (((seL4_CPtr)SRV_ROOT_CNODE_SLOT << 58) | (n))   /* names root[n] */
@@ -108,33 +109,24 @@ static seL4_CPtr make(seL4_Word type, seL4_Word bits)
 static bool map_frame(seL4_CPtr frame, seL4_CPtr vspace, uintptr_t vaddr, seL4_CapRights_t rights)
 {
     for (;;) {
-        seL4_Error e = seL4_X86_Page_Map(frame, vspace, vaddr, rights, seL4_X86_Default_VMAttributes);
+        seL4_Error e = arch_page_map(frame, vspace, vaddr, rights);
         if (e == seL4_NoError) return true;
-        if (e != seL4_FailedLookup) return false;
-        seL4_Word type;
-        switch (seL4_MappingFailedLookupLevel()) {
-        case SEL4_MAPPING_LOOKUP_NO_PDPT: type = seL4_X86_PDPTObject; break;
-        case SEL4_MAPPING_LOOKUP_NO_PD:   type = seL4_X86_PageDirectoryObject; break;
-        case SEL4_MAPPING_LOOKUP_NO_PT:   type = seL4_X86_PageTableObject; break;
-        default: return false;
-        }
-        seL4_CPtr pt = make(type, 0);
-        if (!pt) return false;
-        seL4_X86_VMAttributes a = seL4_X86_Default_VMAttributes;
-        e = type == seL4_X86_PDPTObject ? seL4_X86_PDPT_Map(pt, vspace, vaddr, a)
-          : type == seL4_X86_PageDirectoryObject ? seL4_X86_PageDirectory_Map(pt, vspace, vaddr, a)
-          : seL4_X86_PageTable_Map(pt, vspace, vaddr, a);
-        if (e) return false;
+        if (e != seL4_FailedLookup || !arch_add_table(make, vspace, vaddr)) return false;
     }
 }
 
-/* The server's own memory, growing on demand (directory leaves) */
+/* The server's own memory, growing on demand (directory leaves). aarch64 with the hypervisor
+ * extensions gives user mode 40 bits (1 TiB): everything there stays below it */
+#ifdef __aarch64__
+#define META_BASE 0x7000000000UL
+#else
 #define META_BASE 0x8000000000UL
+#endif
 static uintptr_t meta_top = META_BASE;
 
 static void *meta_page(void)
 {
-    seL4_CPtr f = make(seL4_X86_4K, 0);
+    seL4_CPtr f = make(ARCH_FRAME_OBJECT, 0);
     if (!f || !map_frame(f, SELF_VSPACE, meta_top, seL4_ReadWrite)) return NULL;
     void *p = (void *)meta_top;
     meta_top += 4096;
@@ -144,7 +136,11 @@ static void *meta_page(void)
 /* ---------------- frames ---------------- */
 
 /* The direct map: frame x (an even CSpace index; x + 1 is its server capability) at */
+#ifdef __aarch64__
+#define DMAP_BASE 0x8000000000UL
+#else
 #define DMAP_BASE 0x20000000000UL
+#endif
 static inline uint8_t *dptr(uint32_t x) { return (uint8_t *)(DMAP_BASE + (uintptr_t)(x >> 1) * 4096); }
 
 #define MAX_FRAMES (1u << 18)           /* 1 GiB of 4 KiB frames */
@@ -164,7 +160,7 @@ static uint32_t frame_get(bool *recycled)
     if (cur_used & 1) cur_used++;                  /* aligned pairs */
     seL4_CPtr c = cslots(2);
     if (!c) return 0;
-    if (ut_retype(seL4_X86_4K, 0, c >> 58, ROOT_DEPTH, c & ((1u << CNODE_BITS) - 1))) {
+    if (ut_retype(ARCH_FRAME_OBJECT, 0, c >> 58, ROOT_DEPTH, c & ((1u << CNODE_BITS) - 1))) {
         return 0;
     }
     if (seL4_CNode_Copy(CN(c + 1), CN(c), seL4_AllRights)) return 0;
@@ -178,14 +174,14 @@ static uint32_t frame_new_unmapped(void)
     if (cur_used & 1) cur_used++;
     seL4_CPtr c = cslots(2);
     if (!c) return 0;
-    if (ut_retype(seL4_X86_4K, 0, c >> 58, ROOT_DEPTH, c & ((1u << CNODE_BITS) - 1))) return 0;
+    if (ut_retype(ARCH_FRAME_OBJECT, 0, c >> 58, ROOT_DEPTH, c & ((1u << CNODE_BITS) - 1))) return 0;
     if (seL4_CNode_Copy(CN(c + 1), CN(c), seL4_AllRights)) return 0;
     return CAP_IDX(c);
 }
 
 static void frame_put(uint32_t x)
 {
-    seL4_X86_Page_Unmap(CAP_PTR(x));        /* the server's mapping stays (direct map) */
+    arch_page_unmap(CAP_PTR(x));        /* the server's mapping stays (direct map) */
     free_frames[nfree++] = x;
 }
 
@@ -202,7 +198,7 @@ static uint32_t *free_leaves;           /* list of free leaves (linked through t
 
 uintptr_t proc_win(int s, uintptr_t vaddr)
 {
-    return PROC_WIN_BASE + ((uintptr_t)s << 32) + vaddr;
+    return PROC_WIN_BASE + ((uintptr_t)s << PROC_WIN_SHIFT) + vaddr;
 }
 
 seL4_CPtr slot_tcb(int s) { return slots[s].tcb; }
@@ -382,7 +378,7 @@ static void shared_unmap(uint32_t entry)
 {
     uint32_t pair = entry & ENTRY_IDX;
     seL4_CPtr c = CAP_PTR(pair);
-    seL4_X86_Page_Unmap(c);
+    arch_page_unmap(c);
     seL4_CNode_Delete(CN(c));
     if (nfree_pairs < sizeof free_pairs / sizeof *free_pairs) free_pairs[nfree_pairs++] = pair;
     int id = pair_meta[pair >> 1] >> 20;
@@ -600,10 +596,21 @@ bool mem_fork(int cs, int ps)
             uint64_t t0 = clock_rdtsc();
             if (!page(cs, v, false)) return false;
             memcpy(dptr(slots[cs].dir[d][i]), dptr(e), 4096);
+            if (v >= PROC_IMG_BASE && v < PROC_IMG_BASE + PROC_IMG_SIZE)   /* the program's code */
+                arch_sync_icache(CAP_PTR(slots[cs].dir[d][i]));
             perf_add(&perf_fork_copy, 1, t0);
         }
     }
     return true;
+}
+
+/* The page at v of slot s now holds code the server wrote: its instruction cache (ARM; nothing
+ * on x86) */
+void mem_sync_code(int s, uintptr_t v)
+{
+    uint32_t *l = slots[s].dir[v >> 22];
+    uint32_t e = l ? l[(v >> 12) & 1023] : 0;
+    if (e && !(e & SHARED)) arch_sync_icache(CAP_PTR(e));
 }
 
 /* Page fault of the process in slot s: if it falls in a region, the page is created */
@@ -623,13 +630,13 @@ bool slot_make(int s)
     struct slot *sl = &slots[s];
     if (sl->made) return true;
     sl->tcb = make(seL4_TCBObject, 0);
-    sl->vspace = make(seL4_X64_PML4Object, 0);
+    sl->vspace = make(ARCH_VSPACE_OBJECT, 0);
     sl->cnode = make(seL4_CapTableObject, PROC_CNODE_BITS);
     sl->ntfn = make(seL4_NotificationObject, 0);
     seL4_CPtr fault_ep = cslots(1);
     if (!sl->tcb || !sl->vspace || !sl->cnode || !sl->ntfn || !fault_ep) return false;
     seL4_CapRights_t call = seL4_CapRights_new(1, 0, 0, 1);       /* grant_reply + write */
-    if (seL4_X86_ASIDPool_Assign(ASID_POOL, sl->vspace) ||
+    if (arch_asid_assign(ASID_POOL, sl->vspace) ||
         seL4_CNode_Mint(CN(fault_ep), ROOT_CNODE, SRV_EP_SLOT, ROOT_DEPTH, call, BADGE_FAULT | s) ||
         seL4_CNode_Mint(sl->cnode, PROC_EP_CAP, PROC_CNODE_BITS, ROOT_CNODE, SRV_EP_SLOT, ROOT_DEPTH,
                         call, BADGE_PPC | s) ||

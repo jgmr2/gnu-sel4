@@ -61,11 +61,17 @@
 #endif
 static uint64_t clk_epoch = BUILD_TIME, clk_tsc0, clk_hz;
 
-static inline uint64_t tsc(void)
+static inline uint64_t tsc(void)           /* the TSC, or ARM's physical counter */
 {
+#ifdef __aarch64__
+    uint64_t c;
+    __asm__ volatile("isb; mrs %0, cntpct_el0" : "=r"(c));
+    return c;
+#else
     uint32_t lo, hi;
     __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
     return (uint64_t)hi << 32 | lo;
+#endif
 }
 
 static uint32_t now(void)

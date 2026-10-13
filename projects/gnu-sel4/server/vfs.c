@@ -17,6 +17,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 #include "vfs.h"
+#include "arch.h"
 
 /* Buffer shared with the file server (set by Microkit, see meta.py) */
 uintptr_t fs_buf;
@@ -550,11 +551,9 @@ static long do_read(long fd, size_t len, bool positional, uint64_t pos, uintptr_
     case OF_RANDOM: {
         if (len > POSIX_BUF_SIZE) len = POSIX_BUF_SIZE;
         for (size_t i = 0; i < len; i += 8) {
-            unsigned long long v = 0;
+            uint64_t v = 0;
             for (int k = 0; k < 10; k++) {
-                unsigned char ok;
-                __asm__ volatile("rdrand %0; setc %1" : "=r"(v), "=qm"(ok));
-                if (ok) break;
+                if (arch_hwrand(&v)) break;          /* RDRAND; aarch64: none yet */
                 v ^= clock_rdtsc() * 0x9e3779b97f4a7c15ULL;
             }
             memcpy((char *)client_buf + i, &v, len - i < 8 ? len - i : 8);

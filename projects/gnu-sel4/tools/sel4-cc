@@ -7,15 +7,18 @@
 #
 # Use it to port programs with their own build system:
 #   ./configure --host=x86_64-linux-musl CC=/path/to/sysroot/bin/sel4-cc
+# (aarch64-linux-musl for an ARM build: the sysroot's `arch` file says which)
 #
 # SPDX-License-Identifier: BSD-2-Clause
 SYSROOT=$(cd "$(dirname "$0")/.." && pwd)
-CC="clang --target=x86_64-linux-musl"
+ARCH=$(cat "$SYSROOT/arch" 2>/dev/null || echo x86_64)
+CC="clang --target=$ARCH-linux-musl"
 # ccache, when there is one and a cache directory (dev.sh, docker compose: .cache/ccache): a port
 # built again from scratch reuses what it compiled before
 CCACHE=
 [ -n "${CCACHE_DIR:-}" ] && command -v ccache >/dev/null 2>&1 && CCACHE=ccache
 FLAGS="-nostdinc -isystem $SYSROOT/include -fno-pic -fno-stack-protector"
+[ "$ARCH" = aarch64 ] && FLAGS="$FLAGS -mstrict-align"
 
 link=1
 for a in "$@"; do
@@ -25,6 +28,8 @@ done
 if [ "$link" = 1 ]; then
     # compiler-rt: what the compiler calls on its own (128-bit division, etc.)
     RT=$($CC --rtlib=compiler-rt -print-libgcc-file-name)
+    # aarch64: Debian's compiler-rt is the host's only; the cross libgcc instead (Dockerfile)
+    [ "$ARCH" = aarch64 ] && RT=$(ls /usr/lib/gcc-cross/aarch64-linux-gnu/*/libgcc.a 2>/dev/null | tail -1)
     exec $CC $FLAGS -static -nostdlib -fuse-ld=lld \
         -Wl,--image-base=0x10000000 -Wl,-z,max-page-size=4096 -L"$SYSROOT/lib" \
         "$SYSROOT/lib/crt0.o" "$@" "$SYSROOT/lib/libsel4posix.a" "$SYSROOT/lib/libc.a" "$RT"

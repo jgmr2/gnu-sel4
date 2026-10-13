@@ -15,6 +15,10 @@ static waitmask_t net_waiters;
 
 long net_call(long op, long a1, long a2, long a3, long a4)
 {
+#ifdef NO_NETSTACK
+    (void)op; (void)a1; (void)a2; (void)a3; (void)a4;
+    return -ENETDOWN;                   /* a build with no network stack (ARM, for now) */
+#endif
     microkit_mr_set(0, op);
     microkit_mr_set(1, a1);
     microkit_mr_set(2, a2);

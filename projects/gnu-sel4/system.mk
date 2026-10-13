@@ -10,6 +10,12 @@ ARCH := $(if $(filter qemu_virt_aarch64,$(MICROKIT_BOARD)),aarch64,x86_64)
 TP := $(DEPS)/third_party
 TOOLCHAIN ?= clang
 SDDF_CUSTOM_LIBC := 1
+# sDDF's board snippets name their drivers' directory after a PLATFORM of their own (qemu_virt_aarch64:
+# arm), which ours (qemu-arm) would override
+ifeq ($(ARCH),aarch64)
+UART_DRIV_DIR := arm
+TIMER_DRIV_DIR := arm
+endif
 include $(SDDF)/tools/make/board/common.mk
 
 SYSTEM_FILE := gnu-sel4.system
@@ -41,6 +47,8 @@ vpath %.c $(SDDF) $(LIBVMM)
 #                 file system is an image inside fs_ext2, no disk driver at all), the firmware's
 #                 1920x1080 framebuffer, no network card driver (net/null_driver.c), no ACPI
 #                 power off yet. make iso builds the ISO
+#   qemu-arm      QEMU's ARM virt machine (TODO item 16, milestone 2): the serial console, the
+#                 file system in RAM (rootfs and our programs; system-arm.mk), no network or VM yet
 PLATFORM ?= qemu
 export PLATFORM
 ifeq ($(PLATFORM),qemu)
@@ -54,8 +62,14 @@ FBCON_FLAGS := -DFB_LINEAR -DFB_W=1920 -DFB_H=1080 -DFB_STRIDE=1920
 SERVER_FLAGS := -DNO_ACPI_POWEROFF
 VMM_FLAGS := -DNO_VM_DISK
 FS_FLAGS := -DFS_RAMDISK
+else ifeq ($(PLATFORM),qemu-arm)
+ETH_ELF :=
+BLK_ELFS :=
+ARM_RAMFS := 1
+SERVER_FLAGS := -DNO_ACPI_POWEROFF -DNO_NETSTACK
+FS_FLAGS := -DFS_RAMDISK
 else
-$(error unknown PLATFORM $(PLATFORM): qemu or latitude7390)
+$(error unknown PLATFORM $(PLATFORM): qemu, latitude7390 or qemu-arm)
 endif
 # --- the Linux VM (meta.py has the same choice) ---
 #   LINUX_VM=yes  (default) the VM with Docker, on a kernel with VT-x
@@ -77,6 +91,9 @@ else
 $(error LINUX_VM must be yes or no)
 endif
 
+ifeq ($(ARCH),aarch64)
+include $(POSIX)/system-arm.mk
+else
 IMAGES := serial_driver.elf serial_virt_tx.elf serial_virt_rx.elf $(BLK_ELFS) \
 	  $(ETH_ELF) network_virt_rx.elf network_virt_tx.elf $(VM_ELFS) timer_driver.elf \
 	  fs_ext2.elf posix_server.elf netstack.elf netstack_copy.elf fbcon.elf timer_ticker.elf
@@ -91,6 +108,7 @@ timer_ticker.o: $(POSIX)/timer/ticker.c
 	$(CC) $(CFLAGS) -c $< -o $@
 timer_ticker.elf: timer_ticker.o
 	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@
+endif
 
 # --- syscall tables generated from musl (Linux x86_64 numbers and names) ---
 MUSL_SRC := $(TP)/musl-1.2.6
@@ -122,8 +140,9 @@ posix_server.elf: $(addprefix server_,$(addsuffix .o,$(SERVER_SRCS)))
 # --- ext2 file server ---
 fs_ext2.o: $(POSIX)/fs/ext2/fs_ext2.c $(POSIX)/include/sel4posix/fs_protocol.h
 	$(CC) $(CFLAGS) $(FS_FLAGS) -I$(POSIX)/include -DBUILD_TIME=$(shell date +%s) -c $< -o $@
-ifdef LIVE
-# The live file system: the installed partition (see install.stamp), linked into fs_ext2
+ifneq ($(LIVE)$(ARM_RAMFS),)
+# The live file system: the installed partition (see install.stamp), linked into fs_ext2; on
+# qemu-arm the image system-arm.mk makes
 fs_ext2_ramdisk.o: $(POSIX)/fs/ext2/ramdisk.S live-part1.img
 	$(CC) -c -x assembler-with-cpp -DRAMDISK_IMAGE=\"live-part1.img\" -target $(TARGET) $< -o $@
 fs_ext2.elf: fs_ext2.o fs_ext2_ramdisk.o
@@ -180,7 +199,7 @@ $(SYSROOT)/lib/crt0.o: rt_crt0.o
 $(SYSROOT)/lib/libsel4posix.a: rt_start.o rt_syscall.o
 	rm -f $@ && llvm-ar rcs $@ $^
 $(SEL4CC): $(POSIX)/tools/sel4-cc
-	mkdir -p $(dir $@) && cp $< $@
+	mkdir -p $(dir $@) && cp $< $@ && echo $(ARCH) > $(SYSROOT)/arch
 SYSROOT_READY := $(LIBC) $(SYSROOT)/lib/crt0.o $(SYSROOT)/lib/libsel4posix.a $(SEL4CC)
 sysroot: $(SYSROOT_READY)
 
@@ -382,6 +401,7 @@ CONSOLE ?= graphical
 export CONSOLE
 console.$(CONSOLE):
 	rm -f console.* && touch $@
+ifneq ($(ARCH),aarch64)                 # (aarch64's: system-arm.mk)
 $(SYSTEM_FILE): $(POSIX)/meta.py $(IMAGES) console.$(CONSOLE)
 	PYTHONPATH=$(SDDF)/tools/meta:$$PYTHONPATH python3 $(POSIX)/meta.py --sddf $(SDDF) \
 		--board $(MICROKIT_BOARD) --output . --sdf $@
@@ -420,11 +440,12 @@ $(SYSTEM_FILE): $(POSIX)/meta.py $(IMAGES) console.$(CONSOLE)
 	$(OBJCOPY) --update-section .net_client_config=net_client_netstack.data netstack.elf
 	$(OBJCOPY) --update-section .timer_client_config=timer_client_netstack.data netstack.elf
 	$(OBJCOPY) --update-section .net_copy_config=net_copy_netstack_net_copier.data netstack_copy.elf
+endif
 
 $(IMAGE_FILE) $(REPORT_FILE): $(IMAGES) $(SYSTEM_FILE)
 	$(MICROKIT_TOOL) $(SYSTEM_FILE) --search-path . --board $(MICROKIT_BOARD) \
 		--config $(MICROKIT_CONFIG) -o $(IMAGE_FILE) -r $(REPORT_FILE)
-	cp $(BOARD_DIR)/elf/sel4_32.elf .
+	[ "$(ARCH)" != x86_64 ] || cp $(BOARD_DIR)/elf/sel4_32.elf .   # x86: the kernel GRUB/QEMU boot
 
 # --- disk: MBR with two partitions ---
 #   1: GNU/seL4 ext2 (initial contents: rootfs/)         -> fs_ext2
@@ -536,6 +557,10 @@ live-part1.img: install.stamp FORCE
 	rm -f live-marker; mv $@.tmp $@
 endif
 
+ifeq ($(ARCH),aarch64)
+all: $(IMAGE_FILE)
+else
 all: $(IMAGE_FILE) install.stamp
+endif
 .PHONY: all sysroot FORCE
 FORCE:

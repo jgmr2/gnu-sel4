@@ -35,6 +35,11 @@ RUN groupadd -g ${GID} dev && useradd -m -u ${UID} -g ${GID} -s /bin/bash dev
 ENV MICROKIT_CONFIG=debug \
     LLVM=True
 
+# The ARM64 build (make PLATFORM=qemu-arm): libgcc for aarch64, the routines the compiler calls on
+# its own (Debian ships compiler-rt for the host only; tools/sel4-cc uses this one there)
+RUN apt-get update && apt-get install -y --no-install-recommends libgcc-14-dev-arm64-cross \
+    && rm -rf /var/lib/apt/lists/*
+
 USER dev
 WORKDIR /work
 

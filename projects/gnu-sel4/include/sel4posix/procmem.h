@@ -35,8 +35,15 @@
 #define PROC_MMAP_SIZE    0x40000000UL      /* 1 GiB */
 
 /* Each slot's window inside posix_server, for the shared and IPC buffers only:
- * address v of the process in slot s is seen at PROC_WIN_BASE + (s << 32) + v */
+ * address v of the process in slot s is seen at PROC_WIN_BASE + (s << PROC_WIN_SHIFT) + v.
+ * aarch64 (40-bit user addresses): 1 GiB per slot, enough for those buffers */
+#ifdef __aarch64__
+#define PROC_WIN_BASE     0x4000000000UL
+#define PROC_WIN_SHIFT    30
+#else
 #define PROC_WIN_BASE     0x10000000000UL
+#define PROC_WIN_SHIFT    32
+#endif
 
 /* Our own entries in the auxiliary vector */
 #define AT_SEL4_IPCBUF    0x5e14    /* address of the process's seL4 IPC buffer */

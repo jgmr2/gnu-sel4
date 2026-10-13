@@ -20,7 +20,11 @@ export MICROKIT_SDK    ?= $(DEPS)/sdk/microkit-sdk-2.3.1
 # make LINUX_VM=no (also run, test): no Linux VM, on a kernel without VT-x, for machines that
 # cannot give seL4 VT-x (CI runners, AMD hosts); in build-novm/ (system.mk)
 export LINUX_VM        ?= yes
-ifeq ($(LINUX_VM),no)
+# make PLATFORM=qemu-arm: the ARM64 build (TODO item 16), for QEMU's virt machine, without the VM
+ifeq ($(PLATFORM),qemu-arm)
+export LINUX_VM        := no
+export MICROKIT_BOARD  := qemu_virt_aarch64
+else ifeq ($(LINUX_VM),no)
 export MICROKIT_BOARD  := x86_64_generic
 QEMU_VMX               :=
 else
@@ -39,7 +43,7 @@ endif
 export PLATFORM        ?= qemu
 # One build directory per variant: build[-PLATFORM][-release][-novm] (docker compose sets its own,
 # build-docker/: its dependency paths differ, /deps)
-export BUILD_DIR       ?= $(abspath build$(if $(filter-out qemu,$(PLATFORM)),-$(PLATFORM))$(if $(RELEASE),-release)$(if $(filter no,$(LINUX_VM)),-novm))
+export BUILD_DIR       ?= $(abspath build$(if $(filter-out qemu,$(PLATFORM)),-$(PLATFORM))$(if $(RELEASE),-release)$(if $(and $(filter no,$(LINUX_VM)),$(filter-out qemu-arm,$(PLATFORM))),-novm))
 export MICROKIT_CONFIG ?= debug
 # Our own Microkit tool (third_party/microkit, branch gnu-sel4: <cap_untyped>, <cap_cnode>...)
 export MICROKIT_TOOL   := $(DEPS)/third_party/microkit/target/release/microkit
@@ -92,11 +96,16 @@ endif
 SERIAL_OPTS ?= -serial mon:stdio
 run:
 	@test -f $(IMAGE) || { echo "Missing $(IMAGE): build with ../../dev.sh make"; exit 1; }
+ifeq ($(PLATFORM),qemu-arm)
+	qemu-system-aarch64 -machine virt,virtualization=on -cpu cortex-a57 -m 2G $(SERIAL_OPTS) \
+		-device loader,file=$(IMAGE),addr=0x70000000,cpu-num=0 -display none
+else
 	qemu-system-x86_64 -machine q35 -accel kvm \
 		-cpu host,host-phys-bits=off,phys-bits=39,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave$(QEMU_VMX),+vme,+invtsc \
 		-kernel $(BUILD_DIR)/sel4_32.elf -initrd $(IMAGE) -m 6G $(DISPLAY_OPTS) $(SERIAL_OPTS) \
 		-drive file=disk.img,format=raw,if=none,id=hd -device virtio-blk-pci,drive=hd,addr=0x3.0 \
 		-netdev user,id=net0,$(HOSTFWD) -device virtio-net-pci,netdev=net0,addr=0x4.0
+endif
 
 # Automated tests in headless QEMU, on a copy of the disk (tools/test.py).
 # make test NO_NET=1: skip the tests that need the internet; SLOW=1: add the expensive ones;

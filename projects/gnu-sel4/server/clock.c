@@ -1,6 +1,6 @@
 /*
  * posix_server's clock: at boot it reads the time from the PC's CMOS clock
- * (ports 0x70/0x71) and the TSC frequency. Programs receive that data in
+ * (ports 0x70/0x71) and the TSC frequency; on aarch64, from the PL031 RTC and ARM's counter. Programs receive that data in
  * the auxiliary vector and work out the time without IPC (runtime/syscall.c);
  * fs_ext2 receives it to timestamp files.
  *
@@ -10,6 +10,7 @@
 #include <sddf/timer/client.h>
 #include <sddf/timer/config.h>
 #include "server.h"
+#include "arch.h"
 
 /* sDDF timer client (HPET): poll() and nanosleep() timeouts */
 __attribute__((__section__(".timer_client_config"))) timer_client_config_t timer_config;
@@ -18,13 +19,15 @@ __attribute__((__section__(".timer_client_config"))) timer_client_config_t timer
 
 uint64_t clock_epoch, clock_tsc0, clock_tsc_hz;
 
-uint64_t clock_rdtsc(void)
-{
-    uint32_t lo, hi;
-    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
-    return (uint64_t)hi << 32 | lo;
-}
+uint64_t clock_rdtsc(void) { return arch_counter(); }   /* the TSC, or ARM's counter */
 
+#ifdef __aarch64__
+/* The PL031 real-time clock (QEMU virt: 0x9010000, mapped by meta.py): its data register is
+ * the seconds since 1970 */
+uintptr_t rtc_base;
+static uint64_t read_rtc(void) { return rtc_base ? *(volatile uint32_t *)rtc_base : 0; }
+static uint64_t tsc_frequency(void) { return arch_counter_hz(); }
+#else
 static uint8_t cmos(uint8_t reg)
 {
     microkit_x86_ioport_write_8(RTC_IOPORT, 0x70, reg);
@@ -85,6 +88,7 @@ static uint64_t tsc_frequency(void)
     while (cmos(0) == s0) ;
     return clock_rdtsc() - t0;
 }
+#endif
 
 void clock_init(void)
 {

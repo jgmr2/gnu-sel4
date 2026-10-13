@@ -158,6 +158,7 @@ struct k_pollfd { int fd; short events, revents; };
 #define EALREADY     114
 #define EISCONN      106
 #define ENOTSOCK     88
+#define ENETDOWN     100
 #define EOPNOTSUPP   95
 #define POLLOUT_     POLLOUT
 #define POLLERR_     POLLERR

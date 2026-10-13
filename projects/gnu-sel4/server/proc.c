@@ -21,6 +21,7 @@
 #include <os/sddf.h>
 #include <string.h>
 #include "server.h"
+#include "arch.h"
 #include "syscall_nr.h"
 
 /* ELF64 (the server has no libc nor <elf.h>) */
@@ -211,7 +212,7 @@ static long load_program(struct proc *p, const char *path, const char *args, uin
     }
 
     if (memcmp(eh.e_ident, ELFMAG, SELFMAG) || eh.e_ident[EI_CLASS] != ELFCLASS64 ||
-        eh.e_machine != EM_X86_64 || eh.e_type != ET_EXEC || eh.e_phnum > MAX_PHDRS ||
+        eh.e_machine != ARCH_ELF_MACHINE || eh.e_type != ET_EXEC || eh.e_phnum > MAX_PHDRS ||
         eh.e_phentsize != sizeof(Elf64_Phdr))
         return -ENOEXEC;
     Elf64_Phdr ph[MAX_PHDRS];
@@ -338,8 +339,7 @@ static long load_program(struct proc *p, const char *path, const char *args, uin
 
     seL4_UserContext ctx;
     memset(&ctx, 0, sizeof ctx);
-    ctx.rip = eh.e_entry;
-    ctx.rsp = sp;
+    arch_ctx_start(&ctx, eh.e_entry, sp, 0);
     return start_thread(slot, &ctx);
 }
 
@@ -414,9 +414,7 @@ static long sys_fork(uintptr_t brk_cur, uintptr_t mmap_cur, uintptr_t sp, uintpt
      * temporary stack inside the copied memory */
     seL4_UserContext ctx;
     memset(&ctx, 0, sizeof ctx);
-    ctx.rip = entry;
-    ctx.rsp = ((sp - 0x2000) & ~15UL) - 8;
-    ctx.fs_base = fs_base;
+    arch_ctx_start(&ctx, entry, arch_call_sp(sp - 0x2000), fs_base);
     if (start_thread(cs, &ctx)) {
         proc_exit(c, SIGKILL);
         return -EAGAIN;
@@ -634,6 +632,9 @@ bool proc_pgrp_orphaned(int pgid)
  * parked in a call) the signal comes with the reply, as always */
 static void async_signal(struct proc *p)
 {
+#ifndef __x86_64__
+    (void)p;                             /* not on aarch64 yet: runtime/crt0-aarch64.S */
+#else
     if (!p->async_ctl || p->slot < 0 || p == cur || p->blocked || p->stopped) return;
     seL4_CPtr tcb = slot_tcb(p->slot);
     seL4_TCB_Suspend(tcb);
@@ -657,6 +658,7 @@ static void async_signal(struct proc *p)
     r.rip = p->async_entry;
     r.rsp = frame;
     seL4_TCB_WriteRegisters(tcb, true, 0, sizeof r / sizeof(seL4_Word), &r);   /* and resume */
+#endif
 }
 
 void proc_signal(struct proc *p, int sig)
@@ -804,8 +806,10 @@ static long sys_reboot(long magic, long cmd)
 #endif
     } else if ((uint32_t)cmd == RB_AUTOBOOT) {
         tty_puts("[posix] file system clean; restarting\n");
+#ifdef __x86_64__
         microkit_x86_ioport_write_8(RESET_IOPORT, 0xCF9, 0x02);
         microkit_x86_ioport_write_8(RESET_IOPORT, 0xCF9, 0x06);
+#endif                                   /* aarch64: PSCI SYSTEM_RESET, TODO (needs an SMC capability) */
     }
     tty_puts("[posix] system halted: the machine can be switched off\n");
     return 0;                                          /* the caller stays stopped */
@@ -855,6 +859,8 @@ static bool image_cluster(struct proc *p, uintptr_t addr)
             v = end;
         }
     }
+    for (int i = 0; i < (int)(CLUSTER / 4096); i++)   /* code written: the instruction cache (ARM) */
+        if (fresh & (1u << i)) mem_sync_code(p->slot, c0 + (uintptr_t)i * 4096);
     return true;
 }
 

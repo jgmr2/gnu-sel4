@@ -20,7 +20,7 @@
 import argparse
 import os
 import re
-from sdfgen import SystemDescription, Sddf, Vmm
+from sdfgen import SystemDescription, Sddf, Vmm, DeviceTree
 from board import BOARDS, add_x86_hpet
 
 ProtectionDomain = SystemDescription.ProtectionDomain
@@ -107,6 +107,67 @@ def add_region(sdf, pd, name, size, paddr, vaddr, cached):
     mr = MemoryRegion(sdf, name, size, paddr=paddr)
     sdf.add_mr(mr)
     pd.add_map(Map(mr, vaddr, "rw", cached=cached))
+
+
+def server_cspace(sdf, extra=""):
+    """The system description with posix_server's own CSpace (our Microkit's <cspace>)"""
+    caps = [f'<cap_cnode slot="{SRV_ROOT_CNODE_SLOT}" pd="posix_server" />']
+    caps += [f'<cap_untyped slot="{SRV_POOL_SLOT + i}" size="{size:#x}" />' for i, size in enumerate(SRV_POOL_SIZES)]
+    caps += [f'<cap_asid_pool slot="{SRV_ASID_POOL_SLOT}" />',
+             f'<cap_tcb slot="{SRV_TCB_SLOT}" pd="posix_server" />',
+             f'<cap_endpoint slot="{SRV_EP_SLOT}" pd="posix_server" />',
+             f'<cap_sched_pool slot="{SRV_SCHED_POOL_SLOT}" count="{PROC_SLOTS}" />']
+    xml, n = re.subn(r'(<protection_domain name="posix_server"[^>]*>)',
+                     lambda m: m.group(1) + "\n        <cspace>" + "".join(caps) + "</cspace>" + extra, sdf.render())
+    assert n == 1
+    return xml
+
+
+# ---- QEMU's ARM virt machine (make PLATFORM=qemu-arm; TODO item 16, milestone 2) ----
+RTC_PL031_PADDR = 0x0901_0000         # its PL031 real-time clock (server/clock.c: rtc_base)
+
+
+def generate_arm(sdf, sdf_file, output_dir, board, dtb):
+    """The native system alone: the serial console, ARM's timer, fs_ext2 with the file system in
+    RAM, posix_server. No disk, network or VM yet"""
+    serial_driver = ProtectionDomain("serial_driver", "serial_driver.elf", priority=200)
+    serial_virt_tx = ProtectionDomain("serial_virt_tx", "serial_virt_tx.elf", priority=199)
+    serial_virt_rx = ProtectionDomain("serial_virt_rx", "serial_virt_rx.elf", priority=199, stack_size=0x2000)
+    timer_driver = ProtectionDomain("timer_driver", "timer_driver.elf", priority=254)
+    fs = ProtectionDomain("fs_ext2", "fs_ext2.elf", priority=160, stack_size=0x8000)
+    server = ProtectionDomain("posix_server", "posix_server.elf", priority=150, stack_size=0x10000)
+
+    fs_buf = MemoryRegion(sdf, "fs_buf", FS_BUF_SIZE)
+    sdf.add_mr(fs_buf)
+    server.add_map(Map(fs_buf, 0x3100_0000, "rw", setvar_vaddr="fs_buf"))
+    fs.add_map(Map(fs_buf, 0x3100_0000, "rw", setvar_vaddr="fs_buf"))
+    # What posix_server maps whether or not anyone is at the other end (netstack, the VM)
+    net_buf = MemoryRegion(sdf, "net_buf", NET_BUF_SIZE)
+    sdf.add_mr(net_buf)
+    server.add_map(Map(net_buf, 0x3300_0000, "rw", setvar_vaddr="net_buf"))
+    for name, var, vaddr in [("bridge_rx_queue", "br_rx_queue", 0x3200_0000), ("bridge_rx_data", "br_rx_data", 0x3201_0000),
+                             ("bridge_tx_queue", "br_tx_queue", 0x3202_0000), ("bridge_tx_data", "br_tx_data", 0x3203_0000)]:
+        mr = MemoryRegion(sdf, name, BRIDGE_DATA_SIZE if name.endswith("data") else 0x1000)
+        sdf.add_mr(mr)
+        server.add_map(Map(mr, vaddr, "rw", setvar_vaddr=var))
+    rtc = MemoryRegion(sdf, "rtc", 0x1000, paddr=RTC_PL031_PADDR)
+    sdf.add_mr(rtc)
+    server.add_map(Map(rtc, 0x3400_0000, "r", cached=False, setvar_vaddr="rtc_base"))
+
+    for pd in (serial_driver, serial_virt_tx, serial_virt_rx, timer_driver, fs, server):
+        sdf.add_pd(pd)
+    sdf.add_channel(Channel(server, fs, a_id=SERVER_FS_CHANNEL_ID, pp_a=True))
+
+    timer_system = Sddf.Timer(sdf, dtb.node(board.timer), timer_driver)
+    timer_system.add_client(server)
+    serial = Sddf.Serial(sdf, dtb.node(board.serial), serial_driver, serial_virt_tx, virt_rx=serial_virt_rx,
+                         enable_color=False, begin_str="GNU/seL4 on ARM64 (no network or VM yet)\r\n")
+    serial.add_client(server)
+    for system in (serial, timer_system):
+        assert system.connect()
+        assert system.serialise_config(output_dir)
+    with open(f"{output_dir}/{sdf_file}", "w+") as f:
+        f.write(server_cspace(sdf))
 
 
 def generate(sdf, sdf_file, output_dir):
@@ -267,21 +328,12 @@ def generate(sdf, sdf_file, output_dir):
         assert system.connect()
         assert system.serialise_config(output_dir)
 
-    caps = [f'<cap_cnode slot="{SRV_ROOT_CNODE_SLOT}" pd="posix_server" />']
-    caps += [f'<cap_untyped slot="{SRV_POOL_SLOT + i}" size="{size:#x}" />' for i, size in enumerate(SRV_POOL_SIZES)]
-    caps += [f'<cap_asid_pool slot="{SRV_ASID_POOL_SLOT}" />',
-             f'<cap_tcb slot="{SRV_TCB_SLOT}" pd="posix_server" />',
-             f'<cap_endpoint slot="{SRV_EP_SLOT}" pd="posix_server" />',
-             f'<cap_sched_pool slot="{SRV_SCHED_POOL_SLOT}" count="{PROC_SLOTS}" />']
     # fs_ext2's block cache, mapped into posix_server too (sdfgen made the region): a file read is
     # copied from it straight to the program (FS_OP_READ_REF). The live system's cache is inside
     # fs_ext2 (a RAM disk), not this region
     extra = "" if LIVE else '\n        <map mr="blk_client_fs_ext2_data" vaddr="0x40000000" perms="rw" setvar_vaddr="fs_cache" />'
-    xml, n = re.subn(r'(<protection_domain name="posix_server"[^>]*>)',
-                     lambda m: m.group(1) + "\n        <cspace>" + "".join(caps) + "</cspace>" + extra, sdf.render())
-    assert n == 1
     with open(f"{output_dir}/{sdf_file}", "w+") as f:
-        f.write(xml)
+        f.write(server_cspace(sdf, extra))
 
 
 if __name__ == "__main__":
@@ -290,9 +342,17 @@ if __name__ == "__main__":
     parser.add_argument("--board", required=True, choices=[b.name for b in BOARDS])
     parser.add_argument("--output", required=True)
     parser.add_argument("--sdf", required=True)
+    parser.add_argument("--dtb", help="the machine's device tree (ARM)")
     args = parser.parse_args()
 
     board = next(filter(lambda b: b.name == args.board, BOARDS))
+    if board.arch == SystemDescription.Arch.AARCH64:
+        with open(args.dtb, "rb") as f:
+            dtb = DeviceTree(f.read())
+        sdf = SystemDescription(board.arch, board.paddr_top)
+        Sddf(args.sddf)
+        generate_arm(sdf, args.sdf, args.output, board, dtb)
+        raise SystemExit(0)
     # As in libvmm/examples/virtio_pci: the physical regions sdfgen allocates on its own
     # go below this address, away from the fixed ones of the virtio drivers
     # The laptop has RAM only up to 0x3554_0000 in that area (its memory map), so lower there
