@@ -1,0 +1,46 @@
+target/arm: migrate the EL2 and secure generic timers
+
+QEMU 8.2 saves only the EL1 physical and virtual timers' QEMUTimers. A guest whose kernel runs
+at EL2 (seL4 with hypervisor support uses CNTHP) comes back from a snapshot with its timer
+never firing again. Save the HYP, SEC and HYPVIRT timers too, in a subsection.
+diff --git a/target/arm/machine.c b/target/arm/machine.c
+index 9e20b41..1d6da35 100644
+--- a/target/arm/machine.c
++++ b/target/arm/machine.c
+@@ -880,6 +880,28 @@ static int cpu_post_load(void *opaque, int version_id)
+     return 0;
+ }
+ 
++/* The EL2 and secure generic timers (a guest kernel at EL2, as seL4 with hypervisor support,
++ * runs on CNTHP): without them a restored guest's timer never fires again */
++static bool gt_el2_needed(void *opaque)
++{
++    ARMCPU *cpu = opaque;
++
++    return arm_feature(&cpu->env, ARM_FEATURE_EL2) || arm_feature(&cpu->env, ARM_FEATURE_EL3);
++}
++
++static const VMStateDescription vmstate_gt_el2 = {
++    .name = "cpu/gt_el2",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .needed = gt_el2_needed,
++    .fields = (VMStateField[]) {
++        VMSTATE_TIMER_PTR(gt_timer[GTIMER_HYP], ARMCPU),
++        VMSTATE_TIMER_PTR(gt_timer[GTIMER_SEC], ARMCPU),
++        VMSTATE_TIMER_PTR(gt_timer[GTIMER_HYPVIRT], ARMCPU),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
+ const VMStateDescription vmstate_arm_cpu = {
+     .name = "cpu",
+     .version_id = 22,
+@@ -938,6 +960,7 @@ const VMStateDescription vmstate_arm_cpu = {
+         VMSTATE_END_OF_LIST()
+     },
+     .subsections = (const VMStateDescription*[]) {
++        &vmstate_gt_el2,
+         &vmstate_vfp,
+         &vmstate_iwmmxt,
+         &vmstate_m,

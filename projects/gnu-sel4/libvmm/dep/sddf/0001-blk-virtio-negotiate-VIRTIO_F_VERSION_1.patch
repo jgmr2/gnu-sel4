@@ -1,0 +1,33 @@
+From b8ac498528e5e76dd1b16340cafc6ec2bf6a23a9 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jos=C3=A9=20Guadalupe=20Mu=C3=B1oz=20Ram=C3=ADrez?=
+ <joseguadalupemr@protonmail.com>
+Date: Tue, 13 Oct 2026 03:59:03 -0600
+Subject: [PATCH] blk/virtio: negotiate VIRTIO_F_VERSION_1
+
+The driver uses the modern transport (MMIO version 2, PCI common config) but accepted no
+features, VIRTIO_F_VERSION_1 included. QEMU then treats the device as legacy when it restores a
+snapshot and recomputes the avail and used rings' addresses from the descriptor table's: the
+device completes requests into a ring the driver never reads.
+---
+ drivers/blk/virtio/block.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/drivers/blk/virtio/block.c b/drivers/blk/virtio/block.c
+index 1a19cdfa..99e26a43 100644
+--- a/drivers/blk/virtio/block.c
++++ b/drivers/blk/virtio/block.c
+@@ -308,7 +308,10 @@ void virtio_blk_init(void)
+ #endif
+     /* Select features we want from the device */
+     virtio_transport_set_driver_features(&dev, 0, 0);
+-    virtio_transport_set_driver_features(&dev, 1, 0);
++    /* VIRTIO_F_VERSION_1: a modern transport's device needs it; without it QEMU treats the device
++     * as legacy when restoring a snapshot and recomputes the rings' addresses */
++    virtio_transport_set_driver_features(&dev, 1, virtio_transport_get_device_features(&dev, 1)
++                                                  & (1u << (VIRTIO_F_VERSION_1 - 32)));
+ 
+     virtio_transport_set_status(&dev, VIRTIO_DEVICE_STATUS_FEATURES_OK);
+     if (!(virtio_transport_get_status(&dev) & VIRTIO_DEVICE_STATUS_FEATURES_OK)) {
+-- 
+2.47.3
+

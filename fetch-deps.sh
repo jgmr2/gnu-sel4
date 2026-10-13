@@ -103,6 +103,12 @@ fetch_git() {   # fetch_git <dest> <url> <commit> [options]
         git -C "$dest" checkout -q -b gnu-sel4
         GIT_COMMITTER_NAME=fetch-deps GIT_COMMITTER_EMAIL=fetch-deps@gnu-sel4 \
             git -C "$dest" am -q "$ROOT/$patches"/*.patch
+        # A submodule's own patches: in its path under the patches directory (libvmm: dep/sddf)
+        for sub in $(cd "$ROOT/$patches" && find . -mindepth 2 -name '*.patch' -exec dirname {} \; | sort -u); do
+            git -C "$dest/$sub" checkout -q -b gnu-sel4
+            GIT_COMMITTER_NAME=fetch-deps GIT_COMMITTER_EMAIL=fetch-deps@gnu-sel4 \
+                git -C "$dest/$sub" am -q "$ROOT/$patches/$sub"/*.patch
+        done
     fi
 }
 

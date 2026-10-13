@@ -2,6 +2,8 @@
 # make-demo-disk.sh <arm-disk> <out>: the browser demo's disk (TODO item 22). qemu-wasm loads
 # its images whole into the page's memory, so: partition 1 of the ARM build's disk (GNU/seL4's
 # ext2) alone, shrunk to its contents plus some room, in an MBR disk of its own. No VM partition.
+# That disk has been used: its accounts go back to rootfs/'s (no password: one is chosen on the
+# first login) and the homes and /tmp are emptied, so nothing of whoever used it is published.
 #
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
@@ -12,6 +14,24 @@ start=$(python3 -c 'import sys; m=open(sys.argv[1],"rb").read(512); print(int.fr
 count=$(python3 -c 'import sys; m=open(sys.argv[1],"rb").read(512); print(int.from_bytes(m[458:462],"little"))' "$DISK")
 dd if="$DISK" of="$TMP" bs=512 skip="$start" count="$count" conv=sparse status=none
 e2fsck -fy "$TMP" >/dev/null 2>&1 || true
+ROOTFS=$(cd "$(dirname "$0")/../../rootfs" && pwd)
+empty() {   # empty <dir>: the files and directories in it, all but .keep
+    debugfs -R "ls -p $1" "$TMP" 2>/dev/null | awk -F/ 'NF > 6 && $6 != "." && $6 != ".." && $6 != ".keep" {print $3 " " $6}' |
+    while read -r mode name; do
+        case $mode in 4*) empty "$1/$name"; echo "rmdir $1/$name" ;; *) echo "rm $1/$name" ;; esac
+    done
+}
+{ for f in passwd:0100644 group:0100644 shadow:0100600; do
+      echo "rm /etc/${f%%:*}"; echo "write $ROOTFS/etc/${f%%:*} /etc/${f%%:*}"
+      echo "sif /etc/${f%%:*} mode ${f##*:}"; echo "sif /etc/${f%%:*} uid 0"; echo "sif /etc/${f%%:*} gid 0"
+  done
+  empty /tmp; empty /root
+  for h in $(debugfs -R "ls -p /home" "$TMP" 2>/dev/null | awk -F/ '$6 != "." && $6 != ".." && NF > 6 {print $6}'); do
+      empty "/home/$h"
+  done
+} > "$TMP.cmds"
+debugfs -w -f "$TMP.cmds" "$TMP" >/dev/null 2>&1
+rm -f "$TMP.cmds"
 resize2fs -M "$TMP" >/dev/null 2>&1
 blocks=$(dumpe2fs -h "$TMP" 2>/dev/null | awk -F: '/^Block count/ {print $2+0}')
 mb=$(( blocks * 4096 / 1048576 + ROOM_MB ))

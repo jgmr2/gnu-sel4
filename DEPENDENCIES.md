@@ -8,7 +8,7 @@ image (`docker compose`, see README.md) carries them already fetched.
 |---|---|---|
 | `sdk/microkit-sdk-2.3.1` | https://github.com/seL4/microkit/releases | 2.3.1 (prebuilt SDK: kernel, libmicrokit) |
 | `third_party/microkit` | https://github.com/seL4/microkit | tag 2.3.1 + `projects/gnu-sel4/microkit/*.patch` (`make microkit-tool`) |
-| `libvmm` | https://github.com/au-ts/libvmm | d2e37165285a28c7eae95501594d0807ea482c9c (sDDF in `dep/sddf`: 1fb88897e84f3634e701c6e4a9fc9fe689ac7fbd), with our patches in `projects/gnu-sel4/libvmm/` |
+| `libvmm` | https://github.com/au-ts/libvmm | d2e37165285a28c7eae95501594d0807ea482c9c (sDDF in `dep/sddf`: 1fb88897e84f3634e701c6e4a9fc9fe689ac7fbd), with our patches in `projects/gnu-sel4/libvmm/` (sDDF's in its `dep/sddf/`) |
 | `third_party/f-stack` | https://github.com/F-Stack/f-stack | v1.25 (761639943bdd), only `lib/`, `freebsd/`, `mk/` |
 | `third_party/musl-1.2.6` | https://musl.libc.org/releases/musl-1.2.6.tar.gz | 1.2.6 |
 | `third_party/dash-0.5.13.5` | http://gondor.apana.org.au/~herbert/dash/files/ | 0.5.13.5 |

@@ -7,8 +7,13 @@
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
 LOADER=$(realpath "$1"); DISKIMG=$(realpath "$2"); OUT=$(realpath "$3")
+HERE=$(cd "$(dirname "$0")" && pwd)
 SRC=$(realpath "$(dirname "$0")/../../../../third_party/qemu-wasm")
 mkdir -p "$OUT/pack" "$OUT/build-native"
+# Our patches to it (tools/wasm/patches), each applied once
+for p in "$HERE"/patches/*.patch; do
+    git -C "$SRC" apply --reverse --check "$(realpath "$p")" 2>/dev/null || git -C "$SRC" apply "$(realpath "$p")"
+done
 cp "$LOADER" "$OUT/pack/loader.img"; cp "$DISKIMG" "$OUT/pack/disk.img"
 rm -f "$OUT/pack/vm.state" "$OUT/pack/serial.log" "$OUT/pack/mon.sock"
 # Just what building QEMU needs (qemu-wasm's own example image also builds a Linux kernel)
@@ -24,9 +29,9 @@ docker run --rm -d --user "$(id -u):$(id -g)" --name gnu-sel4-qemu-native -v "$S
 docker exec gnu-sel4-qemu-native sh -c '
 set -e
 cd /build-native
-[ -x qemu-system-aarch64 ] || { /qemu/configure --static --target-list=aarch64-softmmu --cross-prefix= \
-    --without-default-features --enable-system --with-coroutine=ucontext --disable-docs >/dev/null &&
-    make -j$(nproc) qemu-system-aarch64 >/dev/null; }
+[ -f Makefile ] || /qemu/configure --static --target-list=aarch64-softmmu --cross-prefix= \
+    --without-default-features --enable-system --with-coroutine=ucontext --disable-docs >/dev/null
+make -j$(nproc) qemu-system-aarch64 >/dev/null
 ./qemu-system-aarch64 -M virt,virtualization=on -cpu cortex-a57 -m 2047M -nic none \
     -accel tcg,tb-size=256 -device loader,file=/pack/loader.img,addr=0x70000000,cpu-num=0 \
     -global virtio-mmio.force-legacy=false -drive file=/pack/disk.img,format=raw,if=none,id=hd \
