@@ -1,7 +1,8 @@
 # GNU/seL4 with Docker only (no other host setup):
 #   docker compose up -d                 the pages: http://localhost (the ARM64 build, booted in
-#                                        QEMU here) and http://localhost:8101 (the demo, QEMU in
-#                                        the browser: tools/wasm). The rest are tools, run by name:
+#                                        QEMU here), https://localhost:8101 (the demo, QEMU in the
+#                                        browser: tools/wasm) and https://localhost:8102 (no
+#                                        emulator: wasmkit). The rest are tools, run by name:
 #   docker compose run --rm build        build everything and install it into disk.img
 #   docker compose run --rm test         automated tests in headless QEMU (needs /dev/kvm)
 #   docker compose run --rm shell        a shell in the build environment
@@ -101,6 +102,19 @@ services:
       -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,$$(case $$DEMO_HOST in *[!0-9.]*) echo DNS;; *) echo IP;; esac):$$DEMO_HOST"
       2>/dev/null && echo "$$DEMO_HOST" > $$d/host; };
       exec python3 tools/wasm/serve.py build-wasm/site-dash 8101'
+  kit:                               # the browser port without an emulator (TODO item 24): wasmkit/build.sh's page
+    image: gnu-sel4-web:local
+    volumes:
+      - .:/work
+    working_dir: /work/projects/gnu-sel4
+    environment:
+      SERVE_HOST: 0.0.0.0
+      SERVE_CERT: /work/.cache/demo-tls/cert.pem    # demo's certificate (it makes it)
+      SERVE_KEY: /work/.cache/demo-tls/key.pem
+    depends_on: [demo]
+    ports:
+      - "${DEMO_BIND:-127.0.0.1}:8102:8102"
+    command: python3 tools/wasm/serve.py build-wasm/kit 8102
   shell:
     <<: *gnu-sel4
     profiles: [tools]
