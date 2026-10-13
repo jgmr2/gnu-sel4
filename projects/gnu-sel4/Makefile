@@ -59,6 +59,13 @@ HOSTFWD ?= hostfwd=tcp::8080-:80,hostfwd=tcp::2222-:22,hostfwd=tcp::8090-10.0.2.
 all: $(BUILD_DIR)/Makefile
 	$(MAKE) -C $(BUILD_DIR) all
 
+# Part of a build: the bootable image only (make PLATFORM=qemu-arm image: no disk is touched), or
+# one target of the build directory (make only T=bin/netcfg)
+image: $(BUILD_DIR)/Makefile
+	$(MAKE) -C $(BUILD_DIR) loader.img
+only: $(BUILD_DIR)/Makefile
+	$(MAKE) -C $(BUILD_DIR) $(T)
+
 $(BUILD_DIR)/Makefile: system.mk
 	mkdir -p $(BUILD_DIR)
 	cp system.mk $@
@@ -158,4 +165,4 @@ disk-reset:
 clean:
 	rm -rf $(BUILD_DIR)
 
-.PHONY: all run test clean disk-grow disk-reset iso ventoy vm-rootfs vm-lock microkit-tool
+.PHONY: all image only run test clean disk-grow disk-reset iso ventoy vm-rootfs vm-lock microkit-tool

@@ -109,16 +109,17 @@ def add_region(sdf, pd, name, size, paddr, vaddr, cached):
     pd.add_map(Map(mr, vaddr, "rw", cached=cached))
 
 
-def server_cspace(sdf, extra=""):
-    """The system description with posix_server's own CSpace (our Microkit's <cspace>)"""
+def server_cspace(sdf, extra="", smc=False):
+    """The system description with posix_server's own CSpace (our Microkit's <cspace>); smc: it
+    may make SMC calls (ARM: PSCI, to power off and restart the machine; sdfgen has no option)"""
     caps = [f'<cap_cnode slot="{SRV_ROOT_CNODE_SLOT}" pd="posix_server" />']
     caps += [f'<cap_untyped slot="{SRV_POOL_SLOT + i}" size="{size:#x}" />' for i, size in enumerate(SRV_POOL_SIZES)]
     caps += [f'<cap_asid_pool slot="{SRV_ASID_POOL_SLOT}" />',
              f'<cap_tcb slot="{SRV_TCB_SLOT}" pd="posix_server" />',
              f'<cap_endpoint slot="{SRV_EP_SLOT}" pd="posix_server" />',
              f'<cap_sched_pool slot="{SRV_SCHED_POOL_SLOT}" count="{PROC_SLOTS}" />']
-    xml, n = re.subn(r'(<protection_domain name="posix_server"[^>]*>)',
-                     lambda m: m.group(1) + "\n        <cspace>" + "".join(caps) + "</cspace>" + extra, sdf.render())
+    xml, n = re.subn(r'(<protection_domain name="posix_server"[^>]*)>',
+                     lambda m: m.group(1) + (' smc="true"' if smc else '') + ">\n        <cspace>" + "".join(caps) + "</cspace>" + extra, sdf.render())
     assert n == 1
     return xml
 
@@ -173,7 +174,7 @@ def generate_arm(sdf, sdf_file, output_dir, board, dtb):
     # fs_ext2's block cache, mapped into posix_server too (one-copy reads and writes, as on x86)
     extra = '\n        <map mr="blk_client_fs_ext2_data" vaddr="0x40000000" perms="rw" setvar_vaddr="fs_cache" />'
     with open(f"{output_dir}/{sdf_file}", "w+") as f:
-        f.write(server_cspace(sdf, extra))
+        f.write(server_cspace(sdf, extra, smc=True))       # PSCI: poweroff, reboot
 
 
 def generate(sdf, sdf_file, output_dir):

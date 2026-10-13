@@ -805,6 +805,18 @@ static long sys_itimer(bool set, long which, uint64_t value_ns, uint64_t interva
 #define PM1A_IOPORT       1                  /* ioport ids in meta.py */
 #define RESET_IOPORT      2
 
+#ifdef __aarch64__
+/* ARM: PSCI's SYSTEM_OFF and SYSTEM_RESET, an SMC call (meta.py gives this PD the right; QEMU's
+ * virt with EL2 takes PSCI by SMC). It does not come back when it works */
+#define PSCI_SYSTEM_OFF   0x84000008u
+#define PSCI_SYSTEM_RESET 0x84000009u
+static void psci(uint32_t fn)
+{
+    seL4_ARM_SMCContext args = { .x0 = fn }, resp = { 0 };
+    microkit_arm_smc_call(&args, &resp);
+}
+#endif
+
 /* The orderly part (services down, the VM, other processes) is done by /sbin/poweroff in user
  * space; here the file system is unmounted clean, every process is stopped and the machine goes
  * off. Power off writes SLP_EN with S5 into PM1a_CNT (QEMU q35: port 0x604, SLP_TYP 0; real
@@ -820,7 +832,10 @@ static long sys_reboot(long magic, long cmd)
     for (int i = 0; i < NPROC; i++)                    /* nobody runs (or writes) any more */
         if (procs[i].state == P_RUN && procs[i].slot >= 0) slot_halt(procs[i].slot);
     if ((uint32_t)cmd == RB_POWER_OFF) {
-#ifndef NO_ACPI_POWEROFF
+#if defined(__aarch64__)
+        tty_puts("[posix] file system clean; powering off\n");
+        psci(PSCI_SYSTEM_OFF);
+#elif !defined(NO_ACPI_POWEROFF)
         tty_puts("[posix] file system clean; powering off\n");
         microkit_x86_ioport_write_16(PM1A_IOPORT, 0x604, 0x2000);       /* QEMU q35's PM1a control */
 #else
@@ -831,7 +846,9 @@ static long sys_reboot(long magic, long cmd)
 #ifdef __x86_64__
         microkit_x86_ioport_write_8(RESET_IOPORT, 0xCF9, 0x02);
         microkit_x86_ioport_write_8(RESET_IOPORT, 0xCF9, 0x06);
-#endif                                   /* aarch64: PSCI SYSTEM_RESET, TODO (needs an SMC capability) */
+#elif defined(__aarch64__)
+        psci(PSCI_SYSTEM_RESET);
+#endif
     }
     tty_puts("[posix] system halted: the machine can be switched off\n");
     return 0;                                          /* the caller stays stopped */
