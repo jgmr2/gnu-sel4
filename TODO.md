@@ -516,11 +516,29 @@ Principles the plan follows:
    - [ ] Btrfs, XFS and ZFS: mounted in the Linux VM and exported (virtio-fs or 9p). Semantics
          (permissions, case, xattrs) are adapted; formats are never converted in place
 22. [ ] **A demo in the browser** (M). Needs: nothing for the console; 8 (the desktop) for the GUI
-   - [ ] The system emulated in WebAssembly with qemu-wasm (x86_64 runs today's build; v86 is
-         32-bit only; RISC-V would be the fastest, item 16)
+   - [x] The system emulated in WebAssembly with qemu-wasm, the ARM64 build (October 2026):
+         tools/wasm/build-qemu-wasm.sh (ktock/qemu-wasm pinned, aarch64-softmmu, 2800 MiB growable
+         heap), make-demo-disk.sh (partition 1 shrunk to its contents), make-site.sh (the page,
+         the images packed), serve.py (COOP/COEP). Boots in the browser through the loader at EL2,
+         the kernel and the CapDL initializer to GNU/seL4's own components. Found on the way:
+         QEMU on a 32-bit host simulates at most 2047 MiB (the SDK kernel expects 2 GiB: the last
+         MiB is missing); the TCG backend's block modules declare 65535 pages of memory and
+         addFunction is left out by emscripten 3.1.50 (both patched into the page's JS)
    - [ ] Network through a WebSocket proxy (a small server relaying the guest's traffic), so a
          page can reach nginx or ssh inside the demo
    - [ ] GUI: the guest's framebuffer (virtio-gpu 2D) drawn into a canvas; keyboard and mouse
          from the page. 3D through WebGPU is research
    - [ ] A landing page with the demo behind a button (COOP/COEP headers on that page only, for
          SharedArrayBuffer; the image on a CDN with CORS), published by CI on every build
+23. [ ] **A native client: the same images, one layer less** (M). Needs: 22 (the images and their
+        page), 16 (ARM). For real work rather than demos (José's idea, October 2026): a small
+        launcher (Rust or Go) with QEMU, that fetches signed updates from the project's domain
+   - [ ] Two disks: the system's, read-only and replaced whole by an update (going back is
+         switching images), and the user's data, never touched by one
+   - [ ] Updates: a manifest.json (version, SHA-256 of each image) signed (ed25519); nothing
+         unsigned is applied
+   - [ ] The accelerator by host: on ARM hosts, hardware acceleration where it gives the guest
+         EL2 (seL4's hypervisor mode, for the VM); else the EL1 build (no VM). On x86 hosts an
+         ARM image stays emulated: offer the x86 build there with KVM/WHPX (why x86 stays
+         compatible while development is on ARM)
+   - [ ] QEMU is GPLv2: the sources of any changes to it published with the client
