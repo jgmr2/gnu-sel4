@@ -88,11 +88,13 @@ else
 DISPLAY_OPTS := -display gtk -vga none -device bochs-display,addr=0x5
 endif
 
+# SERIAL_OPTS: where the serial console goes (tools/web/run.sh: a socket for the browser page)
+SERIAL_OPTS ?= -serial mon:stdio
 run:
 	@test -f $(IMAGE) || { echo "Missing $(IMAGE): build with ../../dev.sh make"; exit 1; }
 	qemu-system-x86_64 -machine q35 -accel kvm \
 		-cpu host,host-phys-bits=off,phys-bits=39,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave$(QEMU_VMX),+vme,+invtsc \
-		-kernel $(BUILD_DIR)/sel4_32.elf -initrd $(IMAGE) -m 6G $(DISPLAY_OPTS) -serial mon:stdio \
+		-kernel $(BUILD_DIR)/sel4_32.elf -initrd $(IMAGE) -m 6G $(DISPLAY_OPTS) $(SERIAL_OPTS) \
 		-drive file=disk.img,format=raw,if=none,id=hd -device virtio-blk-pci,drive=hd,addr=0x3.0 \
 		-netdev user,id=net0,$(HOSTFWD) -device virtio-net-pci,netdev=net0,addr=0x4.0
 

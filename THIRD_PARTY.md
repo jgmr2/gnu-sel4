@@ -15,6 +15,8 @@ On the installed system, the license texts of the programs on the disk are in
 | [seL4](https://sel4.systems) | Data61/CSIRO, the seL4 Foundation, Proofcraft and contributors | GPL-2.0-only (kernel); BSD-2-Clause (libsel4 headers) | the microkernel |
 | [Microkit](https://github.com/seL4/microkit) | Breakaway Consulting, UNSW, the seL4 Foundation and contributors | BSD-2-Clause | system framework and tool (with our patches in `projects/gnu-sel4/microkit/`) |
 | [sDDF](https://github.com/au-ts/sddf) | UNSW Trustworthy Systems and contributors | BSD-2-Clause | drivers and virtualisers (serial, disk, network, timer) |
+| [xterm.js](https://xtermjs.org) | The xterm.js authors | MIT | the browser page's terminal (`./web.sh`, `tools/web`) |
+| [noVNC](https://novnc.com) and [websockify](https://github.com/novnc/websockify) | The noVNC authors | MPL-2.0 (noVNC), LGPL-3.0 (websockify) | the browser page's screen and WebSocket bridges (Debian packages in the `web` image, not redistributed) |
 | [libvmm](https://github.com/au-ts/libvmm) | UNSW Trustworthy Systems and contributors | BSD-2-Clause | the VMM for the Linux VM; `vm/client_vmm.c`, `vm/guest_arch_init.*` and `vm/virtio_pci_dsdt.dsl` are based on its examples and keep UNSW's copyright |
 | [sdfgen](https://github.com/au-ts/microkit_sdf_gen) | UNSW Trustworthy Systems | BSD-2-Clause | generating the system description (build time) |
 

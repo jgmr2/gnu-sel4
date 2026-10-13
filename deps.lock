@@ -48,6 +48,9 @@ tar  third_party/spleen            https://github.com/fcambus/spleen/releases/do
 # The VM image: the base image that builds it, the Alpine packages (tools: what builds the
 # image; vm: what goes into it) and Docker's static binaries. Between the two marks, written by
 # make vm-lock (projects/gnu-sel4/vm/rootfs/lock.sh): do not edit by hand
+# The browser page (tools/web: docker compose up web): the serial console's terminal
+tar  third_party/xterm-5.5.0       https://registry.npmjs.org/@xterm/xterm/-/xterm-5.5.0.tgz          bd954fa721872170188cc5d7e83e88db3c83c9a18a4e8d24c2783d26491f59d2  only=lib,css
+
 # >>> VM image
 image alpine alpine:3.24 sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6 vm
 file third_party/alpine-3.24/tools/cpio-2.15-r0.apk https://dl-cdn.alpinelinux.org/alpine/v3.24/community/x86_64/cpio-2.15-r0.apk 7e48a4cfd91a4c4011ccf942fd9d3270841e384bd07b39321b232d02df83e114 vm

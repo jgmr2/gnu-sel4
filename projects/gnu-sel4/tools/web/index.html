@@ -1,0 +1,76 @@
+<!doctype html>
+<!-- GNU/seL4 in the browser (tools/web/run.sh): the serial console in a terminal and the screen
+     through noVNC, both from the QEMU running in the `web` container.
+     SPDX-License-Identifier: BSD-2-Clause -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GNU/seL4</title>
+<link rel="stylesheet" href="xterm.css">
+<style>
+  :root { --bg: #16181d; --panel: #1f2229; --text: #d8dbe2; --muted: #8b90a0; --accent: #6aa6ff; --ok: #5fc48a; --bad: #e0736b; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; gap: 16px; align-items: center; padding: 8px 16px; background: var(--panel); }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .tabs button { background: none; border: 1px solid #343846; color: var(--text); padding: 4px 12px; border-radius: 6px; cursor: pointer; }
+  .tabs button.on { border-color: var(--accent); color: var(--accent); }
+  #state { margin-left: auto; color: var(--muted); }
+  #state.ok { color: var(--ok); } #state.bad { color: var(--bad); }
+  main { flex: 1; min-height: 0; padding: 8px 16px 16px; }
+  .pane { height: 100%; display: none; } .pane.on { display: block; }
+  #term { height: 100%; background: #000; padding: 4px; border-radius: 6px; }
+  iframe { width: 100%; height: 100%; border: 0; border-radius: 6px; background: #000; }
+  footer { padding: 0 16px 8px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>GNU/seL4</h1>
+  <div class="tabs">
+    <button id="t-term" class="on">Serial console</button>
+    <button id="t-screen">Screen</button>
+  </div>
+  <span id="state">connecting…</span>
+</header>
+<main>
+  <div id="p-term" class="pane on"><div id="term"></div></div>
+  <div id="p-screen" class="pane"><iframe id="screen" title="Screen (noVNC)"></iframe></div>
+</main>
+<footer>After a rebuild: <code>docker compose restart web</code>, then reload this page. Press Enter if the console is blank.</footer>
+<script src="xterm.js"></script>
+<script>
+  const term = new Terminal({ fontSize: 14, cursorBlink: true, scrollback: 5000 });
+  term.open(document.getElementById('term'));
+  const state = document.getElementById('state');
+  const enc = new TextEncoder();
+  let ws = null;
+  term.onData(d => { if (ws && ws.readyState === 1) ws.send(enc.encode(d)); });
+  function fit() {                     /* the terminal fills its pane */
+    const el = document.getElementById('term'), cw = 9, ch = 17;
+    term.resize(Math.max(40, Math.floor((el.clientWidth - 8) / cw)), Math.max(10, Math.floor((el.clientHeight - 8) / ch)));
+  }
+  window.addEventListener('resize', fit); fit();
+  function connect() {
+    ws = new WebSocket(`ws://${location.hostname}:6081/`, ['binary']);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => { state.textContent = 'connected'; state.className = 'ok'; term.focus(); };
+    ws.onmessage = e => term.write(new Uint8Array(e.data));
+    ws.onclose = () => { state.textContent = 'disconnected: retrying…'; state.className = 'bad'; setTimeout(connect, 2000); };
+  }
+  connect();
+  const show = which => {
+    for (const k of ['term', 'screen']) {
+      document.getElementById('p-' + k).classList.toggle('on', k === which);
+      document.getElementById('t-' + k).classList.toggle('on', k === which);
+    }
+    const f = document.getElementById('screen');
+    if (which === 'screen' && !f.src) f.src = 'novnc/vnc.html?autoconnect=true&resize=scale&path=websockify';
+    if (which === 'term') { fit(); term.focus(); }
+  };
+  document.getElementById('t-term').onclick = () => show('term');
+  document.getElementById('t-screen').onclick = () => show('screen');
+</script>
+</body>
+</html>

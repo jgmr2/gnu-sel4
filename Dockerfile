@@ -54,9 +54,17 @@ RUN cd /src && cargo build --release -p microkit-tool
 # ---------------------------------------------------------------- everything together
 FROM toolchain AS full
 USER root
-RUN apt-get update && apt-get install -y --no-install-recommends qemu-system-x86 \
+# QEMU for both architectures; websockify and noVNC for the browser page (tools/web)
+RUN apt-get update && apt-get install -y --no-install-recommends qemu-system-x86 qemu-system-arm websockify novnc \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=deps --chown=dev:dev /deps /deps
 COPY --from=tool /src/target/release/microkit /deps/third_party/microkit/target/release/microkit
 ENV DEPS=/deps
 USER dev
+
+# The browser page only (./web.sh, docker compose up web): QEMU for both architectures, make,
+# websockify and noVNC; it boots what ../../dev.sh make built, so it needs none of the toolchain
+FROM debian:trixie AS web
+RUN apt-get update && apt-get install -y --no-install-recommends make python3 qemu-system-x86 qemu-system-arm \
+        websockify novnc \
+    && rm -rf /var/lib/apt/lists/*
