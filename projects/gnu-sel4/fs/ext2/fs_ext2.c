@@ -62,7 +62,10 @@
 static uint64_t clk_epoch = BUILD_TIME, clk_tsc0, clk_hz;
 
 /* A busy wait's hint to the processor: x86's pause, ARM's yield */
-#ifdef __aarch64__
+#if defined(__wasm__)
+#define CPU_RELAX() __asm__ volatile("" ::: "memory")       /* the browser port (wasmkit) */
+uint64_t wasmkit_now_ns(void);
+#elif defined(__aarch64__)
 #define CPU_RELAX() __asm__ volatile("yield" ::: "memory")
 #else
 #define CPU_RELAX() __asm__ volatile("pause" ::: "memory")
@@ -70,7 +73,9 @@ static uint64_t clk_epoch = BUILD_TIME, clk_tsc0, clk_hz;
 
 static inline uint64_t tsc(void)           /* the TSC, or ARM's physical counter */
 {
-#ifdef __aarch64__
+#if defined(__wasm__)
+    return wasmkit_now_ns();                  /* nanoseconds: SETCLOCK's frequency is 1e9 */
+#elif defined(__aarch64__)
     uint64_t c;
     __asm__ volatile("isb; mrs %0, cntpct_el0" : "=r"(c));
     return c;
@@ -248,7 +253,11 @@ static bool flush_async;               /* this flush may go on in the background
 /* Live systems on real hardware (make PLATFORM=...): no disk driver at all. The file system is
  * an ext2 image linked into this component (fs/ext2/ramdisk.S) and lives in RAM; nothing is ever
  * written to a real disk. The block "requests" below are memcpys between it and the cache */
+#ifdef __wasm__
+uint8_t *ramdisk_start, *ramdisk_end;      /* the image in the shared memory: wasmkit.js sets them */
+#else
 extern uint8_t ramdisk_start[], ramdisk_end[];
+#endif
 #define RAM_CACHE_SIZE 0x400000             /* the disk is RAM too: a small cache is enough */
 static uint8_t ram_cache[RAM_CACHE_SIZE] __attribute__((aligned(4096)));
 static uint8_t *slot_data(int s) { return ram_cache + (uintptr_t)s * BS; }

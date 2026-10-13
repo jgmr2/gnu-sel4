@@ -554,3 +554,24 @@ Principles the plan follows:
          ARM image stays emulated: offer the x86 build there with KVM/WHPX (why x86 stays
          compatible while development is on ARM)
    - [ ] QEMU is GPLv2: the sources of any changes to it published with the client
+24. [ ] **GNU/seL4 compiled to WebAssembly: no emulator** (L). Needs: 22 (the demo). José's
+        direction from October 2026, ahead of Docker and the VM (parked): the components and
+        the programs compiled to wasm32, each protection domain a Web Worker, instead of the
+        ARM build under qemu-wasm (two layers of translation). Source-transparent for the
+        programs: the same POSIX protocol and posix_server; the runtime's transport and the
+        loader change. Losses: unmodified binaries, async signals in the middle of computation
+        (only at system calls; SIGKILL ends the worker), MAP_SHARED between processes, JIT
+   - [x] Experiment 1a, wasmkit (projects/gnu-sel4/wasmkit): Microkit's API on Web Workers
+         and one shared memory (notifications and protected procedure calls with wasm's
+         atomics), fs_ext2 compiled unchanged but for 3 #ifdefs (its RAM disk mode), and a
+         client. In headless Chrome: a call 9 us (31 without a short spin before sleeping),
+         a 5-deep lookup + 4 KiB read 59 us, a 3.5 MiB file read at 655 MB/s; booted in 0.35 s
+         (qemu-wasm: minutes, and an `ls` took 2.5 s)
+   - [ ] Experiment 1b: posix_server on wasmkit: a process is a Worker with its own memory
+         (the server reads and writes it directly); exec instantiates a .wasm from fs_ext2;
+         the runtime's calls over shared memory; the console on xterm.js
+   - [ ] Experiment 2: dash. fork: asyncify (unwind, copy the memory, rewind in a new worker)
+         or vfork + exec only
+   - [ ] Then the real kernel: seL4 ported to a "wasm" architecture (the portable C as it is;
+         threads as workers, address spaces as memories, the timer and interrupts from JS), in
+         place of wasmkit's stand-in. Not verified (no port is but the verified configurations)

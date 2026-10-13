@@ -1,0 +1,20 @@
+<!doctype html>
+<!-- wasmkit, experiment 1 of the browser port (TODO item 24): GNU/seL4's fs_ext2 compiled to
+     WebAssembly, with Microkit's API on Web Workers. SPDX-License-Identifier: BSD-2-Clause -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wasmkit</title>
+<style>
+  :root { --bg: #16181d; --fg: #d8dbe2; }
+  @media (prefers-color-scheme: light) { :root { --bg: #fafafa; --fg: #1d1f24; } }
+  body { margin: 0; padding: 16px; background: var(--bg); color: var(--fg); font: 14px ui-monospace, monospace; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<pre id="out"></pre>
+<script type="module" src="wasmkit.js"></script>
+</body>
+</html>

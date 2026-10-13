@@ -1,0 +1,21 @@
+{
+  "comment": "wasmkit's system (TODO item 24, experiment 1): what a Microkit .system file says, by hand for now",
+  "memory_pages": 16384,
+  "pds": [
+    { "name": "fs_ext2", "wasm": "fs_ext2.wasm" },
+    { "name": "bench", "wasm": "bench.wasm" }
+  ],
+  "channels": [
+    { "a": "bench", "a_id": 0, "b": "fs_ext2", "b_id": 1 }
+  ],
+  "regions": [
+    { "name": "fs_buf", "addr": 67108864, "size": 1048576 },
+    { "name": "ramdisk", "addr": 83886080, "file": "part1.img" }
+  ],
+  "setvars": [
+    { "pd": "fs_ext2", "symbol": "fs_buf", "region": "fs_buf" },
+    { "pd": "bench", "symbol": "fs_buf", "region": "fs_buf" },
+    { "pd": "fs_ext2", "symbol": "ramdisk_start", "region": "ramdisk" },
+    { "pd": "fs_ext2", "symbol": "ramdisk_end", "region": "ramdisk", "end": true }
+  ]
+}
