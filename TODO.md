@@ -51,7 +51,8 @@ Phase 2 — OCI containers without a Linux kernel:
    over HTTPS, digests checked; layers unpacked (whiteouts) into an image store of plain files;
    an overlay file system server (item 21); `run` with per-container views in posix_server
    (mount, pid, uts), rootless, limits (item 5), restriction in the style of Capsicum (item 12);
-   `run -d` as an s6 service; a CLI of our own name with `docker` and `podman` aliases
+   `run -d` as an s6 service. Its name: **molcajete** (José's: the stone mortar where ingredients
+   of different origins are ground into one; `mol` for short), with `docker` and `podman` aliases
 4. A periodic test: Alpine-built static images run as OCI containers
 
 Phase 3 — the web (only after phase 2 works): wasmkit resumes (fork with asyncify, poll), then a
