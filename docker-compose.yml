@@ -72,8 +72,8 @@ services:
     devices:
       - /dev/kvm
     ports:
-      - "127.0.0.1:80:6080"          # the page and the screen (noVNC): http://localhost
-      - "127.0.0.1:6081:6081"        # the serial console (WebSocket)
+      - "${DEMO_BIND:-127.0.0.1}:80:6080"     # the page and the screen (noVNC); DEMO_BIND=0.0.0.0 in .env: the network too
+      - "${DEMO_BIND:-127.0.0.1}:6081:6081"   # the serial console (WebSocket)
       - "127.0.0.1:6082:8080"        # -> VM:80 (not 8080 on the host: often taken)
       - "127.0.0.1:2222:2222"        # -> VM:22
       - "127.0.0.1:8090:8090"        # -> native GNU/seL4:8080
