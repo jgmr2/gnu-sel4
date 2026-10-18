@@ -12,6 +12,11 @@ SRC=$(cd "$1" && pwd); BUILD=$2; SYSROOT=$(cd "$3" && pwd); shift 3
 if port_prepare "$SRC" "$BUILD" "$@" "$SYSROOT/lib/libncursesw.a"; then
 # No Linux kernel headers in the sysroot: copy_file_range is declared missing so that
 # gnulib uses its portable version (the Linux one checks <linux/version.h>).
+case $(basename "$SRC") in
+gzip-*)   # gzip.h's `head` macro would rename a field of aarch64's <bits/signal.h> (struct
+          # _aarch64_ctx head): gzip.c includes <signal.h> after it; first, before tailor.h, instead
+    sed -i 's|^#include "tailor.h"|#include <signal.h>\n#include "tailor.h"|' gzip.c ;;
+esac
 ./configure --host=${SEL4_HOST:-x86_64-linux-musl} --build=x86_64-pc-linux-gnu --prefix=/usr \
     CC="$SYSROOT/bin/sel4-cc" CFLAGS="-O2" \
     ac_cv_func_copy_file_range=no gl_cv_host_operating_system=GNU/seL4 \

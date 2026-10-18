@@ -50,8 +50,15 @@
  * at that frame, and resumes it; the entry point fetches the signals, runs the handlers and
  * goes back to exactly where the program was (runtime/crt0.S) */
 #define POSIX_SYS_ASYNC 1000
+/* aarch64: a branch needs a free register, which code interrupted anywhere does not have: the
+ * entry point gives the frame back (MR1) and the server puts every register back from it */
+#define POSIX_SYS_ASYNC_RETURN 1001
 #ifndef __ASSEMBLER__
+#ifdef __aarch64__
+struct posix_async_frame { uint64_t pc, sp, spsr, x[31]; };
+#else
 struct posix_async_frame {
     uint64_t rip, rsp, rflags, rax, rbx, rcx, rdx, rsi, rdi, rbp, r8, r9, r10, r11, r12, r13, r14, r15;
 };
+#endif
 #endif

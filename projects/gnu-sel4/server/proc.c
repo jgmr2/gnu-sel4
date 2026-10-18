@@ -372,7 +372,9 @@ static long sys_execve(void)
         if (a++ >= end) return -E2BIG;
     }
     ((char *)client_buf)[FS_PATH_MAX - 1] = 0;
-    return load_program(cur, path, args, counts[0], counts[1]);
+    long r = load_program(cur, path, args, counts[0], counts[1]);
+    if (r < 0) slog("info", "exec-failed", path, "\"pid\":%d,\"err\":%ld", cur->pid, r);
+    return r;
 }
 
 /* ------------------------------------------------------------------ */
@@ -477,9 +479,11 @@ void proc_exit(struct proc *p, int status)
 
     p->state = P_ZOMBIE;
     p->status = status;
+    if (status & 0x7f) slog("info", "killed", p->name, "\"pid\":%d,\"sig\":%d", p->pid, status & 0x7f);
     p->wait_child = false;
 
     if (p->pid == 1) {
+        slog("warn", "init-restart", NULL, "\"status\":%d", status);
         tty_puts("[posix] init exited with code ");
         tty_putdec((status >> 8) & 0xff);
         tty_puts(": restarting it\n");
@@ -654,8 +658,8 @@ bool proc_pgrp_orphaned(int pgid)
  * parked in a call) the signal comes with the reply, as always */
 static void async_signal(struct proc *p)
 {
-#ifndef __x86_64__
-    (void)p;                             /* not on aarch64 yet: runtime/crt0-aarch64.S */
+#ifdef __wasm__
+    (void)p;                             /* the browser port: signals come with the next reply */
 #else
     if (!p->async_ctl || p->slot < 0 || p == cur || p->blocked || p->stopped) return;
     seL4_CPtr tcb = slot_tcb(p->slot);
@@ -667,21 +671,115 @@ static void async_signal(struct proc *p)
         seL4_TCB_Resume(tcb);
         return;
     }
+#ifdef __aarch64__
+    struct posix_async_frame f = { .pc = r.pc, .sp = r.sp, .spsr = r.spsr };
+    f.x[0] = r.x0;
+    f.x[1] = r.x1;
+    f.x[2] = r.x2;
+    f.x[3] = r.x3;
+    f.x[4] = r.x4;
+    f.x[5] = r.x5;
+    f.x[6] = r.x6;
+    f.x[7] = r.x7;
+    f.x[8] = r.x8;
+    f.x[9] = r.x9;
+    f.x[10] = r.x10;
+    f.x[11] = r.x11;
+    f.x[12] = r.x12;
+    f.x[13] = r.x13;
+    f.x[14] = r.x14;
+    f.x[15] = r.x15;
+    f.x[16] = r.x16;
+    f.x[17] = r.x17;
+    f.x[18] = r.x18;
+    f.x[19] = r.x19;
+    f.x[20] = r.x20;
+    f.x[21] = r.x21;
+    f.x[22] = r.x22;
+    f.x[23] = r.x23;
+    f.x[24] = r.x24;
+    f.x[25] = r.x25;
+    f.x[26] = r.x26;
+    f.x[27] = r.x27;
+    f.x[28] = r.x28;
+    f.x[29] = r.x29;
+    f.x[30] = r.x30;
+    uintptr_t frame = (r.sp - sizeof f) & ~15UL;           /* no red zone on aarch64 */
+#else
     struct posix_async_frame f = {
         .rip = r.rip, .rsp = r.rsp, .rflags = r.rflags, .rax = r.rax, .rbx = r.rbx, .rcx = r.rcx,
         .rdx = r.rdx, .rsi = r.rsi, .rdi = r.rdi, .rbp = r.rbp, .r8 = r.r8, .r9 = r.r9, .r10 = r.r10,
         .r11 = r.r11, .r12 = r.r12, .r13 = r.r13, .r14 = r.r14, .r15 = r.r15,
     };
     uintptr_t frame = (r.rsp - 136 - sizeof f) & ~15UL;      /* below the red zone and rip's slot */
+#endif
     if (frame < PROC_STACK_BASE + 0x1000 || !mem_copy_in(p->slot, frame, &f, sizeof f)) {
+        slog("warn", "async-no-room", p->name, "\"pid\":%d", p->pid);
         seL4_TCB_Resume(tcb);
         return;
     }
+#ifdef __aarch64__
+    r.pc = p->async_entry;
+    r.sp = frame;
+#else
     r.rip = p->async_entry;
     r.rsp = frame;
+#endif
+    slog("debug", "async-signal", p->name, "\"pid\":%d", p->pid);
     seL4_TCB_WriteRegisters(tcb, true, 0, sizeof r / sizeof(seL4_Word), &r);   /* and resume */
 #endif
 }
+
+#ifdef __aarch64__
+/* POSIX_SYS_ASYNC_RETURN: the entry point has delivered the signals; every register back from
+ * the frame (seL4 keeps the saved status register to what EL0 may set) and the thread runs on
+ * where it was interrupted. The call itself gets no reply: the thread was restarted */
+static long async_return(uintptr_t frame)
+{
+    struct posix_async_frame f;
+    if (!mem_copy_from_user(cur->slot, frame, &f, sizeof f)) return -EFAULT;
+    seL4_CPtr tcb = slot_tcb(cur->slot);
+    seL4_TCB_Suspend(tcb);
+    seL4_UserContext r;
+    seL4_TCB_ReadRegisters(tcb, false, 0, sizeof r / sizeof(seL4_Word), &r);
+    r.pc = f.pc;
+    r.sp = f.sp;
+    r.spsr = f.spsr;
+    r.x0 = f.x[0];
+    r.x1 = f.x[1];
+    r.x2 = f.x[2];
+    r.x3 = f.x[3];
+    r.x4 = f.x[4];
+    r.x5 = f.x[5];
+    r.x6 = f.x[6];
+    r.x7 = f.x[7];
+    r.x8 = f.x[8];
+    r.x9 = f.x[9];
+    r.x10 = f.x[10];
+    r.x11 = f.x[11];
+    r.x12 = f.x[12];
+    r.x13 = f.x[13];
+    r.x14 = f.x[14];
+    r.x15 = f.x[15];
+    r.x16 = f.x[16];
+    r.x17 = f.x[17];
+    r.x18 = f.x[18];
+    r.x19 = f.x[19];
+    r.x20 = f.x[20];
+    r.x21 = f.x[21];
+    r.x22 = f.x[22];
+    r.x23 = f.x[23];
+    r.x24 = f.x[24];
+    r.x25 = f.x[25];
+    r.x26 = f.x[26];
+    r.x27 = f.x[27];
+    r.x28 = f.x[28];
+    r.x29 = f.x[29];
+    r.x30 = f.x[30];
+    seL4_TCB_WriteRegisters(tcb, true, 0, sizeof r / sizeof(seL4_Word), &r);
+    return 0;
+}
+#endif
 
 void proc_signal(struct proc *p, int sig)
 {
@@ -953,6 +1051,8 @@ bool proc_fault(int slot, long label)
     else if (label == seL4_Fault_UserException) {
         sig = vec == 0 ? SIGFPE : vec == 6 ? SIGILL : SIGSEGV;
     }
+    slog("info", "fault", p->name, "\"pid\":%d,\"sig\":%d,\"addr\":%" PRIu64 ",\"pc\":%" PRIu64 ",\"label\":%ld",
+         p->pid, sig, (uint64_t)a, (uint64_t)pc, label);
     tty_puts("[posix] ");
     tty_puts(p->name);
     tty_puts(" (pid ");
@@ -997,7 +1097,7 @@ bool proc_handles(long nr)
     case __NR_fork: case __NR_vfork: case __NR_execve: case __NR_wait4: case __NR_exit: case __NR_exit_group:
     case __NR_getpid: case __NR_getppid: case __NR_kill:
     case __NR_setpgid: case __NR_getpgid: case __NR_getpgrp: case __NR_setsid: case __NR_getsid:
-    case __NR_rt_sigaction: case __NR_rt_sigsuspend: case POSIX_SYS_ASYNC: case __NR_prlimit64:
+    case __NR_rt_sigaction: case __NR_rt_sigsuspend: case POSIX_SYS_ASYNC: case POSIX_SYS_ASYNC_RETURN: case __NR_prlimit64:
     case __NR_getpriority: case __NR_setpriority:
     case __NR_setitimer: case __NR_getitimer:
     case __NR_munmap: case __NR_sysinfo: case __NR_reboot:
@@ -1046,6 +1146,12 @@ long proc_syscall(long nr, long a1, long a2, long a3, long a4, long a5)
     }
     case __NR_rt_sigsuspend:
         return cur->sig_pending ? -EINTR : POSIX_RETRY;
+    case POSIX_SYS_ASYNC_RETURN:
+#ifdef __aarch64__
+        return async_return(a1);
+#else
+        return -ENOSYS;
+#endif
     case POSIX_SYS_ASYNC:
         cur->async_ctl = a1;
         cur->async_entry = a2;

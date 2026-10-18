@@ -9,6 +9,7 @@
  */
 #pragma once
 #include <stdint.h>
+#include <sddf/util/printf.h>          /* sddf_snprintf: the slog() macro */
 /* printf formats for uint64_t (<inttypes.h>, which sDDF's libc lacks): long is 32 bits on wasm32 */
 #ifndef PRIu64
 #if UINTPTR_MAX > 0xffffffffu
@@ -272,6 +273,12 @@ size_t vfs_fs_stats(char *dst, size_t max);                           /* fs_ext2
 bool timer_notified(unsigned ch);          /* true if it was the timer channel */
 void timer_wait(struct proc *p, uint64_t ns);   /* wake p up in ns */
 uint64_t timer_now_ns(void);
+/* The log (log.c): a JSON line; str an optional string field "s", then the event's other fields
+ * (JSON, without braces) as printf would make them (sDDF's printf has no vsnprintf: a macro) */
+void slog_line(const char *level, const char *ev, const char *str, const char *fields);
+#define slog(level, ev, str, ...) do { char slog_f_[256]; sddf_snprintf(slog_f_, sizeof slog_f_, __VA_ARGS__); \
+                                       slog_line(level, ev, str, slog_f_); } while (0)
+size_t log_text(char *dst, size_t max);
 void timer_rearm(void);
 extern uint64_t fs_flush_at;                   /* vfs.c: fs_ext2 write-back due (timer ns; 0: nothing) */
 long fs_call(long op, uint64_t a1, uint64_t a2, uint64_t a3);

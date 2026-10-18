@@ -52,7 +52,7 @@ enum {
     F_NONE,
     /* global */
     F_ROOT, F_SELF, F_MEMINFO, F_VMSTAT, F_STAT, F_UPTIME, F_LOADAVG, F_VERSION, F_MOUNTS,
-    F_SYS, F_SYS_KERNEL, F_OSRELEASE, F_PIDMAX, F_HOSTNAME, F_NET, F_NET_DHCP, F_PERF, F_TRACE,
+    F_LOG, F_SYS, F_SYS_KERNEL, F_OSRELEASE, F_PIDMAX, F_HOSTNAME, F_NET, F_NET_DHCP, F_PERF, F_TRACE,
     /* per process */
     F_PID, F_P_STAT, F_P_STATM, F_P_STATUS, F_P_CMDLINE, F_P_ENVIRON, F_P_COMM, F_P_EXE, F_P_CWD,
     F_P_MAPS, F_P_FD, F_P_FDLINK,
@@ -69,6 +69,7 @@ static const struct { const char *name; int id, kind, dt; } root_ents[] = {
     { "mounts", F_MOUNTS, PROCFS_FILE, DT_REG },
     { "perf", F_PERF, PROCFS_FILE, DT_REG },
     { "trace", F_TRACE, PROCFS_FILE, DT_REG },
+    { "log", F_LOG, PROCFS_FILE, DT_REG },
     { "sys", F_SYS, PROCFS_DIR, DT_DIR },
     { "net", F_NET, PROCFS_DIR, DT_DIR },
 }, net_ents[] = {
@@ -278,6 +279,7 @@ static size_t generate(int id, struct proc *p)
     case F_P_MAPS:    n = p->slot >= 0 ? mem_maps_text(p->slot, p->exe, gen, max) : 0; break;
     case F_PERF:      n = perf_text(gen, max); break;
     case F_TRACE:     n = trace_text(gen, max); break;
+    case F_LOG:       n = log_text(gen, max); break;
 
     case F_P_STAT: {
         procfs_account(p);

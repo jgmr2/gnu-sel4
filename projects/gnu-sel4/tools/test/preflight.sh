@@ -13,6 +13,6 @@ newer=$(find "$POSIX/server" "$POSIX/fs" "$POSIX/meta.py" "$POSIX/system.mk" -ne
 [ -z "$newer" ] && say image-fresh true || say image-fresh false "older than: $newer"
 apps=$(for d in "$POSIX"/apps/*/; do b=$(basename "$d"); [ -f "$B/bin/$b" ] && find "$d" -newer "$B/bin/$b" -type f | head -1; done | tr '\n' ' ')
 [ -z "$apps" ] && say apps-fresh true || say apps-fresh false "rebuild: $apps"
-[ -f "$B/test-disk.img" ] && [ -z "$(find "$B/bin" "$POSIX/rootfs/etc" -newer "$B/test-disk.img" -type f | head -1)" ] \
+[ -f "$B/test-disk.img" ] && [ ! "$B/install.cmds" -nt "$B/test-disk.img" ] \
     && say test-disk-fresh true || say test-disk-fresh false "tools/test/test-disk.sh"
 exit $bad

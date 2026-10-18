@@ -129,7 +129,7 @@ fbcon.elf: console_fbcon.o console_term.o
 	$(LD) $(LDFLAGS) $^ $(LIBS) -o $@
 
 # --- POSIX server: dispatch + processes + terminal + VFS ---
-SERVER_SRCS := microkit_main posix_server proc tty vfs vfs_pipe vfs_evfd vfs_net vfs_unix clock bridge mem procfs cred perf memcpy
+SERVER_SRCS := microkit_main posix_server log proc tty vfs vfs_pipe vfs_evfd vfs_net vfs_unix clock bridge mem procfs cred perf memcpy
 SERVER_DEPS := $(wildcard $(POSIX)/server/*.h) $(wildcard $(POSIX)/include/sel4posix/*.h) \
 	       syscall_nr.h syscall_names.h
 server_%.o: $(POSIX)/server/%.c $(SERVER_DEPS)
@@ -193,7 +193,7 @@ RT_DEPS := $(wildcard $(POSIX)/include/sel4posix/*.h) $(POSIX)/runtime/arch.h rt
 rt_%.o: $(POSIX)/runtime/%.c $(RT_DEPS)
 	clang $(RT_CFLAGS) -c $< -o $@
 rt_crt0.o: $(POSIX)/runtime/crt0$(if $(filter aarch64,$(ARCH)),-aarch64).S
-	clang --target=$(ARCH)-linux-musl -c $< -o $@
+	clang --target=$(ARCH)-linux-musl -I$(POSIX)/include -c $< -o $@
 $(SYSROOT)/lib/crt0.o: rt_crt0.o
 	cp $< $@
 $(SYSROOT)/lib/libsel4posix.a: rt_start.o rt_syscall.o
@@ -317,9 +317,6 @@ GNU_PROGS := grep/grep grep/egrep grep/fgrep sed/sed findutils/find findutils/xa
 	     gzip/gzip gzip/gunzip gzip/zcat gzip/zgrep gzip/zless gzip/zmore gzip/zdiff gzip/zcmp less/less \
 	     screen/screen
 ifeq ($(ARCH),aarch64)
-# gzip's `head` macro breaks aarch64's <bits/signal.h> (struct _aarch64_ctx head): left out there for now
-GNU_PKGS := $(filter-out gzip-%,$(GNU_PKGS))
-GNU_PROGS := $(filter-out gzip/%,$(GNU_PROGS))
 endif
 GNU_ARGS_diffutils := gl_cv_func_strcasecmp_works=yes
 GNU_ARGS_less := --with-regex=posix LIBS=-lncursesw

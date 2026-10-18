@@ -27,8 +27,9 @@ for step in sys.argv[2:]:
     t1 = time.time()
     if kind == "absent":
         bad = arg.encode() in everything + seen
-        log("absent", text=arg, ok=not bad)
-        if bad: ok = False; break
+        lines = [l.strip() for l in (everything + seen).decode(errors="replace").splitlines() if arg in l][-5:]
+        log("absent", text=arg, ok=not bad, **({"lines": lines} if bad else {}))
+        if bad: ok = False             # the test fails, but the steps after it still run: diagnosis
         continue
     if kind == "send":
         time.sleep(SETTLE)

@@ -29,11 +29,13 @@ what comes before it. Image standard: OCI, static binaries (Rust or C) in `scrat
 rootless.
 
 Phase 1 — ARM64 as complete as x86 (without the VM):
-1. Structured logs (S): the JSON Lines standard below, a small log.h for components and
-   programs, /proc/log; everything after logs with it (fewer runs to find what failed)
-2. PSCI poweroff and reset on ARM (S, written: confirm QEMU exits, commit)
-3. The test suite on ARM, then in CI (S-M, item 2): every later step keeps it green
-4. ARM's small gaps (S each): asynchronous signals, epoll_event's layout, gzip
+1. [x] Structured logs: posix_server's server/log.c (slog), JSON Lines at /proc/log (faults,
+   kills, exec failures, init restarts, asynchronous signals); the other components still to do
+2. [x] PSCI poweroff and reset on ARM
+3. [~] Tests: tools/test/smoke.sh (one command: image, test disk from install.cmds, preflight,
+   smoke) and docs/kb (known errors, SOP); open: proctest ENOMEM as user; then CI (item 2)
+4. [x] ARM's small gaps: asynchronous signals (the server restores the frame:
+   POSIX_SYS_ASYNC_RETURN), gzip (signal.h first), epoll_event (not a bug: epoll is in the runtime)
 5. The protocol's arguments as int64_t in server and runtime (S-M): shared code, fixes wasm32
 6. Network on ARM (M-L): sDDF's virtio-net over MMIO, F-Stack for arm64, then TLS (a TLS library,
    CA certificates) for curl: phase 2 pulls images over HTTPS
