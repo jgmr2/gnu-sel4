@@ -38,8 +38,9 @@ Phase 1 — ARM64 as complete as x86 (without the VM):
 4. [x] ARM's small gaps: asynchronous signals (the server restores the frame:
    POSIX_SYS_ASYNC_RETURN), gzip (signal.h first), epoll_event (not a bug: epoll is in the runtime)
 5. [x] The protocol's arguments as int64_t in server and runtime (S-M): shared code, fixes wasm32
-6. Network on ARM (M-L): sDDF's virtio-net over MMIO, F-Stack for arm64, then TLS (a TLS library,
-   CA certificates) for curl: phase 2 pulls images over HTTPS
+6. [~] Network on ARM (M-L): [x] sDDF's virtio-net over MMIO, F-Stack for arm64, DHCP, DNS, TCP
+   (nettest example.com: all good; in the smoke test: loopback and the DHCP lease); [ ] TLS (a TLS
+   library, CA certificates) for curl: phase 2 pulls images over HTTPS
 7. ARM's own screen, fbcon (M): the page's VNC shows the real console
    Decision due during phase 1: where the product runs (ARM boards or ARM servers on bare metal:
    seL4 needs EL2, which ordinary cloud VMs do not give)

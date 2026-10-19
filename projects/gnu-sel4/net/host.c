@@ -16,6 +16,7 @@
  */
 #include <errno.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -113,9 +114,11 @@ long __sel4_syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6
         ts->tv_nsec = ns % 1000000000ULL;
         return 0;
     }
+#ifdef SYS_set_thread_area                     /* (aarch64: musl writes tpidr_el0 itself) */
     case SYS_set_thread_area:                  /* TLS of the only thread (__init_libc asks for it) */
         __asm__ volatile("wrfsbase %0" :: "r"(a1) : "memory");
         return 0;
+#endif
     case SYS_set_tid_address:
         return 1;
     case SYS_write:
@@ -219,6 +222,11 @@ static uint64_t xs_state;
 
 static uint64_t rand64(void)
 {
+#ifdef __aarch64__
+    /* QEMU's cortex-a57 has no RNDR, and seL4 traps the counter (cntvct_el0) at EL0: xorshift
+     * seeded with the timer's clock (not cryptographic) */
+    if (!xs_state) xs_state = (netstack_now_ns() * 0x9e3779b97f4a7c15ULL) | 1;
+#else
     unsigned long long v;
     for (int i = 0; i < 10; i++) {
         unsigned char ok;
@@ -231,6 +239,7 @@ static uint64_t rand64(void)
         __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
         xs_state = ((uint64_t)hi << 32 | lo) | 1;
     }
+#endif
     xs_state ^= xs_state << 13;
     xs_state ^= xs_state >> 7;
     xs_state ^= xs_state << 17;
@@ -407,3 +416,20 @@ long long strtoq(const char *nptr, char **endptr, int base) { return strtoll(npt
 /* The FreeBSD module linker (link_elf.c) reads the "kernel"'s dynamic section:
  * there is none here (only the final DT_NULL entry) */
 uint64_t _DYNAMIC[2];
+
+#ifdef __aarch64__
+/* What FreeBSD's arm64 headers expect from its kernel: no LSE atomics (LL/SC, every ARMv8 has
+ * them); the direct map's base (only unmapped mbufs use it: sendfile, KTLS, never here); CRC32C
+ * (libalias's SCTP; F-Stack's arm64 list leaves out gsb_crc32.c), bit by bit */
+bool lse_supported = false;
+uint64_t dmap_phys_base = 0;
+
+uint32_t calculate_crc32c(uint32_t crc, const unsigned char *buf, unsigned int len)
+{
+    while (len--) {
+        crc ^= *buf++;
+        for (int k = 0; k < 8; k++) crc = crc >> 1 ^ (0x82f63b78u & -(crc & 1));
+    }
+    return crc;
+}
+#endif

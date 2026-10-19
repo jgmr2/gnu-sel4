@@ -139,6 +139,14 @@ def generate_arm(sdf, sdf_file, output_dir, board, dtb):
     blk_virt = ProtectionDomain("blk_virt", "blk_virt.elf", priority=199, stack_size=0x2000)
     fs = ProtectionDomain("fs_ext2", "fs_ext2.elf", priority=160, stack_size=0x8000)
     server = ProtectionDomain("posix_server", "posix_server.elf", priority=150, stack_size=0x10000)
+    eth_driver = ProtectionDomain("eth_driver", "eth_driver.elf", priority=195, budget=100, period=400)
+    net_virt_tx = ProtectionDomain("net_virt_tx", "network_virt_tx.elf", priority=194, budget=20000)
+    net_virt_rx = ProtectionDomain("net_virt_rx", "network_virt_rx.elf", priority=193)
+    netstack = ProtectionDomain("netstack", "netstack.elf", priority=155, stack_size=0x40000)
+    netstack_copier = ProtectionDomain("netstack_net_copier", "netstack_copy.elf", priority=192, budget=20000)
+    netstack_heap = MemoryRegion(sdf, "netstack_heap", NETSTACK_HEAP_SIZE)
+    sdf.add_mr(netstack_heap)
+    netstack.add_map(Map(netstack_heap, 0x20_0000_0000, "rw", setvar_vaddr="netstack_heap"))
 
     fs_buf = MemoryRegion(sdf, "fs_buf", FS_BUF_SIZE)
     sdf.add_mr(fs_buf)
@@ -148,6 +156,7 @@ def generate_arm(sdf, sdf_file, output_dir, board, dtb):
     net_buf = MemoryRegion(sdf, "net_buf", NET_BUF_SIZE)
     sdf.add_mr(net_buf)
     server.add_map(Map(net_buf, 0x3300_0000, "rw", setvar_vaddr="net_buf"))
+    netstack.add_map(Map(net_buf, 0x10_0000_0000, "rw", setvar_vaddr="net_buf"))
     for name, var, vaddr in [("bridge_rx_queue", "br_rx_queue", 0x3200_0000), ("bridge_rx_data", "br_rx_data", 0x3201_0000),
                              ("bridge_tx_queue", "br_tx_queue", 0x3202_0000), ("bridge_tx_data", "br_tx_data", 0x3203_0000)]:
         mr = MemoryRegion(sdf, name, BRIDGE_DATA_SIZE if name.endswith("data") else 0x1000)
@@ -157,18 +166,24 @@ def generate_arm(sdf, sdf_file, output_dir, board, dtb):
     sdf.add_mr(rtc)
     server.add_map(Map(rtc, 0x3400_0000, "r", cached=False, setvar_vaddr="rtc_base"))
 
-    for pd in (serial_driver, serial_virt_tx, serial_virt_rx, timer_driver, blk_driver, blk_virt, fs, server):
+    for pd in (serial_driver, serial_virt_tx, serial_virt_rx, timer_driver, blk_driver, blk_virt, fs, server,
+               eth_driver, net_virt_tx, net_virt_rx, netstack, netstack_copier):
         sdf.add_pd(pd)
     sdf.add_channel(Channel(server, fs, a_id=SERVER_FS_CHANNEL_ID, pp_a=True))
+    sdf.add_channel(Channel(server, netstack, a_id=SERVER_NET_CHANNEL_ID, b_id=NETSTACK_SERVER_CHANNEL_ID, pp_a=True))
+    sdf.add_channel(Channel(server, netstack, a_id=SERVER_LEASE_CHANNEL_ID, b_id=NETSTACK_LEASE_CHANNEL_ID))
 
     timer_system = Sddf.Timer(sdf, dtb.node(board.timer), timer_driver)
     timer_system.add_client(server)
+    timer_system.add_client(netstack)        # TCP/IP stack clock
     serial = Sddf.Serial(sdf, dtb.node(board.serial), serial_driver, serial_virt_tx, virt_rx=serial_virt_rx,
-                         enable_color=False, begin_str="GNU/seL4 on ARM64 (no network or VM yet)\r\n")
+                         enable_color=False, begin_str="GNU/seL4 on ARM64 (no VM yet)\r\n")
     serial.add_client(server)
     blk = Sddf.Blk(sdf, dtb.node(board.blk), blk_driver, blk_virt)
     blk.add_client(fs, partition=0, data_size=FS_CACHE_SIZE)      # partition 1: GNU/seL4 ext2
-    for system in (serial, timer_system, blk):
+    net = Sddf.Net(sdf, dtb.node(board.ethernet), eth_driver, net_virt_tx, net_virt_rx)
+    net.add_client_with_copier(netstack, netstack_copier, mac_addr="02:5e:14:00:00:10")
+    for system in (serial, timer_system, blk, net):
         assert system.connect()
         assert system.serialise_config(output_dir)
     # fs_ext2's block cache, mapped into posix_server too (one-copy reads and writes, as on x86)

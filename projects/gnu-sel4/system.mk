@@ -50,7 +50,8 @@ vpath %.c $(SDDF) $(LIBVMM)
 #                 1920x1080 framebuffer, no network card driver (net/null_driver.c), no ACPI
 #                 power off yet. make iso builds the ISO
 #   qemu-arm      QEMU's ARM virt machine (TODO item 16): the serial console, its own disk
-#                 (disk-arm.img next to disk.img, virtio-blk over MMIO); no network or VM yet
+#                 (disk-arm.img next to disk.img, virtio-blk over MMIO), the network (virtio-net
+#                 over MMIO, netstack); no VM yet
 PLATFORM ?= qemu
 export PLATFORM
 ifeq ($(PLATFORM),qemu)
@@ -65,9 +66,9 @@ SERVER_FLAGS := -DNO_ACPI_POWEROFF
 VMM_FLAGS := -DNO_VM_DISK
 FS_FLAGS := -DFS_RAMDISK
 else ifeq ($(PLATFORM),qemu-arm)
-ETH_ELF :=
+ETH_ELF := eth_driver.elf
 BLK_ELFS := blk_driver.elf blk_virt.elf
-SERVER_FLAGS := -DNO_ACPI_POWEROFF -DNO_NETSTACK
+SERVER_FLAGS := -DNO_ACPI_POWEROFF
 else
 $(error unknown PLATFORM $(PLATFORM): qemu, latitude7390 or qemu-arm)
 endif
@@ -206,8 +207,11 @@ sysroot: $(SYSROOT_READY)
 # --- netstack: the FreeBSD TCP/IP stack (F-Stack) as a component, with musl as its libc ---
 FSTACK := $(TP)/f-stack
 fstack/fstack.o: $(POSIX)/ports/fstack/build-fstack.sh
-	FSTACK=$(FSTACK) $< fstack > fstack.log 2>&1 || { tail -20 fstack.log; exit 1; }
-NET_CFLAGS := --target=x86_64-none-elf -O2 -g -Wall -fno-pic -fno-stack-protector -mfsgsbase -mrdrnd \
+	FSTACK=$(FSTACK) $< fstack $(ARCH) > fstack.log 2>&1 || { tail -20 fstack.log; exit 1; }
+NET_ARCH_FLAGS := $(if $(filter aarch64,$(ARCH)),-mstrict-align,-mfsgsbase -mrdrnd)
+# aarch64: musl's printf uses 128-bit long double, whose routines the cross libgcc has (as tools/sel4-cc)
+NET_RTLIB := $(if $(filter aarch64,$(ARCH)),$(lastword $(wildcard /usr/lib/gcc-cross/aarch64-linux-gnu/*/libgcc.a)))
+NET_CFLAGS := --target=$(ARCH)-none-elf -O2 -g -Wall -fno-pic -fno-stack-protector $(NET_ARCH_FLAGS) \
 	      -nostdinc -isystem $(SYSROOT)/include -I$(BOARD_DIR)/include -I$(SDDF)/include \
 	      -I$(SDDF)/include/microkit -I$(FSTACK)/lib -I$(POSIX)/include -I$(POSIX)/net/compat -D_GNU_SOURCE -D__thread= -include fstack_host.h -DINET -DINET6
 # Address netstack asks for first over DHCP (QEMU: the target of the `make run` port
@@ -222,7 +226,7 @@ net_tsc.o: $(SDDF)/util/arch_timestamp_counter.c $(LIBC)
 	clang $(NET_CFLAGS) -c $< -o $@
 netstack.elf: net_netstack.o net_host.o net_dhcp.o net_tsc.o fstack/fstack.o $(LIBC)
 	$(LD) $(LDFLAGS) net_netstack.o net_host.o net_dhcp.o net_tsc.o fstack/fstack.o \
-		--start-group -lmicrokit -Tmicrokit.ld $(LIBC) --end-group -o $@
+		--start-group -lmicrokit -Tmicrokit.ld $(LIBC) $(NET_RTLIB) --end-group -o $@
 # second sDDF network copier (each one carries its configuration inside the ELF)
 netstack_copy.elf: network_copy.elf
 	cp $< $@

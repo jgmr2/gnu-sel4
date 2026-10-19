@@ -110,7 +110,8 @@ ifeq ($(PLATFORM),qemu-arm)
 		-device loader,file=$(IMAGE),addr=0x70000000,cpu-num=0 $(ARM_DISPLAY_OPTS) \
 		-global virtio-mmio.force-legacy=false \
 		-drive file=$(dir $(realpath disk.img))disk-arm.img,format=raw,if=none,id=hd \
-		-device virtio-blk-device,drive=hd,bus=virtio-mmio-bus.1
+		-device virtio-blk-device,drive=hd,bus=virtio-mmio-bus.1 \
+		-netdev user,id=net0,$(HOSTFWD) -device virtio-net-device,netdev=net0,bus=virtio-mmio-bus.0
 else
 	qemu-system-x86_64 -machine q35 -accel kvm \
 		-cpu host,host-phys-bits=off,phys-bits=39,+fsgsbase,+pdpe1gb,+xsaveopt,+xsave$(QEMU_VMX),+vme,+invtsc \
