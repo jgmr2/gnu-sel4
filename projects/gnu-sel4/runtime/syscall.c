@@ -156,7 +156,7 @@ static int deliver_signals(void)
 /* IPC with the server                                                */
 /* ------------------------------------------------------------------ */
 
-static long server_call(long n, long a1, long a2, long a3, long a4, long a5, long a6)
+static long server_call(long n, int64_t a1, int64_t a2, int64_t a3, int64_t a4, int64_t a5, int64_t a6)
 {
     for (;;) {
         mr_set(0, n);
@@ -181,7 +181,7 @@ static long server_result(int mr) { return (long)mr_get(mr); }
 /* If the call would block (POSIX_RETRY), sleep until the server notifies on
  * the channel and retry. Signals that arrive are delivered; if a handler did
  * not ask for SA_RESTART, the call ends with EINTR. */
-static long server_call_blocking6(long n, long a1, long a2, long a3, long a4, long a5, long a6)
+static long server_call_blocking6(long n, int64_t a1, int64_t a2, int64_t a3, int64_t a4, int64_t a5, int64_t a6)
 {
     for (;;) {
         long r = server_call(n, a1, a2, a3, a4, a5, a6);
@@ -194,12 +194,12 @@ static long server_call_blocking6(long n, long a1, long a2, long a3, long a4, lo
     }
 }
 
-static long server_call_blocking5(long n, long a1, long a2, long a3, long a4, long a5)
+static long server_call_blocking5(long n, int64_t a1, int64_t a2, int64_t a3, int64_t a4, int64_t a5)
 {
     return server_call_blocking6(n, a1, a2, a3, a4, a5, 0);
 }
 
-static long server_call_blocking(long n, long a1, long a2, long a3, long a4)
+static long server_call_blocking(long n, int64_t a1, int64_t a2, int64_t a3, int64_t a4)
 {
     return server_call_blocking6(n, a1, a2, a3, a4, 0, 0);
 }

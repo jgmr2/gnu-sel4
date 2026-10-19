@@ -184,7 +184,7 @@ long fifo_open(uint32_t ino, uint32_t flags, const char *abs);
 long fs_call(long op, uint64_t a1, uint64_t a2, uint64_t a3);
 long fs_lookup(const char *abs, bool follow, uint32_t *mode, uint64_t *size);
 long may_change_dir(const char *abs);
-long net_call(long op, long a1, long a2, long a3, long a4);
+long net_call(long op, int64_t a1, int64_t a2, int64_t a3, int64_t a4);
 long normalize(long dirfd, const char *path, char *out);
 long pipe_read(struct ofile *f, size_t len);
 long pipe_write(struct ofile *f, size_t len);

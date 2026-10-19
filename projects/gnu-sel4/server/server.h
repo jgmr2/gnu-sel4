@@ -178,7 +178,7 @@ typedef unsigned __int128 waitmask_t;    /* NPROC bits */
 void proc_init(void);
 void proc_start_init(void);
 bool proc_handles(long nr);
-long proc_syscall(long nr, long a1, long a2, long a3, long a4, long a5);
+long proc_syscall(long nr, int64_t a1, int64_t a2, int64_t a3, int64_t a4, int64_t a5);
 struct proc *proc_by_slot(int slot);
 struct proc *proc_by_pid(int pid);
 void proc_wake(struct proc *p);
@@ -199,7 +199,7 @@ bool cred_may(const struct proc *p, uint32_t mode, uint32_t uid, uint32_t gid, i
 bool cred_may_real(const struct proc *p, uint32_t mode, uint32_t uid, uint32_t gid, int want);
 bool cred_may_signal(const struct proc *p, const struct proc *q);
 bool cred_handles(long nr);
-long cred_syscall(long nr, long a1, long a2, long a3);
+long cred_syscall(long nr, int64_t a1, int64_t a2, int64_t a3);
 
 /* mem.c: slots and their memory, on demand */
 extern unsigned long mem_pages_used;
@@ -327,7 +327,7 @@ void vfs_timerfd_fire(uint64_t now);
 void vfs_set_fs_clock(void);
 void vfs_unmount(void);                   /* shutdown: sync and mark the file system clean */
 bool vfs_handles(long nr);
-long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6);
+long vfs_syscall(long nr, int64_t a1, int64_t a2, int64_t a3, int64_t a4, int64_t a5, int64_t a6);
 void vfs_proc_tty(struct proc *p);         /* 0, 1 and 2 to the terminal */
 void vfs_fork(struct proc *child, struct proc *parent);
 void vfs_close_all(struct proc *p);

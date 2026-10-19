@@ -145,6 +145,7 @@ static inline uint8_t *dptr(uint32_t x) { return (uint8_t *)(DMAP_BASE + (uintpt
 
 #define MAX_FRAMES (1u << 18)           /* 1 GiB of 4 KiB frames */
 static uint32_t free_frames[MAX_FRAMES];
+static const char *frame_why = "frame";   /* why frame_get last failed (for the log) */
 static uint32_t nfree;
 unsigned long mem_pages_used;
 
@@ -159,12 +160,16 @@ static uint32_t frame_get(bool *recycled)
     *recycled = false;
     if (cur_used & 1) cur_used++;                  /* aligned pairs */
     seL4_CPtr c = cslots(2);
-    if (!c) return 0;
+    if (!c) { frame_why = "frame:cslots"; return 0; }
     if (ut_retype(ARCH_FRAME_OBJECT, 0, c >> 58, ROOT_DEPTH, c & ((1u << CNODE_BITS) - 1))) {
+        frame_why = "frame:pool";
         return 0;
     }
-    if (seL4_CNode_Copy(CN(c + 1), CN(c), seL4_AllRights)) return 0;
-    if (!map_frame(c + 1, SELF_VSPACE, (uintptr_t)dptr(CAP_IDX(c)), seL4_ReadWrite)) return 0;
+    if (seL4_CNode_Copy(CN(c + 1), CN(c), seL4_AllRights)) { frame_why = "frame:copy"; return 0; }
+    if (!map_frame(c + 1, SELF_VSPACE, (uintptr_t)dptr(CAP_IDX(c)), seL4_ReadWrite)) {
+        frame_why = "frame:map";
+        return 0;
+    }
     return CAP_IDX(c);
 }
 
@@ -418,27 +423,36 @@ uint64_t mem_slot_consumed_us(int s)
 }
 
 /* Process page at vaddr (created if it does not exist). zero = clear it if it is recycled. */
+/* Why a page could not be had: one log line (budget, capability slots, the pool, mapping) */
+static bool page_fail(int s, uintptr_t v, const char *why)
+{
+    slog("info", "page-denied", why, "\"slot\":%d,\"v\":\"0x%lx\",\"used\":%lu,\"free\":%u,\"mine\":%u",
+         s, (unsigned long)v, mem_pages_used, nfree, slots[s].npages);
+    return false;
+}
+
 static bool page(int s, uintptr_t v, bool zero)
 {
     struct slot *sl = &slots[s];
     v &= ~0xfffUL;
     uint32_t *l = leaf(sl, v, true);
-    if (!l) return false;
+    if (!l) return page_fail(s, v, "leaf");
     uint32_t *e = &l[(v >> 12) & 1023];
     if (*e) return true;
     bool recycled = false;
     uint32_t x;
-    if (!keep(v) && !proc_page_allowed(s)) return false;   /* its budget (RLIMIT_AS, its user's) */
+    if (!keep(v) && !proc_page_allowed(s)) return page_fail(s, v, "budget");   /* RLIMIT_AS, its user's */
     if (keep(v)) {                                   /* the shared buffer: through the window */
         x = frame_new_unmapped();
-        if (!x || !map_frame(CAP_PTR(x) + 1, SELF_VSPACE, proc_win(s, v), seL4_ReadWrite)) return false;
+        if (!x || !map_frame(CAP_PTR(x) + 1, SELF_VSPACE, proc_win(s, v), seL4_ReadWrite))
+            return page_fail(s, v, "window");
     } else {
         x = frame_get(&recycled);
     }
-    if (!x) return false;
+    if (!x) return page_fail(s, v, frame_why);
     if (!map_frame(CAP_PTR(x), sl->vspace, v, seL4_ReadWrite)) {
         frame_put(x);
-        return false;
+        return page_fail(s, v, "map");
     }
     if (recycled && zero) memset(dptr(x), 0, 4096);
     *e = x;

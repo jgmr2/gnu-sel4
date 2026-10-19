@@ -124,8 +124,8 @@ microkit_msginfo protected(microkit_channel ch, microkit_msginfo msginfo)
     uint64_t t0 = clock_rdtsc();
     reply_direct = false;
     long n = microkit_mr_get(0);
-    long a1 = microkit_mr_get(1), a2 = microkit_mr_get(2), a3 = microkit_mr_get(3);
-    long a4 = microkit_mr_get(4), a5 = microkit_mr_get(5), a6 = microkit_mr_get(6);
+    int64_t a1 = microkit_mr_get(1), a2 = microkit_mr_get(2), a3 = microkit_mr_get(3);
+    int64_t a4 = microkit_mr_get(4), a5 = microkit_mr_get(5), a6 = microkit_mr_get(6);
 
     /* Calls that fill the shared buffer with up to a3 bytes: the pages past its first 64 KiB are
      * made when one first needs them (mem.c) */

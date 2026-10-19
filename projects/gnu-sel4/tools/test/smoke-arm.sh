@@ -4,15 +4,15 @@
 # (files, processes, job control, terminals, asynchronous signals), gzip both ways, /proc/log
 # has the signal's event, powers off by PSCI. JSON lines, then one summary
 # line {"test":"smoke-arm","ok":...}. Needs `make PLATFORM=qemu-arm image`; the disk is copied
-# (default: build-wasm/demo-disk.img, a scrubbed copy of the ARM disk: wasmkit/make-demo-disk.sh).
+# (default: build-qemu-arm/test-disk.img, from tools/test/test-disk.sh).
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
-DISK=${1:-$HERE/../../build-wasm/demo-disk.img}
+DISK=${1:-$HERE/../../build-qemu-arm/test-disk.img}
 P=Smoke-123
 TEST=smoke-arm TIMEOUT=${TIMEOUT:-60} exec "$HERE/arm.sh" "$DISK" \
     'expect:login: ' 'absent:s6-rc failed' 'absent:segmentation fault' \
     'send:user' 'expect:New password: ' "send:$P" 'expect:Retype new password: ' "send:$P" 'expect:user@gnu-sel4' \
-    'send:r=0; for t in filetest proctest jobtest ptytest asynctest; do $t >/tmp/$t.log 2>&1 || { r=1; echo FAILED $t; grep -E "FAIL" /tmp/$t.log | head -5; }; done; [ "$(echo gz-ok | gzip | gzip -d)" = gz-ok ] || { r=1; echo FAILED gzip; }; grep -q "\"ev\":\"async-signal\"" /proc/log || { r=1; echo FAILED log; }; echo SMOKE=$r' \
+    'send:r=0; for t in filetest proctest jobtest ptytest asynctest; do $t >/tmp/$t.log 2>&1 || { r=1; echo FAILED $t; grep -E "FAIL" /tmp/$t.log | head -5; }; done; [ "$(echo gz-ok | gzip | gzip -d)" = gz-ok ] || { r=1; echo FAILED gzip; }; grep -q "\"ev\":\"async-signal\"" /proc/log || { r=1; echo FAILED log; }; [ $r = 0 ] || grep -E "page-denied|fault" /proc/log | tail -4; echo SMOKE=$r' \
     'expect:SMOKE=0' \
     "send:echo $P | sudo -S poweroff" 'expect:powering off' 'exit'

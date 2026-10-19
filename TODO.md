@@ -32,11 +32,12 @@ Phase 1 — ARM64 as complete as x86 (without the VM):
 1. [x] Structured logs: posix_server's server/log.c (slog), JSON Lines at /proc/log (faults,
    kills, exec failures, init restarts, asynchronous signals); the other components still to do
 2. [x] PSCI poweroff and reset on ARM
-3. [~] Tests: tools/test/smoke.sh (one command: image, test disk from install.cmds, preflight,
-   smoke) and docs/kb (known errors, SOP); open: proctest ENOMEM as user; then CI (item 2)
+3. [x] Tests: tools/test/smoke.sh (one command: the whole build from scratch onto a brand-new
+   disk, a test disk from it, preflight, smoke) and docs/kb (known errors, SOP); in CI on every
+   push (.github/workflows/test.yml, job arm: one JSON line in the job's summary)
 4. [x] ARM's small gaps: asynchronous signals (the server restores the frame:
    POSIX_SYS_ASYNC_RETURN), gzip (signal.h first), epoll_event (not a bug: epoll is in the runtime)
-5. The protocol's arguments as int64_t in server and runtime (S-M): shared code, fixes wasm32
+5. [x] The protocol's arguments as int64_t in server and runtime (S-M): shared code, fixes wasm32
 6. Network on ARM (M-L): sDDF's virtio-net over MMIO, F-Stack for arm64, then TLS (a TLS library,
    CA certificates) for curl: phase 2 pulls images over HTTPS
 7. ARM's own screen, fbcon (M): the page's VNC shows the real console

@@ -17,7 +17,38 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      full:
+      arm:
+    # ARM64 (the platform being developed): the whole build from scratch onto a brand-new disk,
+    # then the smoke test (tools/test/smoke-arm.sh: boot, login, the core test programs, PSCI
+    # power-off) under QEMU (TCG: no KVM needed). Its one-line JSON result is the job's summary.
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      IMAGE: gnu-sel4-dev:ci
+      IN: docker run --rm --user root -v ${{ github.workspace }}:/work -w /work/projects/gnu-sel4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Development image (this commit's; cached)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: full
+          load: true
+          tags: gnu-sel4-dev:ci
+          cache-from: type=gha
+      - name: Build (make PLATFORM=qemu-arm, a fresh disk)
+        run: $IN "$IMAGE" make PLATFORM=qemu-arm 'DISK=$(BUILD_DIR)/fresh-disk.img'
+      - name: Test disk
+        run: $IN "$IMAGE" tools/test/test-disk.sh
+      - name: Smoke test
+        working-directory: projects/gnu-sel4
+        run: |
+          QEMU_IMAGE=$IMAGE TIMEOUT=300 tools/test/smoke-arm.sh | tee smoke.jsonl
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"; tail -1 smoke.jsonl >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
+          tail -1 smoke.jsonl | grep -q '"ok":true'
+
+  full:
         description: "Also run the full make test (with the Linux VM) on the self-hosted runner labelled vtx"
         type: boolean
         default: false

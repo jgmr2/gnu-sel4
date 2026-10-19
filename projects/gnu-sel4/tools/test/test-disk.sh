@@ -1,14 +1,17 @@
 #!/bin/sh
-# tools/test/test-disk.sh [base.img] [out.img]: the disk tests boot (never a disk in use): the
-# scrubbed demo disk with everything the last build installed put in (its install.cmds: a disk
-# with only some programs new mixes runtimes: docs/kb "stale-test-disk"); user's shell is dash
-# (the first zsh start, its compinit, costs ~20 s a test). JSON line at the end.
+# tools/test/test-disk.sh [base.img] [out.img]: the disk tests boot (never a disk in use): by
+# default a copy of the brand-new disk the last full build made from rootfs/ (make PLATFORM=qemu-arm
+# DISK='$(BUILD_DIR)/fresh-disk.img', as tools/test/smoke.sh does), with everything the build
+# installed put in again (its install.cmds: a disk with only some programs new mixes runtimes:
+# docs/kb "stale-test-disk"); user's shell is dash (the first zsh start, its compinit, costs
+# ~20 s a test). JSON line at the end.
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
 POSIX=$(cd "$(dirname "$0")/../.." && pwd)
-BASE=${1:-$POSIX/build-wasm/demo-disk.img}; OUT=${2:-$POSIX/build-qemu-arm/test-disk.img}
+BASE=${1:-$POSIX/build-qemu-arm/fresh-disk.img}; OUT=${2:-$POSIX/build-qemu-arm/test-disk.img}
 DEBUGFS=$(command -v debugfs || echo /sbin/debugfs)
-cp "$BASE" "$OUT"
+[ -f "$BASE" ] || { echo "{\"c\":\"test-disk\",\"ev\":\"no base disk\",\"disk\":\"$BASE\"}"; exit 1; }
+cp --sparse=always "$BASE" "$OUT"
 start=$(python3 -c 'import sys; m=open(sys.argv[1],"rb").read(512); print(int.from_bytes(m[454:458],"little"))' "$OUT")
 C=$(mktemp); trap 'rm -f "$C" "$C.passwd"' EXIT
 # Exactly what the last `make PLATFORM=qemu-arm` installed: its debugfs commands (install.cmds,

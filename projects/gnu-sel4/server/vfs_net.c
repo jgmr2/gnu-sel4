@@ -13,7 +13,7 @@ uintptr_t net_buf;                         /* shared with netstack (setvar in me
 static waitmask_t net_waiters;
 
 
-long net_call(long op, long a1, long a2, long a3, long a4)
+long net_call(long op, int64_t a1, int64_t a2, int64_t a3, int64_t a4)
 {
 #ifdef NO_NETSTACK
     (void)op; (void)a1; (void)a2; (void)a3; (void)a4;

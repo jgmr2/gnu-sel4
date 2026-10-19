@@ -7,7 +7,7 @@ say() { echo "{\"c\":\"preflight\",\"ev\":\"$1\",\"ok\":$2${3:+,\"detail\":\"$3\
 left=$(docker ps -aq --filter name=sel4-test- | wc -l)
 [ "$left" -gt 0 ] && docker rm -f $(docker ps -aq --filter name=sel4-test-) >/dev/null
 say leftover-containers-removed true "$left"
-docker image inspect gnu-sel4-web:local >/dev/null 2>&1 && say qemu-image true || say qemu-image false "docker compose build web"
+docker image inspect "${QEMU_IMAGE:-gnu-sel4-web:local}" >/dev/null 2>&1 && say qemu-image true || say qemu-image false "docker compose build web"
 [ -f "$B/loader.img" ] || { say image false "make PLATFORM=qemu-arm image"; exit 1; }
 newer=$(find "$POSIX/server" "$POSIX/fs" "$POSIX/meta.py" "$POSIX/system.mk" -newer "$B/loader.img" -type f | head -3 | tr '\n' ' ')
 [ -z "$newer" ] && say image-fresh true || say image-fresh false "older than: $newer"

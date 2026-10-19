@@ -1213,7 +1213,7 @@ bool vfs_handles(long nr)
     return false;
 }
 
-long vfs_syscall(long nr, long a1, long a2, long a3, long a4, long a5, long a6)
+long vfs_syscall(long nr, int64_t a1, int64_t a2, int64_t a3, int64_t a4, int64_t a5, int64_t a6)
 {
     (void)a5;
     struct ofile *f;

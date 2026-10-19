@@ -101,7 +101,7 @@ bool cred_handles(long nr)
     return false;
 }
 
-long cred_syscall(long nr, long a1, long a2, long a3)
+long cred_syscall(long nr, int64_t a1, int64_t a2, int64_t a3)
 {
     struct proc *p = cur;
     bool priv = p->euid == 0;
