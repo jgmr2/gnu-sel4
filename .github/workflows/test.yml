@@ -92,7 +92,7 @@ jobs:
         run: |
           QEMU_IMAGE=$IMAGE TIMEOUT=300 tools/test/smoke-arm.sh | tee smoke.jsonl
           echo '```json' >> "$GITHUB_STEP_SUMMARY"; tail -1 smoke.jsonl >> "$GITHUB_STEP_SUMMARY"; echo '```' >> "$GITHUB_STEP_SUMMARY"
-          tail -1 smoke.jsonl | grep -q '"ok":true'
+          tail -1 smoke.jsonl | grep -qE '"ok": ?true'
 
   full:
     if: github.event_name == 'workflow_dispatch' && inputs.full
